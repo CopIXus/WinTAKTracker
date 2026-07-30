@@ -16,7 +16,7 @@
 #endif
 
 #define MyAppName "WinTAKTracker"
-#define MyAppPublisher "CopIXus"
+#define MyAppPublisher "CopIX LLC"
 #define MyAppURL "https://github.com/CopIXus/WinTAKTracker"
 #define MyAppExeName "WinTAKTracker.exe"
 #define MyServiceExeName "WinTAKTracker.Service.exe"

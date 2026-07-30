@@ -33,6 +33,9 @@
     <Color x:Key="StatusWarnFgColor">#E65100</Color>
     <Color x:Key="StatusNeutralBgColor">#EEEEEE</Color>
     <Color x:Key="StatusNeutralFgColor">#424242</Color>
+    <Color x:Key="ScrollBarTrackColor">#ECEEEC</Color>
+    <Color x:Key="ScrollBarThumbColor">#B0B8B2</Color>
+    <Color x:Key="ScrollBarThumbHoverColor">#8A948C</Color>
 
     <SolidColorBrush x:Key="SidebarBgBrush" Color="{StaticResource SidebarBgColor}"/>
     <SolidColorBrush x:Key="SidebarHoverBrush" Color="{StaticResource SidebarHoverColor}"/>
@@ -64,6 +67,9 @@
     <SolidColorBrush x:Key="StatusWarnFgBrush" Color="{StaticResource StatusWarnFgColor}"/>
     <SolidColorBrush x:Key="StatusNeutralBgBrush" Color="{StaticResource StatusNeutralBgColor}"/>
     <SolidColorBrush x:Key="StatusNeutralFgBrush" Color="{StaticResource StatusNeutralFgColor}"/>
+    <SolidColorBrush x:Key="ScrollBarTrackBrush" Color="{StaticResource ScrollBarTrackColor}"/>
+    <SolidColorBrush x:Key="ScrollBarThumbBrush" Color="{StaticResource ScrollBarThumbColor}"/>
+    <SolidColorBrush x:Key="ScrollBarThumbHoverBrush" Color="{StaticResource ScrollBarThumbHoverColor}"/>
 
     <sys:Double x:Key="FontSizeBody">13</sys:Double>
 </ResourceDictionary>

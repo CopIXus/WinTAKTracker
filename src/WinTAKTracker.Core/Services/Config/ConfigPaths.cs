@@ -1,9 +1,12 @@
+using System.ServiceProcess;
+
 namespace WinTAKTracker.Services.Config;
 
 /// <summary>Well-known config roots for portable (user) vs always-on (service) modes.</summary>
 public static class ConfigPaths
 {
     public const string AppFolderName = "WinTAKTracker";
+    public const string ServiceName = "WinTAKTracker";
 
     /// <summary>Legacy / portable tray: %LocalAppData%\WinTAKTracker\</summary>
     public static string UserRoot => Path.Combine(
@@ -23,7 +26,7 @@ public static class ConfigPaths
         try
         {
             using var key = Microsoft.Win32.Registry.LocalMachine.OpenSubKey(
-                @"SYSTEM\CurrentControlSet\Services\WinTAKTracker");
+                @"SYSTEM\CurrentControlSet\Services\" + ServiceName);
             return key is not null;
         }
         catch
@@ -31,4 +34,34 @@ public static class ConfigPaths
             return false;
         }
     }
+
+    /// <summary>Running / Stopped / Not installed / other SCM state.</summary>
+    public static string GetWindowsServiceStatusLabel()
+    {
+        if (!IsServiceInstalled())
+            return "Not installed";
+
+        try
+        {
+            using var sc = new ServiceController(ServiceName);
+            return sc.Status switch
+            {
+                ServiceControllerStatus.Running => "Running",
+                ServiceControllerStatus.Stopped => "Stopped",
+                ServiceControllerStatus.StartPending => "Starting",
+                ServiceControllerStatus.StopPending => "Stopping",
+                ServiceControllerStatus.Paused => "Paused",
+                ServiceControllerStatus.PausePending => "Pausing",
+                ServiceControllerStatus.ContinuePending => "Continuing",
+                _ => sc.Status.ToString(),
+            };
+        }
+        catch
+        {
+            return "Unknown";
+        }
+    }
+
+    public static string GetTrackingModeLabel(bool attachedToService) =>
+        attachedToService ? "Service" : "Standalone";
 }

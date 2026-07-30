@@ -7,8 +7,9 @@
     <RootNamespace>WinTAKTracker</RootNamespace>
     <AssemblyName>WinTAKTracker.Core</AssemblyName>
     <Product>WinTAKTracker</Product>
-    <Company>CopIXus</Company>
-    <Authors>CopIXus</Authors>
+    <Company>CopIX LLC</Company>
+    <Authors>CopIX LLC</Authors>
+    <Copyright>Copyright © CopIX LLC</Copyright>
     <Description>Headless tracking core for WinTAKTracker (GPS, CoT, TAK, Mesh, config).</Description>
     <Version>0.1.0</Version>
     <NeutralLanguage>en-US</NeutralLanguage>
@@ -18,6 +19,7 @@
     <PackageReference Include="System.IO.Ports" Version="8.0.0" />
     <PackageReference Include="System.IO.Pipes.AccessControl" Version="5.0.0" />
     <PackageReference Include="System.Security.Cryptography.ProtectedData" Version="8.0.0" />
+    <PackageReference Include="System.ServiceProcess.ServiceController" Version="8.0.1" />
   </ItemGroup>
 
 </Project>

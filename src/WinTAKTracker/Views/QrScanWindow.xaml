@@ -1,7 +1,7 @@
 <Window x:Class="WinTAKTracker.Views.QrScanWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Style="{StaticResource AppWindow}"
+        Style="{DynamicResource AppWindow}"
         Title="Scan enrollment QR"
         Height="540" Width="660"
         MinHeight="420" MinWidth="520"
@@ -13,30 +13,30 @@
                     HorizontalAlignment="Right"
                     Margin="0,16,0,0">
             <Button Content="Cancel"
-                    Style="{StaticResource SecondaryButton}"
+                    Style="{DynamicResource SecondaryButton}"
                     MinWidth="96"
                     Margin="0,0,8,0"
                     IsCancel="True"
                     Click="Cancel_OnClick"/>
             <Button Content="Use paste instead"
-                    Style="{StaticResource PrimaryButton}"
+                    Style="{DynamicResource PrimaryButton}"
                     MinWidth="140"
                     Click="Paste_OnClick"/>
         </StackPanel>
         <StackPanel>
             <TextBlock Text="Scan enrollment QR"
-                       Style="{StaticResource SectionTitleText}"
+                       Style="{DynamicResource SectionTitleText}"
                        Margin="0,0,0,8"/>
             <TextBlock Text="Point the camera at a TAK / OpenTAK Tracker enrollment QR code."
-                       Style="{StaticResource BlurbText}"
+                       Style="{DynamicResource BlurbText}"
                        Margin="0,0,0,12"/>
-            <TextBlock Text="Camera" Style="{StaticResource FieldLabelText}" Margin="0,0,0,6"/>
+            <TextBlock Text="Camera" Style="{DynamicResource FieldLabelText}" Margin="0,0,0,6"/>
             <ComboBox x:Name="CameraCombo"
                       Width="320"
                       HorizontalAlignment="Left"
                       Margin="0,0,0,12"
                       SelectionChanged="CameraCombo_OnSelectionChanged"/>
-            <Border BorderBrush="{StaticResource AppBorderBrush}"
+            <Border BorderBrush="{DynamicResource AppBorderBrush}"
                     BorderThickness="1"
                     CornerRadius="8"
                     Height="340"
@@ -45,7 +45,7 @@
                 <Image x:Name="PreviewImage" Stretch="Uniform"/>
             </Border>
             <TextBlock x:Name="StatusText"
-                       Style="{StaticResource HelperText}"
+                       Style="{DynamicResource HelperText}"
                        Margin="0,10,0,0"/>
         </StackPanel>
     </DockPanel>

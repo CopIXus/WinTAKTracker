@@ -34,10 +34,10 @@ These workarounds are **not** a substitute for Authenticode signing for general 
 
 ## Proper fix: Authenticode code signing
 
-1. Obtain a code-signing identity for the legal entity (e.g. **CopIX LLC** / publisher **CopIXus**).
-2. In release CI, sign `WinTAKTracker.exe` after publish.
+1. Obtain a code-signing identity issued to **CopIX LLC** (Azure Trusted Signing / Artifact Signing certificate profile, or EV/OV from a commercial CA). The Authenticode **publisher display name** should read **CopIX LLC** when the certificate subject matches that legal entity — assembly/Inno metadata alone cannot fake a trusted signature.
+2. In release CI, sign `WinTAKTracker.exe` after publish (requires Azure Trusted Signing or PFX secrets; see below). Without those secrets, Releases stay **unsigned**.
 3. Always attach a **timestamp** (RFC 3161) so the signature remains valid after the cert expires.
-4. Verify with `signtool` or `Get-AuthenticodeSignature` before publishing.
+4. Verify with `signtool` or `Get-AuthenticodeSignature` before publishing (`Status = Valid`, publisher **CopIX LLC**).
 5. Over time, consistent signed releases from the same publisher improve SmartScreen / SAC reputation. Signing alone (especially OV) may **not** instantly silence warnings.
 
 ### Certificate options (tradeoffs)
@@ -140,9 +140,9 @@ Get-FileHash .\WinTAKTracker.exe -Algorithm SHA256
 Get-Content .\WinTAKTracker.exe.sha256
 ```
 
-## Recommendation for CopIXus
+## Recommendation for CopIX LLC
 
-**Start with Azure Artifact Signing (Trusted Signing):** it fits GitHub Actions, avoids shipping a PFX to runners, and aligns with Microsoft’s SmartScreen reputation path for cloud-signed apps. Complete org identity validation under **CopIX LLC**, create one certificate profile used only for WinTAKTracker releases, and wire the secrets listed above.
+**Start with Azure Artifact Signing (Trusted Signing):** it fits GitHub Actions, avoids shipping a PFX to runners, and aligns with Microsoft’s SmartScreen reputation path for cloud-signed apps. Complete org identity validation under **CopIX LLC**, create one certificate profile used only for WinTAKTracker releases, and wire the secrets listed above. Product/company metadata in the EXE and Setup already says **CopIX LLC**; Authenticode still requires a real cert issued to that entity — there is no way to “sign” from the repo without those secrets.
 
 Consider a classic **EV** certificate later if you need maximum traditional SmartScreen trust for offline/enterprise distribution or if Azure signing is unavailable in your region/subscription. Prefer **not** to rely on OV alone if the goal is quiet installs for new users—plan for a reputation ramp either way.
 

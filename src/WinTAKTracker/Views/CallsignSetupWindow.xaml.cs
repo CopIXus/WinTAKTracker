@@ -22,8 +22,7 @@ public partial class CallsignSetupWindow : Window
     {
         if (string.IsNullOrWhiteSpace(Callsign))
         {
-            MessageBox.Show(this, "Enter a callsign, or choose “Use computer callsign for now”.",
-                "WinTAKTracker", MessageBoxButton.OK, MessageBoxImage.Information);
+            ErrorText.Text = "Enter a callsign, or choose “Use computer callsign for now”.";
             return;
         }
 

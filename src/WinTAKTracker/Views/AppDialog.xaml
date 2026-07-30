@@ -1,0 +1,35 @@
+<Window x:Class="WinTAKTracker.Views.AppDialog"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Style="{DynamicResource AppWindow}"
+        Title="WinTAKTracker"
+        SizeToContent="Height"
+        Width="440"
+        MinWidth="360"
+        MinHeight="160"
+        WindowStartupLocation="CenterOwner"
+        ResizeMode="NoResize"
+        ShowInTaskbar="False">
+    <Grid Margin="24">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+        <TextBlock x:Name="TitleText"
+                   Grid.Row="0"
+                   FontSize="16"
+                   FontWeight="SemiBold"
+                   Foreground="{DynamicResource TextPrimaryBrush}"
+                   Margin="0,0,0,10"
+                   TextWrapping="Wrap"/>
+        <TextBlock x:Name="BodyText"
+                   Grid.Row="1"
+                   Style="{DynamicResource BlurbText}"
+                   Margin="0,0,0,20"/>
+        <StackPanel x:Name="ButtonRow"
+                    Grid.Row="2"
+                    Orientation="Horizontal"
+                    HorizontalAlignment="Right"/>
+    </Grid>
+</Window>

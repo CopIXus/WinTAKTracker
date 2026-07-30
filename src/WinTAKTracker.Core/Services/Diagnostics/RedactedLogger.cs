@@ -15,12 +15,14 @@ public enum LogLevel
 public interface IRedactedLogger
 {
     void SetMinLevel(LogLevel level);
+    void SetMaxTotalSizeMb(int megabytes);
     void Info(string category, string message);
     void Warn(string category, string message);
     void Error(string category, string message, Exception? ex = null);
     void Debug(string category, string message);
     string LogsDirectory { get; }
     void ClearOldLogs(TimeSpan olderThan);
+    void EnforceSizeLimit();
 }
 
 /// <summary>Rotating file logger that redacts tokens, passwords, and enroll URLs.</summary>
@@ -28,10 +30,12 @@ public sealed class RedactedLogger : IRedactedLogger, IDisposable
 {
     private readonly object _gate = new();
     private readonly string _logsDir;
-    private LogLevel _min = LogLevel.Information;
+    private LogLevel _min = LogLevel.Error;
+    private long _maxTotalBytes = 30L * 1024 * 1024;
     private StreamWriter? _writer;
     private string? _currentPath;
     private DateTime _currentDay = DateTime.MinValue;
+    private int _writesSinceTrim;
 
     private static readonly Regex SecretPatterns = new(
         @"(?i)(password|passwd|pwd|token|secret|authorization)=([^\s&""']+)|" +
@@ -48,6 +52,13 @@ public sealed class RedactedLogger : IRedactedLogger, IDisposable
     public string LogsDirectory => _logsDir;
 
     public void SetMinLevel(LogLevel level) => _min = level;
+
+    public void SetMaxTotalSizeMb(int megabytes)
+    {
+        var mb = Math.Clamp(megabytes, 1, 1024);
+        lock (_gate)
+            _maxTotalBytes = mb * 1024L * 1024L;
+    }
 
     public void Info(string category, string message) => Write(LogLevel.Information, category, message);
     public void Warn(string category, string message) => Write(LogLevel.Warning, category, message);
@@ -73,6 +84,12 @@ public sealed class RedactedLogger : IRedactedLogger, IDisposable
         }
     }
 
+    public void EnforceSizeLimit()
+    {
+        lock (_gate)
+            TrimToLimitUnlocked();
+    }
+
     private void Write(LogLevel level, string category, string message)
     {
         if (level < _min) return;
@@ -83,6 +100,12 @@ public sealed class RedactedLogger : IRedactedLogger, IDisposable
             EnsureWriter();
             _writer!.WriteLine(line);
             _writer.Flush();
+            _writesSinceTrim++;
+            if (_writesSinceTrim >= 25)
+            {
+                _writesSinceTrim = 0;
+                TrimToLimitUnlocked();
+            }
         }
     }
 
@@ -97,6 +120,69 @@ public sealed class RedactedLogger : IRedactedLogger, IDisposable
         {
             AutoFlush = true,
         };
+    }
+
+    private void TrimToLimitUnlocked()
+    {
+        try
+        {
+            var files = Directory.EnumerateFiles(_logsDir, "wintaktracker-*.log")
+                .Select(p =>
+                {
+                    var info = new FileInfo(p);
+                    return (Path: p, info.Length, info.LastWriteTimeUtc);
+                })
+                .OrderBy(f => f.LastWriteTimeUtc)
+                .ToList();
+
+            var total = files.Sum(f => f.Length);
+            if (total <= _maxTotalBytes) return;
+
+            // Prefer deleting oldest full files first (keep today's active log when possible).
+            foreach (var file in files)
+            {
+                if (total <= _maxTotalBytes) break;
+                if (string.Equals(file.Path, _currentPath, StringComparison.OrdinalIgnoreCase))
+                    continue;
+                try
+                {
+                    File.Delete(file.Path);
+                    total -= file.Length;
+                }
+                catch { /* ignore */ }
+            }
+
+            // If still over (single huge active file), truncate by rewriting the tail.
+            if (total > _maxTotalBytes && _currentPath is not null && File.Exists(_currentPath))
+            {
+                try
+                {
+                    _writer?.Dispose();
+                    _writer = null;
+                    var keep = Math.Max(_maxTotalBytes / 2, 256 * 1024);
+                    var bytes = File.ReadAllBytes(_currentPath);
+                    if (bytes.Length > keep)
+                    {
+                        var start = bytes.Length - (int)keep;
+                        // Align to next newline so we don't keep a partial line.
+                        while (start < bytes.Length && bytes[start] != (byte)'\n')
+                            start++;
+                        if (start < bytes.Length)
+                            start++;
+                        File.WriteAllBytes(_currentPath, bytes[start..]);
+                    }
+
+                    _currentDay = DateTime.MinValue;
+                    EnsureWriter();
+                }
+                catch
+                {
+                    _currentDay = DateTime.MinValue;
+                    EnsureWriter();
+                }
+            }
+        }
+        catch { /* ignore */ }
     }
 
     public static string Redact(string input)

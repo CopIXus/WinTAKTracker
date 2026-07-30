@@ -28,10 +28,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Fix reporting crash when Windows Location returns NaN speed/course (`TimeSpan` / CoT build)
 - Settings UI auto-saves options; service mode pushes config over IPC to ProgramData
 - Expanded project README (install, enrollment, GPS, privacy, companions, build, service)
-- Server cards: status pill beside name; compact Remove / Connect·Disconnect / Test on the right
+- Full light/dark theme: ComboBox dropdowns, scrollbars, buttons, Callsign/QR/password dialogs; themed in-app dialogs
+- Compact server rows: Connect checkbox · host · protocol:port · status pill · Test / ✕
+- Startup shows Windows Service status (Running / Stopped / Not installed) and Mode (Service vs Standalone)
+- Default log level **Error**; max log size default **30 MB** with rotation/trim
+- Updates: inline current/latest/status/last-checked — no popup for check / up-to-date
+- About: crisp logo + **CopIX LLC**; assembly / Setup publisher metadata CopIX LLC
 - Connected badge uses live stream state from the service over IPC (Test is a one-off probe and does not set Connected)
 - On tray attach: finish LocalAppData→ProgramData secret re-protect, refresh statuses, reload enabled profiles
-- Connect/Disconnect button label follows live Connected state
 
 ## [0.1.0] - 2026-07-30
 

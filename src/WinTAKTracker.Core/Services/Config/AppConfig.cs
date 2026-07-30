@@ -168,11 +168,16 @@ public sealed class UpdateSettings
     public bool AutomaticallyDownloadAndInstall { get; set; }
     public string ReleasesApiUrl { get; set; } =
         "https://api.github.com/repos/CopIXus/WinTAKTracker/releases/latest";
+    /// <summary>UTC timestamp of the last successful or failed update check (ISO 8601).</summary>
+    public string? LastCheckedUtc { get; set; }
 }
 
 public sealed class DiagnosticsSettings
 {
-    public string LogLevel { get; set; } = "Information";
+    /// <summary>Minimum log level written to disk. Default Error keeps machines quiet.</summary>
+    public string LogLevel { get; set; } = "Error";
+    /// <summary>Max total size of rotated log files in megabytes (trim oldest / truncate).</summary>
+    public int MaxLogSizeMb { get; set; } = 30;
 }
 
 public sealed class ServerProfile

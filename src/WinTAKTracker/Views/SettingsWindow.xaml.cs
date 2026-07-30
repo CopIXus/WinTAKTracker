@@ -1,7 +1,9 @@
 using System.Diagnostics;
+using System.Reflection;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
+using System.Windows.Media.Imaging;
 using System.Windows.Threading;
 using WinTAKTracker.Services;
 using WinTAKTracker.Services.Config;
@@ -99,11 +101,11 @@ public partial class SettingsWindow : Window
         }
 
         // Unlocked with password: offer lock / change
-        var choice = MessageBox.Show(
+        var choice = AppDialog.Show(
+            this,
             "Lock settings now?\n\nYes = Lock\nNo = Change lock password\nCancel = dismiss",
             "Settings lock",
-            MessageBoxButton.YesNoCancel,
-            MessageBoxImage.Question);
+            MessageBoxButton.YesNoCancel);
         if (choice == MessageBoxResult.Yes)
             _host.SettingsLock.Lock();
         else if (choice == MessageBoxResult.No)
@@ -516,8 +518,8 @@ public partial class SettingsWindow : Window
             panel.Children.Add(Btn("Forget all profiles", () =>
             {
                 if (!EnsureEditable()) return;
-                if (MessageBox.Show("Wipe ALL server profiles and certs?", "Forget all",
-                        MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes) return;
+                if (AppDialog.Show(this, "Wipe ALL server profiles and certs?", "Forget all",
+                        MessageBoxButton.YesNo, dangerPrimary: true) != MessageBoxResult.Yes) return;
                 _host.Tak.WipeAll(_host.Config, _host.ConfigStore);
                 ShowSection("Servers");
             }, edit, danger: true));
@@ -531,104 +533,103 @@ public partial class SettingsWindow : Window
         var card = new Border
         {
             Style = TryStyle("ServerCard"),
-            Margin = new Thickness(0, 0, 0, 10),
+            Margin = new Thickness(0, 0, 0, 6),
         };
 
-        var grid = new Grid();
-        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-
-        var info = new StackPanel { Margin = new Thickness(0, 0, 12, 0) };
-
-        var titleRow = new WrapPanel { Margin = new Thickness(0, 0, 0, 4) };
-        var title = new TextBlock
-        {
-            Text = string.IsNullOrWhiteSpace(server.DisplayName) ? server.Host : server.DisplayName,
-            FontWeight = FontWeights.SemiBold,
-            FontSize = 15,
-            Foreground = ThemeBrush("TextPrimaryBrush", new WpfSolidBrush(WpfColor.FromRgb(0x1A, 0x24, 0x20))),
-            VerticalAlignment = VerticalAlignment.Center,
-            TextTrimming = TextTrimming.CharacterEllipsis,
-            Margin = new Thickness(0, 0, 8, 0),
-        };
-        var statusBadge = StatusBadge(TakConnectionState.Disconnected);
-        titleRow.Children.Add(title);
-        titleRow.Children.Add(statusBadge);
-        info.Children.Add(titleRow);
-
-        var hostLine = string.IsNullOrWhiteSpace(server.Host)
-            ? $"{server.Protocol.ToUpperInvariant()} · port {server.Port}"
-            : $"{server.Host} · {server.Protocol.ToUpperInvariant()}:{server.Port}";
-        info.Children.Add(new TextBlock
-        {
-            Text = hostLine,
-            Foreground = ThemeBrush("TextSecondaryBrush", WpfBrushes.DimGray),
-            FontSize = 12,
-            Margin = new Thickness(0, 0, 0, 4),
-        });
-
-        var meta = new TextBlock
-        {
-            FontSize = 12,
-            Foreground = ThemeBrush("TextSecondaryBrush", new WpfSolidBrush(WpfColor.FromRgb(0x4A, 0x5C, 0x52))),
-            TextWrapping = TextWrapping.Wrap,
-        };
-        info.Children.Add(meta);
-
-        Grid.SetColumn(info, 0);
-        grid.Children.Add(info);
+        var root = new DockPanel { LastChildFill = true };
 
         var actions = new StackPanel
         {
-            Orientation = Orientation.Vertical,
-            VerticalAlignment = VerticalAlignment.Top,
-            MinWidth = 96,
+            Orientation = Orientation.Horizontal,
+            VerticalAlignment = VerticalAlignment.Center,
+            Margin = new Thickness(8, 0, 0, 0),
         };
+        DockPanel.SetDock(actions, Dock.Right);
 
-        var removeBtn = CompactBtn("Remove", () =>
+        var testBtn = CompactBtn("Test", async () =>
+        {
+            var (ok, message) = await _host.Tak.TestServerAsync(server.Id, _host.Config);
+            Msg(
+                ok
+                    ? $"{message}\n\nTest opens a temporary socket; check Connect to keep a live stream."
+                    : message,
+                ok ? MessageBoxImage.Information : MessageBoxImage.Warning);
+        }, edit);
+        testBtn.Margin = new Thickness(0, 0, 4, 0);
+
+        var removeBtn = new Button
+        {
+            Content = "✕",
+            Style = TryStyle("DangerIconButton") ?? TryStyle("IconButton"),
+            ToolTip = "Remove profile",
+            IsEnabled = edit,
+        };
+        removeBtn.Click += (_, _) =>
         {
             if (!EnsureEditable()) return;
-            if (MessageBox.Show(
-                    $"Delete profile \"{server.DisplayName}\" and its certs from this PC?",
+            var label = string.IsNullOrWhiteSpace(server.Host) ? server.DisplayName : server.Host;
+            if (AppDialog.Show(
+                    this,
+                    $"Delete profile \"{label}\" and its certs from this PC?",
                     "Remove profile",
                     MessageBoxButton.YesNo,
-                    MessageBoxImage.Warning) != MessageBoxResult.Yes) return;
+                    dangerPrimary: true) != MessageBoxResult.Yes) return;
             _host.Tak.WipeProfile(_host.Config, server.Id, _host.ConfigStore);
             if (_host.AttachedToService)
                 _ = _host.ReloadConnectionsAsync();
             ShowSection("Servers");
-        }, edit, danger: true);
+        };
 
-        var connectBtn = CompactBtn("Connect", () =>
+        actions.Children.Add(testBtn);
+        actions.Children.Add(removeBtn);
+        root.Children.Add(actions);
+
+        var primary = new DockPanel { LastChildFill = true, VerticalAlignment = VerticalAlignment.Center };
+
+        var connectCheck = new CheckBox
         {
-            if (!EnsureEditable()) return;
-            var live = _host.GetServerStatuses().FirstOrDefault(s => s.ProfileId == server.Id);
-            var connected = live?.State == TakConnectionState.Connected;
-            // Label matches live stream: Connected → disconnect; otherwise connect/retry.
-            server.Enabled = !connected;
+            Content = "Connect",
+            Margin = new Thickness(0, 0, 10, 0),
+            VerticalAlignment = VerticalAlignment.Center,
+            IsEnabled = edit,
+            IsChecked = server.Enabled,
+        };
+        DockPanel.SetDock(connectCheck, Dock.Left);
+
+        var statusBadge = StatusBadge(TakConnectionState.Disconnected);
+        DockPanel.SetDock(statusBadge, Dock.Right);
+        statusBadge.Margin = new Thickness(8, 0, 0, 0);
+
+        var host = string.IsNullOrWhiteSpace(server.Host) ? server.DisplayName : server.Host;
+        var protoPort = $"{server.Protocol.ToUpperInvariant()}:{server.Port}";
+        var title = new TextBlock
+        {
+            Text = string.IsNullOrWhiteSpace(host) ? protoPort : $"{host}  ·  {protoPort}",
+            FontWeight = FontWeights.SemiBold,
+            FontSize = 13,
+            Foreground = ThemeBrush("TextPrimaryBrush", new WpfSolidBrush(WpfColor.FromRgb(0x1A, 0x24, 0x20))),
+            VerticalAlignment = VerticalAlignment.Center,
+            TextTrimming = TextTrimming.CharacterEllipsis,
+            ToolTip = BuildServerTooltip(server),
+        };
+
+        primary.Children.Add(connectCheck);
+        primary.Children.Add(statusBadge);
+        primary.Children.Add(title);
+        root.Children.Add(primary);
+        card.Child = root;
+
+        var suppressing = false;
+        void OnConnectChanged(object? s, RoutedEventArgs e)
+        {
+            if (suppressing || !EnsureEditable()) return;
+            server.Enabled = connectCheck.IsChecked == true;
             Persist();
             _ = _host.ReloadConnectionsAsync();
-            ShowSection("Servers");
-        }, edit, primary: true);
+        }
 
-        var testBtn = CompactBtn("Test", async () =>
-        {
-            // One-off socket probe — does not change the Connected badge (live stream state).
-            var (ok, message) = await _host.Tak.TestServerAsync(server.Id, _host.Config);
-            Msg(
-                ok
-                    ? $"{message}\n\nTest opens a temporary socket; use Connect for a live stream."
-                    : message,
-                ok ? MessageBoxImage.Information : MessageBoxImage.Warning);
-        }, edit);
-
-        actions.Children.Add(removeBtn);
-        actions.Children.Add(connectBtn);
-        actions.Children.Add(testBtn);
-        Grid.SetColumn(actions, 1);
-        grid.Children.Add(actions);
-
-        card.Child = grid;
+        connectCheck.Checked += OnConnectChanged;
+        connectCheck.Unchecked += OnConnectChanged;
 
         void Refresh()
         {
@@ -636,24 +637,40 @@ public partial class SettingsWindow : Window
             var state = status?.State ?? TakConnectionState.Disconnected;
             var enabled = status?.Enabled ?? server.Enabled;
             ApplyStatusBadge(statusBadge, state, enabled, status?.LastErrorCode);
+            title.ToolTip = BuildServerTooltip(server, status?.LastErrorCode);
 
-            var hasCert = !string.IsNullOrWhiteSpace(server.ClientCertFileName) &&
-                          File.Exists(Path.Combine(_host.ConfigStore.CertsDirectory, server.ClientCertFileName!));
-            var identity = server.CallsignOverride
-                           ?? server.Username
-                           ?? _host.Config.Identity.GetEffectiveCallsign();
-            var certText = hasCert
-                ? "Cert OK"
-                : server.Protocol.Equals("ssl", StringComparison.OrdinalIgnoreCase)
-                    ? "No client cert"
-                    : "No cert (TCP)";
-            meta.Text = $"Identity: {identity}  ·  {certText}";
-            connectBtn.Content = state == TakConnectionState.Connected ? "Disconnect" : "Connect";
+            if (connectCheck.IsChecked != enabled)
+            {
+                suppressing = true;
+                connectCheck.IsChecked = enabled;
+                suppressing = false;
+            }
         }
 
         Refresh();
         _serverCardRefreshers.Add(Refresh);
         return card;
+    }
+
+    private string BuildServerTooltip(ServerProfile server, string? error = null)
+    {
+        var hasCert = !string.IsNullOrWhiteSpace(server.ClientCertFileName) &&
+                      File.Exists(Path.Combine(_host.ConfigStore.CertsDirectory, server.ClientCertFileName!));
+        var identity = server.CallsignOverride
+                       ?? server.Username
+                       ?? _host.Config.Identity.GetEffectiveCallsign();
+        var certText = hasCert
+            ? "Cert OK"
+            : server.Protocol.Equals("ssl", StringComparison.OrdinalIgnoreCase)
+                ? "No client cert"
+                : "No cert (TCP)";
+        var tip = $"Identity: {identity}  ·  {certText}";
+        if (!string.IsNullOrWhiteSpace(server.DisplayName) &&
+            !string.Equals(server.DisplayName, server.Host, StringComparison.OrdinalIgnoreCase))
+            tip = $"{server.DisplayName}\n{tip}";
+        if (!string.IsNullOrWhiteSpace(error))
+            tip += $"\n{error}";
+        return tip;
     }
 
     private static Border StatusBadge(TakConnectionState state)
@@ -1061,18 +1078,16 @@ public partial class SettingsWindow : Window
             if (!EnsureEditable()) return;
             if (!_host.Config.MeshSa.Enabled)
             {
-                MessageBox.Show("Enable Broadcast Mesh SA first.", "Mesh SA", MessageBoxButton.OK, MessageBoxImage.Information);
+                Msg("Enable Broadcast Mesh SA first.");
                 return;
             }
 
             _host.Mesh.Rebind();
             _host.Reporting.RequestAsap();
             RefreshStatusLive();
-            MessageBox.Show(
+            Msg(
                 $"Queued ASAP Mesh SA via {_host.Mesh.LastInterfaceDescription ?? "—"}.\n" +
                 (_host.Mesh.LastInterfaceWarning ?? "Check ATAK on the same LAN for your callsign."),
-                "Mesh SA",
-                MessageBoxButton.OK,
                 _host.Mesh.LastInterfaceWarning is null ? MessageBoxImage.Information : MessageBoxImage.Warning);
         }, edit, primary: true));
 
@@ -1136,6 +1151,18 @@ public partial class SettingsWindow : Window
     {
         var panel = new StackPanel();
         var edit = CanEdit;
+
+        panel.Children.Add(SectionHeader("Windows Service"));
+        panel.Children.Add(Chip("Service status", ConfigPaths.GetWindowsServiceStatusLabel()));
+        panel.Children.Add(Chip("Mode", ConfigPaths.GetTrackingModeLabel(_host.AttachedToService)));
+        panel.Children.Add(Blurb(
+            _host.AttachedToService
+                ? "Tray is attached to the Windows Service over IPC. Tracking continues after logoff when the service is Running."
+                : ConfigPaths.IsServiceInstalled()
+                    ? "Service is installed but this tray session is running Standalone (IPC not attached). Restart the tray or start the service to attach."
+                    : "Portable / Standalone mode — in-process tracking. Install via WinTAKTracker-Setup for always-on Service mode."));
+
+        panel.Children.Add(SectionHeader("Options", topMargin: 4));
         var start = new CheckBox
         {
             Content = "Start with Windows",
@@ -1171,21 +1198,49 @@ public partial class SettingsWindow : Window
     {
         var panel = new StackPanel();
         var edit = CanEdit;
+        var configuredLevel = _host.Config.Diagnostics.LogLevel;
+        var levels = new[] { "Debug", "Information", "Warning", "Error" };
+        if (!levels.Contains(configuredLevel, StringComparer.OrdinalIgnoreCase))
+            configuredLevel = "Error";
+
         var level = new ComboBox
         {
-            ItemsSource = new[] { "Debug", "Information", "Warning", "Error" },
-            SelectedItem = _host.Config.Diagnostics.LogLevel,
+            ItemsSource = levels,
+            SelectedItem = levels.FirstOrDefault(l => l.Equals(configuredLevel, StringComparison.OrdinalIgnoreCase)) ?? "Error",
             IsEnabled = edit,
         };
+        var maxSize = new TextBox
+        {
+            Text = Math.Clamp(_host.Config.Diagnostics.MaxLogSizeMb, 1, 1024).ToString(),
+            IsEnabled = edit,
+            Width = 120,
+            HorizontalAlignment = WpfHAlign.Left,
+        };
+
+        panel.Children.Add(Blurb("Logs are redacted (tokens, enroll URLs, key material). Default level is Error; raise temporarily when diagnosing."));
         panel.Children.Add(Label("Log level")); panel.Children.Add(level);
-        level.SelectionChanged += (_, _) =>
+        panel.Children.Add(Label("Max log size (MB)")); panel.Children.Add(maxSize);
+        panel.Children.Add(new TextBlock
+        {
+            Text = "When total size of log files exceeds this limit, oldest files are removed and the active file may be truncated.",
+            Style = TryStyle("HelperText"),
+        });
+
+        void SaveDiagnostics()
         {
             if (!CanEdit) return;
-            _host.Config.Diagnostics.LogLevel = level.SelectedItem?.ToString() ?? "Information";
-            if (Enum.TryParse<Services.Diagnostics.LogLevel>(_host.Config.Diagnostics.LogLevel, true, out var lv))
-                _host.Log.SetMinLevel(lv);
+            _host.Config.Diagnostics.LogLevel = level.SelectedItem?.ToString() ?? "Error";
+            if (int.TryParse(maxSize.Text.Trim(), out var mb))
+                _host.Config.Diagnostics.MaxLogSizeMb = Math.Clamp(mb, 1, 1024);
+            else
+                _host.Config.Diagnostics.MaxLogSizeMb = 30;
+            maxSize.Text = _host.Config.Diagnostics.MaxLogSizeMb.ToString();
             Persist();
-        };
+        }
+
+        level.SelectionChanged += (_, _) => SaveDiagnostics();
+        BindPersistText(maxSize, SaveDiagnostics);
+
         panel.Children.Add(Btn("Open log folder", () =>
         {
             Directory.CreateDirectory(_host.ConfigStore.LogsDirectory);
@@ -1195,7 +1250,14 @@ public partial class SettingsWindow : Window
         {
             if (!EnsureEditable()) return;
             _host.Log.ClearOldLogs(TimeSpan.FromDays(14));
+            _host.Log.EnforceSizeLimit();
             Msg("Old logs cleared.");
+        }, edit));
+        panel.Children.Add(Btn("Trim logs to size limit now", () =>
+        {
+            if (!EnsureEditable()) return;
+            _host.Log.EnforceSizeLimit();
+            Msg("Log size limit enforced.");
         }, edit));
         panel.Children.Add(Btn("Export redacted status…", () =>
         {
@@ -1221,17 +1283,28 @@ public partial class SettingsWindow : Window
             IsChecked = _host.Config.Updates.AutomaticallyDownloadAndInstall,
             IsEnabled = edit,
         };
-        panel.Children.Add(Chip("Current version", _host.Updates.CurrentVersion));
-        panel.Children.Add(Chip("Latest", _lastUpdateCheck?.LatestVersion ?? "(not checked)"));
-        if (!string.IsNullOrWhiteSpace(_lastUpdateCheck?.ReleaseNotes))
+
+        var current = _lastUpdateCheck?.CurrentVersion ?? _host.Updates.CurrentVersion;
+        var latest = _lastUpdateCheck?.LatestVersion;
+        var statusText = FormatUpdateStatus(_lastUpdateCheck);
+        var lastChecked = FormatLastChecked(_host.Config.Updates.LastCheckedUtc);
+
+        panel.Children.Add(Chip("Current version", current));
+        panel.Children.Add(Chip("Latest", latest ?? "(not checked)"));
+        panel.Children.Add(Chip("Status", statusText));
+        panel.Children.Add(Chip("Last checked", lastChecked));
+
+        if (!string.IsNullOrWhiteSpace(_lastUpdateCheck?.ReleaseNotes) && _lastUpdateCheck.UpdateAvailable)
         {
             panel.Children.Add(new TextBlock
             {
                 Text = _lastUpdateCheck.ReleaseNotes,
                 TextWrapping = TextWrapping.Wrap,
                 Margin = new Thickness(0, 8, 0, 8),
+                Foreground = ThemeBrush("TextSecondaryBrush", WpfBrushes.DimGray),
             });
         }
+
         panel.Children.Add(auto);
         auto.Checked += (_, _) =>
         {
@@ -1245,62 +1318,84 @@ public partial class SettingsWindow : Window
             _host.Config.Updates.AutomaticallyDownloadAndInstall = false;
             Persist();
         };
+
         var updateRow = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 8, 0, 0) };
         updateRow.Children.Add(Btn("Check for updates", async () =>
         {
             _lastUpdateCheck = await _host.Updates.CheckAsync();
-            if (!_lastUpdateCheck.Success)
-                Msg(_lastUpdateCheck.Error ?? "Check failed.", MessageBoxImage.Warning);
-            else if (_lastUpdateCheck.UpdateAvailable)
-                Msg($"Update available: {_lastUpdateCheck.LatestVersion}");
-            else if (!string.IsNullOrWhiteSpace(_lastUpdateCheck.Error))
-                Msg(_lastUpdateCheck.Error, MessageBoxImage.Warning);
-            else
-                Msg($"You are up to date (current {_lastUpdateCheck.CurrentVersion}, latest {_lastUpdateCheck.LatestVersion ?? "unknown"}).");
+            _host.Config.Updates.LastCheckedUtc = DateTimeOffset.UtcNow.ToString("O");
+            Persist();
+            // Inline only — no popup for up-to-date / available results.
             ShowSection("Updates");
         }));
-        updateRow.Children.Add(Spacer(8));
-        updateRow.Children.Add(Btn("Update now", async () =>
+
+        var updateAvailable = _lastUpdateCheck?.UpdateAvailable == true;
+        if (updateAvailable)
         {
-            if (!EnsureEditable()) return;
-            _lastUpdateCheck = await _host.Updates.CheckAsync();
-            if (!_lastUpdateCheck.Success)
+            updateRow.Children.Add(Spacer(8));
+            updateRow.Children.Add(Btn("Update now", async () =>
             {
-                Msg(_lastUpdateCheck.Error ?? "Update check failed.", MessageBoxImage.Warning);
-                ShowSection("Updates");
-                return;
-            }
-            if (!_lastUpdateCheck.UpdateAvailable)
-            {
-                Msg(!string.IsNullOrWhiteSpace(_lastUpdateCheck.Error)
-                    ? _lastUpdateCheck.Error
-                    : $"No update available (current {_lastUpdateCheck.CurrentVersion}, latest {_lastUpdateCheck.LatestVersion ?? "unknown"}).");
-                ShowSection("Updates");
-                return;
-            }
+                if (!EnsureEditable()) return;
+                _lastUpdateCheck = await _host.Updates.CheckAsync();
+                _host.Config.Updates.LastCheckedUtc = DateTimeOffset.UtcNow.ToString("O");
+                Persist();
+                if (!_lastUpdateCheck.Success || !_lastUpdateCheck.UpdateAvailable)
+                {
+                    ShowSection("Updates");
+                    return;
+                }
 
-            var confirm = MessageBox.Show(
-                $"Download and install version {_lastUpdateCheck.LatestVersion}?\n\n" +
-                "WinTAKTracker will quit, replace the EXE, and relaunch. Your settings and certs in LocalAppData are kept.",
-                "WinTAKTracker",
-                MessageBoxButton.OKCancel,
-                MessageBoxImage.Question);
-            if (confirm != MessageBoxResult.OK)
-                return;
+                var confirm = AppDialog.Show(
+                    this,
+                    $"Download and install version {_lastUpdateCheck.LatestVersion}?\n\n" +
+                    "WinTAKTracker will quit, replace the EXE, and relaunch. Your settings and certs are kept.",
+                    "Apply update",
+                    MessageBoxButton.OKCancel);
+                if (confirm != MessageBoxResult.OK)
+                    return;
 
-            var (ok, message) = await _host.Updates.DownloadAndApplyAsync(_lastUpdateCheck);
-            if (!ok)
-            {
-                Msg(message, MessageBoxImage.Warning);
-                ShowSection("Updates");
-                return;
-            }
+                var (ok, message) = await _host.Updates.DownloadAndApplyAsync(_lastUpdateCheck);
+                if (!ok)
+                {
+                    Msg(message, MessageBoxImage.Warning);
+                    ShowSection("Updates");
+                    return;
+                }
 
-            // Helper is waiting on our PID — exit immediately (do not block on another MessageBox).
-            Application.Current.Shutdown();
-        }, edit, primary: true));
+                Application.Current.Shutdown();
+            }, edit, primary: true));
+        }
+
         panel.Children.Add(updateRow);
+        if (_lastUpdateCheck is { Success: false } && !string.IsNullOrWhiteSpace(_lastUpdateCheck.Error))
+        {
+            panel.Children.Add(new TextBlock
+            {
+                Text = _lastUpdateCheck.Error,
+                Style = TryStyle("HelperText"),
+                Foreground = ThemeBrush("DangerBrush", WpfBrushes.DarkRed),
+                Margin = new Thickness(0, 10, 0, 0),
+            });
+        }
+
         return panel;
+    }
+
+    private static string FormatUpdateStatus(UpdateCheckResult? check)
+    {
+        if (check is null) return "Not checked yet";
+        if (!check.Success) return check.Error ?? "Check failed";
+        if (check.UpdateAvailable) return $"Update available ({check.LatestVersion})";
+        if (!string.IsNullOrWhiteSpace(check.Error)) return check.Error;
+        return "Up to date";
+    }
+
+    private static string FormatLastChecked(string? isoUtc)
+    {
+        if (string.IsNullOrWhiteSpace(isoUtc)) return "Never";
+        if (DateTimeOffset.TryParse(isoUtc, out var dto))
+            return dto.ToLocalTime().ToString("G");
+        return isoUtc;
     }
 
     private UIElement BuildAbout()
@@ -1308,28 +1403,50 @@ public partial class SettingsWindow : Window
         var panel = new StackPanel();
         try
         {
+            var bmp = new BitmapImage();
+            bmp.BeginInit();
+            bmp.UriSource = new Uri("pack://application:,,,/Assets/WinTAKTrackerLogo.png");
+            bmp.DecodePixelWidth = 256;
+            bmp.CacheOption = BitmapCacheOption.OnLoad;
+            bmp.CreateOptions = BitmapCreateOptions.IgnoreColorProfile;
+            bmp.EndInit();
+            bmp.Freeze();
+
             var logo = new System.Windows.Controls.Image
             {
-                Source = new System.Windows.Media.Imaging.BitmapImage(
-                    new Uri("pack://application:,,,/Assets/WinTAKTrackerLogo.png")),
-                Width = 96,
-                Height = 96,
-                Stretch = System.Windows.Media.Stretch.Uniform,
+                Source = bmp,
+                Width = 112,
+                Height = 112,
+                Stretch = Stretch.Uniform,
                 HorizontalAlignment = WpfHAlign.Left,
                 Margin = new Thickness(0, 0, 0, 12),
+                SnapsToDevicePixels = true,
             };
+            RenderOptions.SetBitmapScalingMode(logo, BitmapScalingMode.HighQuality);
             panel.Children.Add(logo);
         }
         catch { /* branding optional */ }
 
         var version = _host.Updates.CurrentVersion;
+        var company = Assembly.GetExecutingAssembly()
+                          .GetCustomAttribute<AssemblyCompanyAttribute>()?.Company
+                      ?? "CopIX LLC";
+
         panel.Children.Add(new TextBlock
         {
             Text = $"WinTAKTracker {version}",
             FontSize = 16,
             FontWeight = FontWeights.SemiBold,
             Foreground = ThemeBrush("TextPrimaryBrush", WpfBrushes.Black),
-            Margin = new Thickness(0, 0, 0, 8),
+            Margin = new Thickness(0, 0, 0, 4),
+        });
+        panel.Children.Add(new TextBlock
+        {
+            Text = company,
+            FontSize = 13,
+            FontWeight = FontWeights.SemiBold,
+            Foreground = ThemeBrush("TextSecondaryBrush", WpfBrushes.DimGray),
+            Margin = new Thickness(0, 0, 0, 12),
         });
         panel.Children.Add(Blurb(
             "Independent Windows PLI tracker. Not an official TAK Product Center application.\n\n" +
@@ -1452,8 +1569,13 @@ public partial class SettingsWindow : Window
     private static void OpenUrl(string url) =>
         Process.Start(new ProcessStartInfo { FileName = url, UseShellExecute = true });
 
-    private static void Msg(string text, MessageBoxImage icon = MessageBoxImage.Information) =>
-        MessageBox.Show(text, "WinTAKTracker", MessageBoxButton.OK, icon);
+    private static void Msg(string text, MessageBoxImage icon = MessageBoxImage.Information)
+    {
+        _ = icon;
+        var owner = Application.Current?.Windows.OfType<Window>().FirstOrDefault(w => w.IsActive)
+                    ?? Application.Current?.MainWindow;
+        AppDialog.Show(owner, text);
+    }
 
     private void PauseResumeButton_OnClick(object sender, RoutedEventArgs e) => _host.Pause.Toggle();
     private void CloseButton_OnClick(object sender, RoutedEventArgs e) => Close();

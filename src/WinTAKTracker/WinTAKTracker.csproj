@@ -10,8 +10,9 @@
     <RootNamespace>WinTAKTracker</RootNamespace>
     <AssemblyName>WinTAKTracker</AssemblyName>
     <Product>WinTAKTracker</Product>
-    <Company>CopIXus</Company>
-    <Authors>CopIXus</Authors>
+    <Company>CopIX LLC</Company>
+    <Authors>CopIX LLC</Authors>
+    <Copyright>Copyright © CopIX LLC</Copyright>
     <Description>Windows TAK PLI tracker — tray app for multi-server CoT and Mesh SA.</Description>
     <Version>0.1.0</Version>
     <AssemblyVersion>0.1.0.0</AssemblyVersion>

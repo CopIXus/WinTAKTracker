@@ -48,8 +48,7 @@ public sealed class TrackingHost : IDisposable
         ConfigStore.Save(Config);
 
         Log = new RedactedLogger(ConfigStore.LogsDirectory);
-        if (Enum.TryParse<LogLevel>(Config.Diagnostics.LogLevel, true, out var level))
-            Log.SetMinLevel(level);
+        ApplyLogSettings();
 
         Pause = new PauseService();
         Gps = new GpsService(Log);
@@ -149,8 +148,23 @@ public sealed class TrackingHost : IDisposable
     {
         Config.EnsureIdentityDefaults();
         ConfigStore.Save(Config);
+        ApplyLogSettings();
         Reporting.ApplyConfig(Config);
         Power.SetPreventSleep(Config.Startup.PreventSleepWhileTracking && !Pause.IsPaused);
+    }
+
+    public void ApplyLogSettings()
+    {
+        var levelName = Config.Diagnostics.LogLevel ?? "Error";
+        if (Enum.TryParse<LogLevel>(levelName, true, out var level))
+            Log.SetMinLevel(level);
+        else
+            Log.SetMinLevel(LogLevel.Error);
+
+        var maxMb = Config.Diagnostics.MaxLogSizeMb;
+        if (maxMb < 1) maxMb = 30;
+        Log.SetMaxTotalSizeMb(maxMb);
+        Log.EnforceSizeLimit();
     }
 
     public void ReplaceConfig(AppConfig config)

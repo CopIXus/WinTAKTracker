@@ -1,7 +1,7 @@
 <Window x:Class="WinTAKTracker.Views.SettingsWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Style="{StaticResource AppWindow}"
+        Style="{DynamicResource AppWindow}"
         Title="WinTAKTracker Settings"
         Height="600" Width="880"
         MinHeight="440" MinWidth="680"
@@ -30,7 +30,7 @@
                          Background="Transparent"
                          Foreground="{DynamicResource SidebarTextBrush}"
                          Padding="12,0"
-                         ItemContainerStyle="{StaticResource SidebarNavItem}"
+                         ItemContainerStyle="{DynamicResource SidebarNavItem}"
                          SelectionChanged="SectionList_OnSelectionChanged">
                     <ListBoxItem Content="Status" Tag="Status"/>
                     <ListBoxItem Content="Servers" Tag="Servers"/>
@@ -58,9 +58,9 @@
             <TextBlock x:Name="SectionTitle"
                        Grid.Row="0"
                        Text="Status"
-                       Style="{StaticResource SectionTitleText}"/>
+                       Style="{DynamicResource SectionTitleText}"/>
 
-            <Border Grid.Row="1" Style="{StaticResource ContentSurface}">
+            <Border Grid.Row="1" Style="{DynamicResource ContentSurface}">
                 <ScrollViewer VerticalScrollBarVisibility="Auto"
                               HorizontalScrollBarVisibility="Disabled"
                               Padding="0,0,4,0">
@@ -75,12 +75,12 @@
                     BorderThickness="0,1,0,0">
                 <DockPanel LastChildFill="False">
                     <Button x:Name="PauseResumeButton"
-                            Style="{StaticResource SecondaryButton}"
+                            Style="{DynamicResource SecondaryButton}"
                             Content="Pause tracking"
                             Margin="0,0,8,0"
                             Click="PauseResumeButton_OnClick"/>
                     <Button x:Name="LockSettingsButton"
-                            Style="{StaticResource SecondaryButton}"
+                            Style="{DynamicResource SecondaryButton}"
                             Content="Unlock…"
                             Margin="0,0,12,0"
                             Click="LockSettingsButton_OnClick"/>
@@ -89,7 +89,7 @@
                                Foreground="{DynamicResource TextSecondaryBrush}"
                                FontSize="12"/>
                     <Button Content="Close"
-                            Style="{StaticResource SecondaryButton}"
+                            Style="{DynamicResource SecondaryButton}"
                             Padding="18,7"
                             DockPanel.Dock="Right"
                             IsCancel="True"

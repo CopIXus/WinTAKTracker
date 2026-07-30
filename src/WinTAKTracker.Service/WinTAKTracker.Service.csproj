@@ -7,8 +7,9 @@
     <RootNamespace>WinTAKTracker.Service</RootNamespace>
     <AssemblyName>WinTAKTracker.Service</AssemblyName>
     <Product>WinTAKTracker</Product>
-    <Company>CopIXus</Company>
-    <Authors>CopIXus</Authors>
+    <Company>CopIX LLC</Company>
+    <Authors>CopIX LLC</Authors>
+    <Copyright>Copyright © CopIX LLC</Copyright>
     <Description>Windows Service host for always-on WinTAKTracker PLI.</Description>
     <Version>0.1.0</Version>
     <OutputType>Exe</OutputType>

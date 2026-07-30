@@ -44,10 +44,9 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- WPF pack URI + tray stream; ApplicationIcon above embeds native EXE icon. -->
     <Resource Include="Assets\WinTAKTrackerLogo.png" />
-    <Content Include="Assets\WinTAKTrackerLogo.ico">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </Content>
+    <Resource Include="Assets\WinTAKTrackerLogo.ico" />
   </ItemGroup>
 
 </Project>

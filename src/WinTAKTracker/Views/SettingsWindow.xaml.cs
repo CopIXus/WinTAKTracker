@@ -25,7 +25,6 @@ public partial class SettingsWindow : Window
     {
         _host = host;
         InitializeComponent();
-        TrySetWindowIcon();
         _refreshTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
         _host.Pause.PauseChanged += OnPauseChanged;
         Closed += (_, _) =>
@@ -44,17 +43,6 @@ public partial class SettingsWindow : Window
         SectionList.SelectedIndex = 0;
         RefreshPauseButton();
         ShowSection("Status");
-    }
-
-    private void TrySetWindowIcon()
-    {
-        var path = Path.Combine(AppContext.BaseDirectory, "Assets", "WinTAKTrackerLogo.ico");
-        if (!File.Exists(path)) return;
-        try
-        {
-            Icon = new System.Windows.Media.Imaging.BitmapImage(new Uri(path));
-        }
-        catch { /* optional */ }
     }
 
     private void SectionList_OnSelectionChanged(object sender, SelectionChangedEventArgs e)

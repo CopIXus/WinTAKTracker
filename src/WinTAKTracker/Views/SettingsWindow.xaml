@@ -5,7 +5,8 @@
         Height="560" Width="820"
         MinHeight="420" MinWidth="640"
         WindowStartupLocation="CenterScreen"
-        Background="#F3F3F3">
+        Background="#F3F3F3"
+        Icon="pack://application:,,,/Assets/WinTAKTrackerLogo.ico">
     <Grid>
         <Grid.ColumnDefinitions>
             <ColumnDefinition Width="200"/>

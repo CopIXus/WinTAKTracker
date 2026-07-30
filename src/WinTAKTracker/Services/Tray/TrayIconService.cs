@@ -152,6 +152,27 @@ public sealed class TrayIconService : IDisposable
 
     private static Icon LoadAppIcon()
     {
+        // Prefer WPF Resource (works for PublishSingleFile; Content files are not beside the EXE).
+        try
+        {
+            var uri = new Uri("pack://application:,,,/Assets/WinTAKTrackerLogo.ico");
+            var info = Application.GetResourceStream(uri);
+            if (info?.Stream is { } stream)
+            {
+                using (stream)
+                {
+                    using var ms = new MemoryStream();
+                    stream.CopyTo(ms);
+                    ms.Position = 0;
+                    return new Icon(ms);
+                }
+            }
+        }
+        catch
+        {
+            /* fall through */
+        }
+
         foreach (var fileName in new[] { "WinTAKTrackerLogo.ico", "tak.ico" })
         {
             var icoPath = Path.Combine(AppContext.BaseDirectory, "Assets", fileName);

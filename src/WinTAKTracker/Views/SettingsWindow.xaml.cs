@@ -160,7 +160,7 @@ public partial class SettingsWindow : Window
                 $"Acc: {(fix.AccuracyMeters is double ac ? $"{ac:F0} m" : "—")}" +
                 (fix.Source == GpsSourceKind.NetworkIp ? " (approximate IP location)" : "") + "\n") +
             $"Servers: {(string.IsNullOrEmpty(servers) ? "None" : servers)}\n" +
-            $"Mesh SA: {(_host.Config.MeshSa.Enabled ? $"On — last {_host.Mesh.LastSendUtc?.ToLocalTime():HH:mm:ss} ({_host.Mesh.LastInterfaceDescription ?? "—"})" : "Off")}\n" +
+            $"Mesh SA: {FormatMeshStatusLine()}\n" +
             $"Last PLI: {_host.Reporting.LastPliSentUtc?.ToLocalTime().ToString("G") ?? "—"}";
 
         _mapPreview?.UpdateFix(fix, _host.Config.Identity.Team);
@@ -429,10 +429,24 @@ public partial class SettingsWindow : Window
         return panel;
     }
 
+    private string FormatMeshStatusLine()
+    {
+        if (!_host.Config.MeshSa.Enabled) return "Off";
+        var last = _host.Mesh.LastSendUtc?.ToLocalTime().ToString("HH:mm:ss") ?? "no send yet";
+        var iface = _host.Mesh.LastInterfaceDescription ?? "—";
+        var line = $"On — last {last} via {iface}";
+        if (_host.Mesh.LastErrorCode is not null)
+            line += $" (error: {_host.Mesh.LastErrorCode})";
+        else if (_host.Mesh.LastInterfaceWarning is not null)
+            line += " ⚠ VPN/tunnel NIC — LAN ATAK may not see you";
+        return line;
+    }
+
     private UIElement BuildMeshSa()
     {
         var panel = new StackPanel();
-        panel.Children.Add(Blurb("UDP multicast Mesh SA (ATAK defaults 239.2.3.1:6969). Always-on with servers by default. Changes auto-save."));
+        panel.Children.Add(Blurb(
+            "UDP multicast Mesh SA (ATAK defaults 239.2.3.1:6969). Auto prefers Wi‑Fi/Ethernet and skips Tailscale/VPN tunnels. Changes auto-save."));
         var enabled = new CheckBox { Content = "Broadcast Mesh SA", IsChecked = _host.Config.MeshSa.Enabled };
         var mode = new ComboBox
         {
@@ -446,8 +460,32 @@ public partial class SettingsWindow : Window
         panel.Children.Add(enabled);
         panel.Children.Add(Label("Mode")); panel.Children.Add(mode);
         panel.Children.Add(Label("Network interface")); panel.Children.Add(nic);
-        panel.Children.Add(Chip("Status",
-            $"Last send {_host.Mesh.LastSendUtc?.ToLocalTime():G} via {_host.Mesh.LastInterfaceDescription ?? "—"}"));
+        panel.Children.Add(Blurb(
+            "Pick your Wi‑Fi or Ethernet adapter if Auto still shows a VPN name. Tailscale/Wintun does not carry ATAK Mesh multicast to LAN peers."));
+
+        var statusChip = Chip("Status", MeshSaStatusText());
+        panel.Children.Add(statusChip);
+        if (_host.Mesh.LastInterfaceWarning is not null)
+            panel.Children.Add(Blurb(_host.Mesh.LastInterfaceWarning));
+
+        panel.Children.Add(Btn("Send test Mesh SA now", () =>
+        {
+            if (!_host.Config.MeshSa.Enabled)
+            {
+                MessageBox.Show("Enable Broadcast Mesh SA first.", "Mesh SA", MessageBoxButton.OK, MessageBoxImage.Information);
+                return;
+            }
+
+            _host.Mesh.Rebind();
+            _host.Reporting.RequestAsap();
+            RefreshStatusLive();
+            MessageBox.Show(
+                $"Queued ASAP Mesh SA via {_host.Mesh.LastInterfaceDescription ?? "—"}.\n" +
+                (_host.Mesh.LastInterfaceWarning ?? "Check ATAK on the same LAN for your callsign."),
+                "Mesh SA",
+                MessageBoxButton.OK,
+                _host.Mesh.LastInterfaceWarning is null ? MessageBoxImage.Information : MessageBoxImage.Warning);
+        }));
 
         void SaveMesh()
         {
@@ -456,6 +494,8 @@ public partial class SettingsWindow : Window
             _host.Config.MeshSa.NetworkInterface = nic.SelectedItem?.ToString() ?? "Auto";
             Persist();
             _host.Mesh.ApplySettings(_host.Config.MeshSa);
+            if (statusChip.Child is TextBlock tb)
+                tb.Text = $"Status: {MeshSaStatusText()}";
         }
 
         enabled.Checked += (_, _) => SaveMesh();
@@ -463,6 +503,10 @@ public partial class SettingsWindow : Window
         mode.SelectionChanged += (_, _) => SaveMesh();
         nic.SelectionChanged += (_, _) => SaveMesh();
         return panel;
+
+        string MeshSaStatusText() =>
+            $"Last send {_host.Mesh.LastSendUtc?.ToLocalTime():G} via {_host.Mesh.LastInterfaceDescription ?? "—"}" +
+            (_host.Mesh.LastErrorCode is not null ? $" ({_host.Mesh.LastErrorCode})" : "");
     }
 
     private UIElement BuildViewMap()

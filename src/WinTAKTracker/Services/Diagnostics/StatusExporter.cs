@@ -55,6 +55,7 @@ public sealed class StatusExporter
                 mode = config.MeshSa.Mode,
                 lastSendUtc = mesh.LastSendUtc,
                 lastInterface = mesh.LastInterfaceDescription,
+                lastInterfaceWarning = mesh.LastInterfaceWarning,
                 lastErrorCode = mesh.LastErrorCode,
             },
             identity = new

@@ -16,6 +16,7 @@ Status legend: **Shipping** (in the current public build), **In progress**, **Pl
 | First-login callsign prompt (skip → computer callsign) | Shipping |
 | DPAPI-protected config (LocalAppData CurrentUser; ProgramData LocalMachine for service) | Shipping |
 | Windows Service always-on host + tray IPC companion | Shipping (vertical slice) |
+| One-click Setup (`WinTAKTracker-Setup.exe`) — service + tray, elevated install | Shipping |
 
 ## Multi-server TAK
 

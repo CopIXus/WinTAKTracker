@@ -32,17 +32,30 @@ See [FEATURES.md](FEATURES.md) for the full status table, and the docs site: [Fe
 
 ## Install (from Releases)
 
-Download the latest self-contained build — no separate .NET runtime required:
+Download the latest build — no separate .NET runtime required:
 
 **[https://github.com/CopIXus/WinTAKTracker/releases/latest](https://github.com/CopIXus/WinTAKTracker/releases/latest)**
 
+### Recommended: one-click Setup
+
+1. Download **`WinTAKTracker-Setup.exe`** (optionally verify `WinTAKTracker-Setup.exe.sha256`).
+2. Double-click and accept the UAC prompt (administrator required once).
+3. Finish the wizard — this installs the **Windows Service** (auto-start) and the **tray client** under Program Files, creates a Start Menu shortcut, optionally migrates `%LocalAppData%\WinTAKTracker` config, and can launch the tray app.
+4. Open **Settings** from the tray icon.
+
+Uninstall from **Apps & features** (or Start Menu → Uninstall) — the service is stopped and removed cleanly.
+
+### Portable EXE (no service)
+
 1. Grab `WinTAKTracker.exe` (optionally verify `WinTAKTracker.exe.sha256`).
-2. Run it. **Unsigned** GitHub downloads may trip SmartScreen or Windows 11 **Smart App Control** (SAC is stricter than SmartScreen). Temporary options: **More info → Run anyway**, Properties → **Unblock**, or adjust SAC — details in [docs/code-signing.md](docs/code-signing.md).
+2. Run it. Tracking runs in-process under `%LocalAppData%\WinTAKTracker\` (no always-on after logoff).
 3. Open **Settings** from the tray icon (left-click or context menu).
+
+**Unsigned** GitHub downloads may trip SmartScreen or Windows 11 **Smart App Control** (SAC is stricter than SmartScreen). Temporary options: **More info → Run anyway**, Properties → **Unblock**, or adjust SAC — details in [docs/code-signing.md](docs/code-signing.md).
 
 Every push to `main` publishes a Release with version `0.1.<run_number>` (git tag `build-0.1.<run_number>` so it does not re-trigger the `v*` workflow). Annotated SemVer tags (`v1.2.3`) still produce versioned releases.
 
-**Code signing:** Release CI signs `WinTAKTracker.exe` **only when** Azure Trusted Signing / Artifact Signing or PFX secrets are configured. Releases stay unsigned for contributors until those secrets exist — see [docs/code-signing.md](docs/code-signing.md).
+**Code signing:** Release CI signs `WinTAKTracker-Setup.exe` and `WinTAKTracker.exe` **only when** Azure Trusted Signing / Artifact Signing or PFX secrets are configured. Releases stay unsigned for contributors until those secrets exist — see [docs/code-signing.md](docs/code-signing.md).
 
 ## Setup / enrollment
 
@@ -74,6 +87,10 @@ Fictional samples for docs/tests (no real hosts/tokens):
 Pause mutes outbound reporting; it does not invent precision. Windows Location CoT `ce` uses the OS-reported accuracy (often tens of meters with Wi‑Fi). Network IP fixes use estimated CoT `how` and a large `ce`.
 
 ## Always-on Windows Service
+
+**Preferred:** use **`WinTAKTracker-Setup.exe`** from Releases (service + tray in one elevated install).
+
+Advanced / from source:
 
 ```powershell
 dotnet publish src/WinTAKTracker.Service -c Release -r win-x64 --self-contained true -o publish/service
@@ -116,7 +133,7 @@ dotnet publish src/WinTAKTracker -c Release -r win-x64 --self-contained true `
   -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true
 ```
 
-CI (`.github/workflows/release.yml`) publishes `WinTAKTracker.exe` + SHA256 on every push to `main` and on `v*` tags. Optional Authenticode signing runs when secrets are set ([docs/code-signing.md](docs/code-signing.md)).
+CI (`.github/workflows/release.yml`) publishes **`WinTAKTracker-Setup.exe`** (primary), portable `WinTAKTracker.exe`, the service zip, and SHA256 sidecars on every push to `main` and on `v*` tags. Optional Authenticode signing runs when secrets are set ([docs/code-signing.md](docs/code-signing.md)).
 
 ## Docs and changelog
 

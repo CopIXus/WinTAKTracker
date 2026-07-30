@@ -198,7 +198,7 @@ jobs:
             throw "Authenticode signature not Valid after signing (Status=$($sig.Status))"
           }
 
-      - name: Write SHA256 sidecar
+      - name: Write SHA256 sidecar (portable EXE)
         shell: pwsh
         run: |
           $exe = "dist/WinTAKTracker.exe"
@@ -206,6 +206,119 @@ jobs:
           $hash = (Get-FileHash -Algorithm SHA256 $exe).Hash.ToLowerInvariant()
           Set-Content -Path dist/WinTAKTracker.exe.sha256 -Value "$hash  WinTAKTracker.exe" -NoNewline
           Write-Host "SHA256=$hash (computed after optional signing)"
+
+      # Build one-click Setup after the tray EXE is staged (and optionally signed),
+      # so the bundled WinTAKTracker.exe inside the installer matches the portable asset.
+      - name: Install Inno Setup
+        shell: pwsh
+        run: |
+          function Find-ISCC {
+            @(
+              "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe",
+              "${env:ProgramFiles}\Inno Setup 6\ISCC.exe"
+            ) | Where-Object { Test-Path $_ } | Select-Object -First 1
+          }
+          $iscc = Find-ISCC
+          if (-not $iscc) {
+            Write-Host "Installing Inno Setup via Chocolatey…"
+            choco install innosetup --no-progress -y
+            $iscc = Find-ISCC
+          }
+          if (-not $iscc) {
+            # Fallback: official GitHub release asset (jrsoftware/issrc)
+            $tmp = Join-Path $env:RUNNER_TEMP "innosetup-install.exe"
+            $url = "https://github.com/jrsoftware/issrc/releases/download/is-6_4_3/innosetup-6.4.3.exe"
+            Write-Host "Chocolatey path missing ISCC — downloading $url"
+            Invoke-WebRequest -Uri $url -OutFile $tmp -UseBasicParsing
+            Start-Process -FilePath $tmp -ArgumentList "/VERYSILENT","/SUPPRESSMSGBOXES","/NORESTART","/SP-" -Wait
+            $iscc = Find-ISCC
+          }
+          if (-not $iscc) { throw "ISCC.exe not found after Inno Setup install" }
+          Write-Host "ISCC=$iscc"
+
+      - name: Build WinTAKTracker-Setup.exe
+        shell: pwsh
+        run: |
+          $version = "${{ steps.ver.outputs.version }}"
+          if ($version -match '^(\d+)\.(\d+)\.(\d+)') {
+            $versionInfo = "$($Matches[1]).$($Matches[2]).$($Matches[3]).0"
+          } else {
+            $versionInfo = "0.0.0.0"
+          }
+          # Prefer already-signed staged EXE for the installer payload
+          Copy-Item dist/WinTAKTracker.exe publish/WinTAKTracker.exe -Force
+          & scripts/build-installer.ps1 -Version $version -VersionInfo $versionInfo -SkipChoco
+          if (-not (Test-Path "dist/WinTAKTracker-Setup.exe")) {
+            throw "Missing dist/WinTAKTracker-Setup.exe"
+          }
+
+      - name: Sign Setup with Azure Artifact Signing
+        if: steps.sign.outputs.method == 'trusted-signing'
+        uses: azure/artifact-signing-action@v2
+        with:
+          azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          azure-client-secret: ${{ secrets.AZURE_CLIENT_SECRET }}
+          endpoint: ${{ secrets.AZURE_TRUSTED_SIGNING_ENDPOINT }}
+          signing-account-name: ${{ secrets.AZURE_TRUSTED_SIGNING_ACCOUNT }}
+          certificate-profile-name: ${{ secrets.AZURE_TRUSTED_SIGNING_CERTIFICATE_PROFILE }}
+          files: ${{ github.workspace }}\dist\WinTAKTracker-Setup.exe
+          file-digest: SHA256
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          timestamp-digest: SHA256
+
+      - name: Sign Setup with PFX (signtool)
+        if: steps.sign.outputs.method == 'pfx'
+        shell: pwsh
+        env:
+          CODE_SIGN_PFX_BASE64: ${{ secrets.CODE_SIGN_PFX_BASE64 }}
+          CODE_SIGN_PFX_PASSWORD: ${{ secrets.CODE_SIGN_PFX_PASSWORD }}
+        run: |
+          $exe = Join-Path $env:GITHUB_WORKSPACE "dist\WinTAKTracker-Setup.exe"
+          if (-not (Test-Path $exe)) { throw "Missing $exe" }
+          $pfxPath = Join-Path $env:RUNNER_TEMP "codesign.pfx"
+          try {
+            [IO.File]::WriteAllBytes($pfxPath, [Convert]::FromBase64String($env:CODE_SIGN_PFX_BASE64))
+            $signtool = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin\*\x64\signtool.exe" -ErrorAction SilentlyContinue |
+              Sort-Object FullName -Descending |
+              Select-Object -First 1
+            if (-not $signtool) {
+              throw "signtool.exe not found under Windows Kits. Install Windows SDK on the runner image."
+            }
+            & $signtool.FullName sign `
+              /fd SHA256 `
+              /td SHA256 `
+              /tr http://timestamp.digicert.com `
+              /f $pfxPath `
+              /p $env:CODE_SIGN_PFX_PASSWORD `
+              $exe
+            if ($LASTEXITCODE -ne 0) { throw "signtool sign failed with exit $LASTEXITCODE" }
+            & $signtool.FullName verify /pa /v $exe
+            if ($LASTEXITCODE -ne 0) { throw "signtool verify failed with exit $LASTEXITCODE" }
+          }
+          finally {
+            if (Test-Path $pfxPath) { Remove-Item -Force $pfxPath }
+          }
+
+      - name: Verify Setup Authenticode signature
+        if: steps.sign.outputs.method != 'none'
+        shell: pwsh
+        run: |
+          $exe = "dist/WinTAKTracker-Setup.exe"
+          $sig = Get-AuthenticodeSignature -FilePath $exe
+          Write-Host "Status=$($sig.Status) Signer=$($sig.SignerCertificate.Subject)"
+          if ($sig.Status -ne 'Valid') {
+            throw "Authenticode signature not Valid after signing Setup (Status=$($sig.Status))"
+          }
+
+      - name: Write SHA256 sidecar (Setup)
+        shell: pwsh
+        run: |
+          $exe = "dist/WinTAKTracker-Setup.exe"
+          if (-not (Test-Path $exe)) { throw "Missing $exe" }
+          $hash = (Get-FileHash -Algorithm SHA256 $exe).Hash.ToLowerInvariant()
+          Set-Content -Path dist/WinTAKTracker-Setup.exe.sha256 -Value "$hash  WinTAKTracker-Setup.exe" -NoNewline
+          Write-Host "Setup SHA256=$hash"
 
       - name: Extract release notes
         id: notes
@@ -251,6 +364,8 @@ jobs:
           body_path: ${{ steps.notes.outputs.file }}
           prerelease: ${{ steps.ver.outputs.prerelease }}
           files: |
+            dist/WinTAKTracker-Setup.exe
+            dist/WinTAKTracker-Setup.exe.sha256
             dist/WinTAKTracker.exe
             dist/WinTAKTracker.exe.sha256
             dist/WinTAKTracker.Service-win-x64.zip

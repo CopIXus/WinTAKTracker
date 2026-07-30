@@ -16,11 +16,16 @@
 
 .PARAMETER MigrateUserConfig
   Copy/migrate the current user's LocalAppData config into ProgramData before start.
+
+.PARAMETER RegisterOnly
+  Skip copying binaries (files already in InstallDir). Only (re)register and start the SCM service.
+  Used by the Inno Setup installer after it stages files under Program Files.
 #>
 param(
     [string]$SourceDir = "",
     [string]$InstallDir = "$env:ProgramFiles\WinTAKTracker",
     [switch]$MigrateUserConfig,
+    [switch]$RegisterOnly,
     [switch]$Uninstall
 )
 
@@ -54,7 +59,9 @@ if ($Uninstall) {
     return
 }
 
-if (-not $SourceDir) {
+if ($RegisterOnly) {
+    $SourceDir = $InstallDir
+} elseif (-not $SourceDir) {
     $repoPublish = Join-Path $PSScriptRoot '..\publish\service'
     if (Test-Path (Join-Path $repoPublish 'WinTAKTracker.Service.exe')) {
         $SourceDir = (Resolve-Path $repoPublish).Path
@@ -68,11 +75,14 @@ if (-not (Test-Path $exe)) {
     throw "WinTAKTracker.Service.exe not found in $SourceDir"
 }
 
-New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
-Write-Host "Copying binaries → $InstallDir"
-Copy-Item -Path (Join-Path $SourceDir '*') -Destination $InstallDir -Recurse -Force
-
 $binPath = Join-Path $InstallDir 'WinTAKTracker.Service.exe'
+if (-not $RegisterOnly) {
+    New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
+    Write-Host "Copying binaries → $InstallDir"
+    Copy-Item -Path (Join-Path $SourceDir '*') -Destination $InstallDir -Recurse -Force
+} elseif (-not (Test-Path $binPath)) {
+    throw "RegisterOnly set but WinTAKTracker.Service.exe not found in $InstallDir"
+}
 $existing = Get-Service -Name $ServiceName -ErrorAction SilentlyContinue
 if ($existing) {
     if ($existing.Status -eq 'Running') { Stop-Service -Name $ServiceName -Force }

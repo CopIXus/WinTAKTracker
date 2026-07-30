@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **One-click Setup** — Inno Setup `WinTAKTracker-Setup.exe` installs service + tray under Program Files with a single UAC prompt; Start Menu / optional Desktop shortcuts; optional LocalAppData→ProgramData migrate; clean service uninstall ([docs/windows-service.md](docs/windows-service.md))
 - **Windows Service** vertical slice: `WinTAKTracker.Core` + `WinTAKTracker.Service`, named-pipe IPC, `%ProgramData%` machine store with LocalMachine DPAPI, `scripts/install-service.ps1` ([docs/windows-service.md](docs/windows-service.md))
 - **Computer vs per-user callsign** — computer identity when logged off; per-user identity when logged in; first-login callsign prompt
 - Default callsign uses the Windows computer name when unset (replaces hard-coded `WIN-TRACKER`)

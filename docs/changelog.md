@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- One-click **`WinTAKTracker-Setup.exe`** (Inno Setup) — service + tray, single UAC prompt ([Windows Service](windows-service.md))
 - Windows Service + Core library + named-pipe IPC; computer vs per-user callsign ([Windows Service](windows-service.md))
 - Optional Authenticode signing in release CI when secrets are set; [Code signing](code-signing.md) for SmartScreen / Smart App Control
 

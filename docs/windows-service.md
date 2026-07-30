@@ -48,19 +48,43 @@ Legacy `identity` in `config.json` is mirrored from `computerIdentity` for compa
 
 ## Install / run
 
-### Build
+### Recommended: one-click Setup
+
+From [GitHub Releases](https://github.com/CopIXus/WinTAKTracker/releases/latest), download **`WinTAKTracker-Setup.exe`** and run it (one UAC prompt). The installer:
+
+1. Installs the tray client and service binaries to `%ProgramFiles%\WinTAKTracker\`
+2. Registers the `WinTAKTracker` SCM service (auto-start, LocalSystem) and starts it
+3. Creates a Start Menu shortcut (optional Desktop shortcut)
+4. Optionally migrates portable config from `%LocalAppData%\WinTAKTracker` → `%ProgramData%\WinTAKTracker`
+5. Can launch the tray app when finished
+
+Uninstall via **Apps & features** (or the Start Menu uninstall entry) — Setup stops and deletes the service, then removes Program Files.
+
+Offline: the Setup EXE bundles all binaries; no network download mid-install.
+
+### Build from source
 
 ```powershell
 dotnet build WinTAKTracker.sln -c Release
 dotnet publish src/WinTAKTracker.Service -c Release -r win-x64 --self-contained true -o publish/service
-dotnet publish src/WinTAKTracker -c Release -r win-x64 --self-contained true -o publish/tray
+dotnet publish src/WinTAKTracker -c Release -r win-x64 --self-contained true -o publish
+# Optional: compile Setup locally (requires Inno Setup 6 / ISCC):
+# scripts\build-installer.ps1 -Version 0.1.0
 ```
 
-### Install service (elevated)
+### Manual service install (elevated)
+
+For advanced / CI-less installs without the Setup EXE:
 
 ```powershell
 # From repo root, after publish:
 powershell -ExecutionPolicy Bypass -File scripts\install-service.ps1 -MigrateUserConfig
+```
+
+Or register files already under Program Files (e.g. after a custom copy):
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\install-service.ps1 -RegisterOnly -MigrateUserConfig
 ```
 
 Manual equivalent:
@@ -71,7 +95,11 @@ sc.exe failure WinTAKTracker reset= 86400 actions= restart/5000/restart/10000/re
 sc.exe start WinTAKTracker
 ```
 
-Uninstall: `scripts\install-service.ps1 -Uninstall` or `sc.exe stop/delete WinTAKTracker`.
+Uninstall: Apps & features (Setup), or `scripts\install-service.ps1 -Uninstall`, or `sc.exe stop/delete WinTAKTracker`.
+
+### Portable tray only (no service)
+
+Run `WinTAKTracker.exe` from Releases without Setup — in-process tracking under `%LocalAppData%\WinTAKTracker\`. See README.
 
 ### Run without installing (dev)
 
@@ -116,7 +144,7 @@ Named pipe **`WinTAKTracker.Control`** (ACL: Users read/write, Administrators + 
 
 - Service-aware updater (stop service → replace binaries → start)
 - Dedicated service account (least privilege) instead of LocalSystem
-- WiX / MSIX installer UI
+- MSIX / Store packaging (Inno Setup one-click installer ships today)
 - Optional companion bridge for Windows Location fixes over IPC while logged on
 - Refined Settings chrome beyond computer vs my callsign fields
 

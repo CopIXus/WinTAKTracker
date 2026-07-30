@@ -8,7 +8,7 @@ Windows TAK PLI tracker: tray UI plus optional always-on **Windows Service**. Re
 
 ## Download
 
-**[Download the latest release](https://github.com/CopIXus/WinTAKTracker/releases/latest)** — self-contained `WinTAKTracker.exe` for Windows 10/11 (x64). No separate .NET install required.
+**[Download the latest release](https://github.com/CopIXus/WinTAKTracker/releases/latest)** — preferred: **`WinTAKTracker-Setup.exe`** (service + tray, one UAC prompt). Portable `WinTAKTracker.exe` also available. Windows 10/11 x64; no separate .NET install required.
 
 **Unsigned** downloads may trip SmartScreen or Windows 11 Smart App Control. Workarounds and the Authenticode plan: [Code signing](code-signing.md). Release CI signs only when secrets are configured — do not assume a build is signed until you verify.
 

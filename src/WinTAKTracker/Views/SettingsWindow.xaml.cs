@@ -51,10 +51,10 @@ public partial class SettingsWindow : Window
         };
         _refreshTimer.Start();
 
-        SectionList.SelectedIndex = 0;
         RefreshPauseButton();
         RefreshLockChrome();
-        ShowSection("Status");
+        // SelectionChanged → ShowSection; do not call ShowSection again (re-parents map preview).
+        SectionList.SelectedIndex = 0;
     }
 
     private void OnLockStateChanged(object? sender, EventArgs e) =>
@@ -253,8 +253,7 @@ public partial class SettingsWindow : Window
         _statusPanel.Children.Add(copyRow);
 
         _mapPreview ??= new MapPreviewControl();
-        if (_mapPreview.Parent is System.Windows.Controls.Panel oldParent)
-            oldParent.Children.Remove(_mapPreview);
+        DetachFromLogicalParent(_mapPreview);
 
         _statusPanel.Children.Add(SectionHeader("Self map preview"));
         _statusPanel.Children.Add(new Border
@@ -267,6 +266,29 @@ public partial class SettingsWindow : Window
         });
         RefreshStatusLive();
         return _statusPanel;
+    }
+
+    /// <summary>
+    /// Clears a FrameworkElement from its current logical parent so it can be re-hosted.
+    /// Map preview lives in a Border.Child (Decorator), not a Panel — Panel.Remove alone never ran.
+    /// </summary>
+    private static void DetachFromLogicalParent(FrameworkElement element)
+    {
+        switch (element.Parent)
+        {
+            case System.Windows.Controls.Panel panel:
+                panel.Children.Remove(element);
+                break;
+            case Decorator decorator:
+                decorator.Child = null;
+                break;
+            case System.Windows.Controls.ContentControl contentControl:
+                contentControl.Content = null;
+                break;
+            case ContentPresenter presenter:
+                presenter.Content = null;
+                break;
+        }
     }
 
     private UIElement StatusRow(string key, string value)

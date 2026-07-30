@@ -1,0 +1,26 @@
+<Window x:Class="WinTAKTracker.Views.QrScanWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Scan enrollment QR"
+        Height="520" Width="640"
+        WindowStartupLocation="CenterOwner"
+        Background="#F3F3F3">
+    <DockPanel Margin="16">
+        <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,12,0,0">
+            <Button Content="Cancel" Width="90" Margin="0,0,8,0" IsCancel="True" Click="Cancel_OnClick"/>
+            <Button Content="Use paste instead" Width="130" Click="Paste_OnClick"/>
+        </StackPanel>
+        <StackPanel>
+            <TextBlock Text="Point the camera at a TAK / OpenTAK Tracker enrollment QR code."
+                       TextWrapping="TextWrap" Margin="0,0,0,8"/>
+            <DockPanel Margin="0,0,0,8">
+                <TextBlock Text="Camera" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                <ComboBox x:Name="CameraCombo" Width="280" SelectionChanged="CameraCombo_OnSelectionChanged"/>
+            </DockPanel>
+            <Border BorderBrush="#CCC" BorderThickness="1" Height="340" Background="Black">
+                <Image x:Name="PreviewImage" Stretch="Uniform"/>
+            </Border>
+            <TextBlock x:Name="StatusText" Margin="0,8,0,0" Foreground="#555"/>
+        </StackPanel>
+    </DockPanel>
+</Window>

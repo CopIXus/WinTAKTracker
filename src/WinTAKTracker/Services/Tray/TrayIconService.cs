@@ -1,25 +1,23 @@
+using System.Diagnostics;
 using System.Drawing;
 using System.Windows;
-using WinTAKTracker.Services.Pause;
 using WinTAKTracker.Views;
 using Forms = System.Windows.Forms;
 
 namespace WinTAKTracker.Services.Tray;
 
-/// <summary>
-/// WinForms NotifyIcon host for the WPF tray experience.
-/// </summary>
+/// <summary>WinForms NotifyIcon host for the WPF tray experience.</summary>
 public sealed class TrayIconService : IDisposable
 {
-    private readonly PauseService _pauseService;
+    private readonly AppHost _host;
     private readonly Forms.NotifyIcon _notifyIcon;
     private readonly Icon _baseIcon;
     private TrayIconState _state = TrayIconState.Disconnected;
     private SettingsWindow? _settingsWindow;
 
-    public TrayIconService(PauseService pauseService)
+    public TrayIconService(AppHost host)
     {
-        _pauseService = pauseService;
+        _host = host;
         _baseIcon = LoadAppIcon();
         _notifyIcon = new Forms.NotifyIcon
         {
@@ -32,9 +30,9 @@ public sealed class TrayIconService : IDisposable
         menu.Items.Add("Show settings", null, (_, _) => ShowSettings());
         menu.Items.Add(new Forms.ToolStripSeparator());
         var pauseItem = new Forms.ToolStripMenuItem("Pause tracking");
-        pauseItem.Click += (_, _) => TogglePause();
+        pauseItem.Click += (_, _) => _host.Pause.Toggle();
         menu.Items.Add(pauseItem);
-        menu.Items.Add("Open CloudTAK", null, (_, _) => OpenCloudTakStub());
+        menu.Items.Add("Open CloudTAK", null, (_, _) => OpenCloudTak());
         menu.Items.Add("Open log folder", null, (_, _) => OpenLogFolder());
         menu.Items.Add(new Forms.ToolStripSeparator());
         menu.Items.Add("Quit", null, (_, _) => Quit());
@@ -47,7 +45,7 @@ public sealed class TrayIconService : IDisposable
         };
         _notifyIcon.DoubleClick += (_, _) => ShowSettings();
 
-        _pauseService.PauseChanged += OnPauseChanged;
+        _host.Pause.PauseChanged += OnPauseChanged;
         ApplyState(_state);
         RefreshPauseMenuText();
     }
@@ -56,10 +54,20 @@ public sealed class TrayIconService : IDisposable
 
     public void SetState(TrayIconState state)
     {
-        if (_pauseService.IsPaused && state != TrayIconState.Paused && state != TrayIconState.Error)
+        if (_host.Pause.IsPaused && state != TrayIconState.Paused && state != TrayIconState.Error)
             state = TrayIconState.Paused;
-
         ApplyState(state);
+    }
+
+    public void ShowBalloon(string title, string text)
+    {
+        try
+        {
+            _notifyIcon.BalloonTipTitle = title;
+            _notifyIcon.BalloonTipText = text;
+            _notifyIcon.ShowBalloonTip(4000);
+        }
+        catch { /* ignore */ }
     }
 
     public void ShowSettings()
@@ -68,7 +76,7 @@ public sealed class TrayIconService : IDisposable
         {
             if (_settingsWindow is null)
             {
-                _settingsWindow = new SettingsWindow(_pauseService, this);
+                _settingsWindow = new SettingsWindow(_host);
                 _settingsWindow.Closed += (_, _) => _settingsWindow = null;
             }
 
@@ -83,7 +91,6 @@ public sealed class TrayIconService : IDisposable
     {
         _state = state;
         _notifyIcon.Text = TruncateTooltip(state.ToTooltip());
-        // Phase 1: same base icon; later phases add state overlays.
         _notifyIcon.Icon = _baseIcon;
     }
 
@@ -91,38 +98,48 @@ public sealed class TrayIconService : IDisposable
     {
         Application.Current.Dispatcher.Invoke(() =>
         {
-            ApplyState(paused ? TrayIconState.Paused : TrayIconState.Disconnected);
             RefreshPauseMenuText();
+            _host.RefreshTray();
         });
     }
 
     private void RefreshPauseMenuText()
     {
         if (_notifyIcon.ContextMenuStrip?.Items[2] is Forms.ToolStripMenuItem item)
-            item.Text = _pauseService.IsPaused ? "Resume tracking" : "Pause tracking";
+            item.Text = _host.Pause.IsPaused ? "Resume tracking" : "Pause tracking";
     }
 
-    private void TogglePause() => _pauseService.Toggle();
-
-    private static void OpenCloudTakStub()
+    private void OpenCloudTak()
     {
-        System.Windows.MessageBox.Show(
-            "CloudTAK URL is not configured yet. Set it under Settings → View the map in a later phase.",
-            "WinTAKTracker",
-            MessageBoxButton.OK,
-            MessageBoxImage.Information);
-    }
-
-    private static void OpenLogFolder()
-    {
-        var logs = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "WinTAKTracker",
-            "logs");
-        Directory.CreateDirectory(logs);
-        System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+        var url = _host.Config.CloudTakUrl
+                  ?? _host.Config.Servers.Select(s => s.CloudTakUrl).FirstOrDefault(u => !string.IsNullOrWhiteSpace(u));
+        if (string.IsNullOrWhiteSpace(url))
         {
-            FileName = logs,
+            MessageBox.Show(
+                "CloudTAK URL is not configured. Set it under Settings → View the map.",
+                "WinTAKTracker",
+                MessageBoxButton.OK,
+                MessageBoxImage.Information);
+            return;
+        }
+
+        try
+        {
+            Process.Start(new ProcessStartInfo { FileName = url, UseShellExecute = true });
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show($"Could not open CloudTAK: {ex.Message}", "WinTAKTracker",
+                MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
+    }
+
+    private void OpenLogFolder()
+    {
+        Directory.CreateDirectory(_host.ConfigStore.LogsDirectory);
+        Process.Start(new ProcessStartInfo
+        {
+            FileName = _host.ConfigStore.LogsDirectory,
             UseShellExecute = true,
         });
     }
@@ -139,7 +156,6 @@ public sealed class TrayIconService : IDisposable
         if (File.Exists(icoPath))
             return new Icon(icoPath);
 
-        // Embedded resource / content fallback — pack URI extract via stream if present
         var asm = typeof(TrayIconService).Assembly;
         var name = asm.GetManifestResourceNames()
             .FirstOrDefault(n => n.EndsWith("tak.ico", StringComparison.OrdinalIgnoreCase));
@@ -158,7 +174,7 @@ public sealed class TrayIconService : IDisposable
 
     public void Dispose()
     {
-        _pauseService.PauseChanged -= OnPauseChanged;
+        _host.Pause.PauseChanged -= OnPauseChanged;
         _notifyIcon.Visible = false;
         _notifyIcon.Dispose();
         _baseIcon.Dispose();

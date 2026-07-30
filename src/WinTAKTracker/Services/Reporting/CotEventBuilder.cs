@@ -1,0 +1,102 @@
+using System.Globalization;
+using System.Text;
+using System.Xml.Linq;
+using WinTAKTracker.Services.Config;
+using WinTAKTracker.Services.Gps;
+
+namespace WinTAKTracker.Services.Reporting;
+
+public sealed class CotIdentity
+{
+    public required string Uid { get; init; }
+    public required string Callsign { get; init; }
+    public required string Team { get; init; }
+    public required string Role { get; init; }
+    public required string CotType { get; init; }
+    public string Platform { get; init; } = "WinTAKTracker";
+    public string Version { get; init; } = "0.1.0";
+    public int? BatteryPercent { get; init; }
+}
+
+public static class CotEventBuilder
+{
+    public const string GroundUnitType = "a-f-G-U-C-I";
+    public const string VehicleType = "a-f-G-E-V";
+
+    public static string Build(GpsFix fix, CotIdentity identity, TimeSpan stale)
+    {
+        var now = DateTimeOffset.UtcNow;
+        var start = now;
+        var time = fix.Timestamp;
+        var staleTime = now + stale;
+        var how = fix.IsHeld ? "h-e" : "m-g";
+        var ce = fix.AccuracyMeters ?? (fix.Hdop.HasValue ? fix.Hdop.Value * 5 : 9999999);
+        var le = fix.AccuracyMeters ?? 9999999;
+        var hae = fix.AltitudeMeters ?? 0;
+        var speed = fix.SpeedMetersPerSecond ?? 0;
+        var course = fix.CourseDegrees ?? 0;
+
+        var evt = new XElement("event",
+            new XAttribute("version", "2.0"),
+            new XAttribute("uid", identity.Uid),
+            new XAttribute("type", identity.CotType),
+            new XAttribute("how", how),
+            new XAttribute("time", FormatTakTime(time)),
+            new XAttribute("start", FormatTakTime(start)),
+            new XAttribute("stale", FormatTakTime(staleTime)),
+            new XElement("point",
+                new XAttribute("lat", F(fix.Latitude)),
+                new XAttribute("lon", F(fix.Longitude)),
+                new XAttribute("hae", F(hae)),
+                new XAttribute("ce", F(ce)),
+                new XAttribute("le", F(le))),
+            new XElement("detail",
+                new XElement("contact", new XAttribute("callsign", identity.Callsign)),
+                new XElement("__group",
+                    new XAttribute("name", identity.Team),
+                    new XAttribute("role", identity.Role)),
+                new XElement("track",
+                    new XAttribute("speed", F(speed)),
+                    new XAttribute("course", F(course))),
+                new XElement("takv",
+                    new XAttribute("platform", identity.Platform),
+                    new XAttribute("version", identity.Version),
+                    new XAttribute("device", Environment.MachineName),
+                    new XAttribute("os", Environment.OSVersion.VersionString))));
+
+        if (identity.BatteryPercent is int bat)
+        {
+            evt.Element("detail")!.Add(new XElement("status", new XAttribute("battery", bat.ToString(CultureInfo.InvariantCulture))));
+        }
+
+        var sb = new StringBuilder();
+        sb.Append(evt.ToString(SaveOptions.DisableFormatting));
+        sb.Append('\n');
+        return sb.ToString();
+    }
+
+    public static CotIdentity FromConfig(AppConfig config, ServerProfile? server = null, int? battery = null)
+    {
+        var uid = config.DeviceUid;
+        if (string.IsNullOrWhiteSpace(uid))
+        {
+            uid = "WIN-" + Environment.MachineName.Replace(" ", "");
+        }
+
+        return new CotIdentity
+        {
+            Uid = uid!,
+            Callsign = server?.CallsignOverride is { Length: > 0 } c ? c : config.Identity.Callsign,
+            Team = server?.TeamOverride is { Length: > 0 } t ? t : config.Identity.Team,
+            Role = server?.RoleOverride is { Length: > 0 } r ? r : config.Identity.Role,
+            CotType = string.IsNullOrWhiteSpace(config.Identity.CotType) ? GroundUnitType : config.Identity.CotType,
+            Version = typeof(CotEventBuilder).Assembly.GetName().Version?.ToString(3) ?? "0.1.0",
+            BatteryPercent = battery,
+        };
+    }
+
+    private static string F(double v) => v.ToString("0.#######", CultureInfo.InvariantCulture);
+
+    private static string FormatTakTime(DateTimeOffset dto) =>
+        dto.UtcDateTime.ToString("yyyy-MM-ddTHH:mm:ss.fffZ", CultureInfo.InvariantCulture);
+}

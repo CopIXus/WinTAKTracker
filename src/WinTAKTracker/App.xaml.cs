@@ -1,19 +1,14 @@
 ﻿using System.Windows;
 using WinTAKTracker.Services;
-using WinTAKTracker.Services.Config;
-using WinTAKTracker.Services.Pause;
-using WinTAKTracker.Services.Tray;
 
 namespace WinTAKTracker;
 
 public partial class App : Application
 {
     private SingleInstanceMutex? _singleInstance;
-    private TrayIconService? _trayIcon;
-    private PauseService? _pauseService;
-    private AppConfigStore? _configStore;
+    private AppHost? _host;
 
-    protected override void OnStartup(StartupEventArgs e)
+    protected override async void OnStartup(StartupEventArgs e)
     {
         base.OnStartup(e);
 
@@ -29,21 +24,14 @@ public partial class App : Application
             return;
         }
 
-        _configStore = new AppConfigStore();
-        _configStore.EnsureDirectories();
-        _ = _configStore.Load();
-
-        _pauseService = new PauseService();
-        _trayIcon = new TrayIconService(_pauseService);
-        _trayIcon.SetState(TrayIconState.Disconnected);
-
-        // First run: show settings shell so the user finds the app.
-        _trayIcon.ShowSettings();
+        _host = new AppHost();
+        await _host.StartAsync();
+        _host.Tray.ShowSettings();
     }
 
     protected override void OnExit(ExitEventArgs e)
     {
-        _trayIcon?.Dispose();
+        _host?.Dispose();
         _singleInstance?.Dispose();
         base.OnExit(e);
     }

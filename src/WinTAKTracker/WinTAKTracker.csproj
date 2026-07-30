@@ -36,13 +36,11 @@
   <ItemGroup>
     <PackageReference Include="System.IO.Ports" Version="8.0.0" />
     <PackageReference Include="System.Security.Cryptography.ProtectedData" Version="8.0.0" />
-    <PackageReference Include="System.IO.Compression" Version="4.3.0" />
     <PackageReference Include="ZXing.Net" Version="0.16.10" />
     <PackageReference Include="OpenCvSharp4" Version="4.10.0.20240616" />
     <PackageReference Include="OpenCvSharp4.WpfExtensions" Version="4.10.0.20240616" />
     <PackageReference Include="OpenCvSharp4.runtime.win" Version="4.10.0.20240616" />
     <PackageReference Include="Mapsui.Wpf" Version="4.1.9" />
-    <PackageReference Include="BruTile" Version="5.0.6" />
   </ItemGroup>
 
   <ItemGroup>

@@ -34,10 +34,12 @@ Download the latest self-contained build — no separate .NET runtime required:
 **[https://github.com/CopIXus/WinTAKTracker/releases/latest](https://github.com/CopIXus/WinTAKTracker/releases/latest)**
 
 1. Grab `WinTAKTracker.exe` (optionally verify `WinTAKTracker.exe.sha256`).
-2. Run it. Windows SmartScreen may warn on unsigned builds: **More info → Run anyway**.
+2. Run it. **Unsigned** GitHub downloads may trip SmartScreen or Windows 11 **Smart App Control** (SAC is stricter than SmartScreen). Temporary options: **More info → Run anyway**, Properties → **Unblock**, or adjust SAC — details in [docs/code-signing.md](docs/code-signing.md).
 3. Open **Settings** from the tray icon (left-click or context menu).
 
 Every push to `main` publishes a Release with version `0.1.<run_number>` (git tag `build-0.1.<run_number>` so it does not re-trigger the `v*` workflow). Annotated SemVer tags (`v1.2.3`) still produce versioned releases.
+
+**Code signing:** Release CI signs `WinTAKTracker.exe` **only when** Azure Trusted Signing / Artifact Signing or PFX secrets are configured. Releases stay unsigned for contributors until those secrets exist — see [docs/code-signing.md](docs/code-signing.md).
 
 ## Setup / enrollment
 
@@ -99,7 +101,7 @@ dotnet publish src/WinTAKTracker -c Release -r win-x64 --self-contained true `
   -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true
 ```
 
-CI (`.github/workflows/release.yml`) publishes `WinTAKTracker.exe` + SHA256 on every push to `main` and on `v*` tags.
+CI (`.github/workflows/release.yml`) publishes `WinTAKTracker.exe` + SHA256 on every push to `main` and on `v*` tags. Optional Authenticode signing runs when secrets are set ([docs/code-signing.md](docs/code-signing.md)).
 
 ## Docs and changelog
 
@@ -107,6 +109,7 @@ CI (`.github/workflows/release.yml`) publishes `WinTAKTracker.exe` + SHA256 on e
 |----------|------|
 | Feature matrix | [FEATURES.md](FEATURES.md) · [docs site](https://copixus.github.io/WinTAKTracker/features) |
 | Changelog | [CHANGELOG.md](CHANGELOG.md) · [docs site](https://copixus.github.io/WinTAKTracker/changelog) |
+| Code signing / SmartScreen | [docs/code-signing.md](docs/code-signing.md) · [docs site](https://copixus.github.io/WinTAKTracker/code-signing) |
 | Contributing | [CONTRIBUTING.md](CONTRIBUTING.md) |
 | Security | [SECURITY.md](SECURITY.md) |
 | Releases | [GitHub Releases](https://github.com/CopIXus/WinTAKTracker/releases) |

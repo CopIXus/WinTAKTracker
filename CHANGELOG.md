@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Network/IP geolocation fallback via ipwho.is (HTTPS) when NMEA and Windows Location have no fix
 - App branding from `WinTAKTrackerLogo` assets (window, tray, EXE icon)
 - GitHub Release on every push to `main` (`0.1.<run_number>`) in addition to SemVer `v*` tags
+- Optional Authenticode signing in release CI (Azure Artifact/Trusted Signing or PFX) when secrets are set; [docs/code-signing.md](docs/code-signing.md) for SmartScreen/SAC guidance
 
 ### Changed
 

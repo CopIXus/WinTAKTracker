@@ -60,6 +60,9 @@ jobs:
 
       - name: Setup Pages
         uses: actions/configure-pages@v5
+        with:
+          # Enable/repair Pages (workflow build) if the site is not configured yet.
+          enablement: true
 
       - name: Build with Jekyll
         uses: actions/jekyll-build-pages@v1

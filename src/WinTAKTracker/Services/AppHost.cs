@@ -15,6 +15,7 @@ public sealed class AppHost : IDisposable
 {
     public AppConfigStore ConfigStore { get; }
     public AppConfig Config { get; private set; }
+    public SettingsLockService SettingsLock { get; }
     public IRedactedLogger Log { get; }
     public PauseService Pause { get; }
     public IGpsService Gps { get; }
@@ -36,6 +37,7 @@ public sealed class AppHost : IDisposable
         ConfigStore = new AppConfigStore();
         ConfigStore.EnsureDirectories();
         Config = ConfigStore.Load();
+        SettingsLock = new SettingsLockService(ConfigStore);
         EnsureDeviceUid();
         EnsureDefaultCallsign();
 

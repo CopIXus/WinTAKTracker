@@ -102,6 +102,16 @@
                         Padding="14,6"
                         Margin="0,0,8,0"
                         Click="PauseResumeButton_OnClick"/>
+                <Button x:Name="LockSettingsButton"
+                        Content="Unlock…"
+                        Padding="14,6"
+                        Margin="0,0,8,0"
+                        Click="LockSettingsButton_OnClick"/>
+                <TextBlock x:Name="LockStatusText"
+                           VerticalAlignment="Center"
+                           Foreground="#5A6B60"
+                           FontSize="12"
+                           Margin="4,0,0,0"/>
                 <Button Content="Close"
                         Padding="14,6"
                         DockPanel.Dock="Right"

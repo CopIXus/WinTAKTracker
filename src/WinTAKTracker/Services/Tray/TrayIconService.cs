@@ -28,6 +28,9 @@ public sealed class TrayIconService : IDisposable
 
         var menu = new Forms.ContextMenuStrip();
         menu.Items.Add("Show settings", null, (_, _) => ShowSettings());
+        var lockItem = new Forms.ToolStripMenuItem("Unlock settings…");
+        lockItem.Click += (_, _) => ToggleSettingsLockFromTray();
+        menu.Items.Add(lockItem);
         menu.Items.Add(new Forms.ToolStripSeparator());
         var pauseItem = new Forms.ToolStripMenuItem("Pause tracking");
         pauseItem.Click += (_, _) => _host.Pause.Toggle();
@@ -37,6 +40,9 @@ public sealed class TrayIconService : IDisposable
         menu.Items.Add(new Forms.ToolStripSeparator());
         menu.Items.Add("Quit", null, (_, _) => Quit());
         _notifyIcon.ContextMenuStrip = menu;
+        _host.SettingsLock.LockStateChanged += (_, _) =>
+            Application.Current.Dispatcher.Invoke(RefreshLockMenuText);
+        RefreshLockMenuText();
 
         _notifyIcon.MouseClick += (_, e) =>
         {
@@ -105,8 +111,65 @@ public sealed class TrayIconService : IDisposable
 
     private void RefreshPauseMenuText()
     {
-        if (_notifyIcon.ContextMenuStrip?.Items[2] is Forms.ToolStripMenuItem item)
+        if (_notifyIcon.ContextMenuStrip?.Items[3] is Forms.ToolStripMenuItem item)
             item.Text = _host.Pause.IsPaused ? "Resume tracking" : "Pause tracking";
+    }
+
+    private void RefreshLockMenuText()
+    {
+        if (_notifyIcon.ContextMenuStrip?.Items[1] is not Forms.ToolStripMenuItem item)
+            return;
+
+        if (!_host.SettingsLock.HasPassword)
+            item.Text = "Set settings lock…";
+        else if (_host.SettingsLock.IsLocked)
+            item.Text = "Unlock settings…";
+        else
+            item.Text = "Lock settings";
+    }
+
+    private void ToggleSettingsLockFromTray()
+    {
+        Application.Current.Dispatcher.Invoke(() =>
+        {
+            if (!_host.SettingsLock.HasPassword)
+            {
+                var created = PasswordPromptWindow.Prompt(
+                    _settingsWindow,
+                    "Set lock password",
+                    "Create a password to lock Settings edits. You can still view settings while locked.",
+                    requireConfirm: true);
+                if (created is null) return;
+                try
+                {
+                    _host.SettingsLock.SetPassword(created);
+                    MessageBox.Show("Settings lock password saved. Settings will start locked next launch.",
+                        "WinTAKTracker", MessageBoxButton.OK, MessageBoxImage.Information);
+                }
+                catch (Exception ex)
+                {
+                    MessageBox.Show(ex.Message, "WinTAKTracker", MessageBoxButton.OK, MessageBoxImage.Warning);
+                }
+                return;
+            }
+
+            if (_host.SettingsLock.IsLocked)
+            {
+                var pwd = PasswordPromptWindow.Prompt(
+                    _settingsWindow,
+                    "Unlock settings",
+                    "Enter the settings lock password to allow edits.");
+                if (pwd is null) return;
+                if (!_host.SettingsLock.TryUnlock(pwd))
+                {
+                    MessageBox.Show("Incorrect password.", "WinTAKTracker",
+                        MessageBoxButton.OK, MessageBoxImage.Warning);
+                }
+                return;
+            }
+
+            _host.SettingsLock.Lock();
+        });
     }
 
     private void OpenCloudTak()

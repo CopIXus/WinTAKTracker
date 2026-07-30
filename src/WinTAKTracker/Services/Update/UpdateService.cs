@@ -159,25 +159,61 @@ public sealed class UpdateService : IUpdateService
 
             var currentExe = Environment.ProcessPath
                              ?? Path.Combine(AppContext.BaseDirectory, "WinTAKTracker.exe");
-            var bat = Path.Combine(_store.UpdatesDirectory, "apply-update.bat");
-            var script = $"""
+            if (string.IsNullOrWhiteSpace(currentExe) || !File.Exists(currentExe))
+                return (false, "Could not resolve the running EXE path for update replace.");
+
+            // Helper waits for this PID to exit, then retries copy (EXE lock / AV), relaunches, cleans up.
+            // Config/certs under %LocalAppData%\WinTAKTracker\ are untouched.
+            var bat = Path.Combine(_store.UpdatesDirectory, "apply-update.cmd");
+            const string script = """
                 @echo off
-                setlocal
-                ping 127.0.0.1 -n 3 >nul
-                copy /Y "{dest}" "{currentExe}"
-                start "" "{currentExe}"
-                del "%~f0"
+                setlocal EnableExtensions
+                set "PID=%~1"
+                set "SRC=%~2"
+                set "DST=%~3"
+                if "%PID%"=="" exit /b 1
+                if not exist "%SRC%" exit /b 1
+                if "%DST%"=="" exit /b 1
+
+                set /a WAITED=0
+                :wait
+                tasklist /FI "PID eq %PID%" /NH 2>NUL | find /I ".exe" >NUL
+                if errorlevel 1 goto copyloop
+                set /a WAITED+=1
+                if %WAITED% GEQ 120 exit /b 1
+                timeout /t 1 /nobreak >NUL
+                goto wait
+
+                :copyloop
+                set /a TRIES=0
+                :retry
+                set /a TRIES+=1
+                copy /Y "%SRC%" "%DST%" >NUL 2>&1
+                if not errorlevel 1 goto launch
+                if %TRIES% GEQ 60 exit /b 1
+                timeout /t 1 /nobreak >NUL
+                goto retry
+
+                :launch
+                start "" "%DST%"
+                del "%SRC%" >NUL 2>&1
+                del "%~f0" >NUL 2>&1
+                exit /b 0
                 """;
             await File.WriteAllTextAsync(bat, script, ct);
 
-            _log.Info("Update", "Update downloaded; scheduling restart swap.");
-            Process.Start(new ProcessStartInfo
+            var pid = Environment.ProcessId;
+            _log.Info("Update", $"Update downloaded; scheduling restart swap (pid={pid}).");
+            var started = Process.Start(new ProcessStartInfo
             {
                 FileName = bat,
+                Arguments = $"{pid} \"{dest}\" \"{currentExe}\"",
                 UseShellExecute = true,
                 WindowStyle = ProcessWindowStyle.Hidden,
-                CreateNoWindow = true,
+                WorkingDirectory = _store.UpdatesDirectory,
             });
+            if (started is null)
+                return (false, "Failed to start the update helper script.");
 
             return (true, "Update ready. The app will restart.");
         }

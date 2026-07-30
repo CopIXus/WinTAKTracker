@@ -1046,10 +1046,26 @@ public partial class SettingsWindow : Window
                 ShowSection("Updates");
                 return;
             }
+
+            var confirm = MessageBox.Show(
+                $"Download and install version {_lastUpdateCheck.LatestVersion}?\n\n" +
+                "WinTAKTracker will quit, replace the EXE, and relaunch. Your settings and certs in LocalAppData are kept.",
+                "WinTAKTracker",
+                MessageBoxButton.OKCancel,
+                MessageBoxImage.Question);
+            if (confirm != MessageBoxResult.OK)
+                return;
+
             var (ok, message) = await _host.Updates.DownloadAndApplyAsync(_lastUpdateCheck);
-            Msg(message, ok ? MessageBoxImage.Information : MessageBoxImage.Warning);
-            if (ok) Application.Current.Shutdown();
-            else ShowSection("Updates");
+            if (!ok)
+            {
+                Msg(message, MessageBoxImage.Warning);
+                ShowSection("Updates");
+                return;
+            }
+
+            // Helper is waiting on our PID — exit immediately (do not block on another MessageBox).
+            Application.Current.Shutdown();
         }, edit));
         return panel;
     }

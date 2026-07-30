@@ -145,7 +145,8 @@ public sealed class AppHost : IDisposable
                 var (ok, msg) = await Updates.DownloadAndApplyAsync(result);
                 if (ok)
                 {
-                    Tray.ShowBalloon("Update ready", msg);
+                    // Balloon is non-blocking; helper waits for PID then swaps + relaunches.
+                    Tray.ShowBalloon("Updating", msg);
                     Application.Current.Dispatcher.Invoke(() => Application.Current.Shutdown());
                 }
             }

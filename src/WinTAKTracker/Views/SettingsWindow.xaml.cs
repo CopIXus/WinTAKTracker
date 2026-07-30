@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Media;
 using System.Windows.Threading;
 using WinTAKTracker.Services;
 using WinTAKTracker.Services.Config;
@@ -201,34 +202,49 @@ public partial class SettingsWindow : Window
     }
 
     private StackPanel? _statusPanel;
-    private TextBlock? _statusSummary;
+    private readonly Dictionary<string, TextBlock> _statusValues = new(StringComparer.Ordinal);
 
     private UIElement BuildStatus()
     {
         _statusPanel = new StackPanel();
-        _statusSummary = new TextBlock { TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 0, 0, 8) };
-        _statusPanel.Children.Add(_statusSummary);
+        _statusValues.Clear();
+
+        var telemetry = new StackPanel { Margin = new Thickness(0, 0, 0, 8) };
+        foreach (var key in new[] { "Tray", "Tracking", "GPS", "Position", "Motion", "Servers", "Mesh SA", "Last PLI" })
+        {
+            var row = StatusRow(key, "—");
+            telemetry.Children.Add(row);
+        }
+        _statusPanel.Children.Add(telemetry);
 
         if (_host.Gps.WindowsPermission is GpsPermissionState.Denied or GpsPermissionState.NotAvailable)
         {
-            _statusPanel.Children.Add(new TextBlock
+            _statusPanel.Children.Add(new Border
             {
-                Text = "Windows Location is not available. Enable Settings → Privacy & security → Location (Location services + desktop apps), then request permission under GPS. Until then, only USB NMEA or approximate Network IP can be used.",
-                TextWrapping = TextWrapping.Wrap,
-                Foreground = WpfBrushes.DarkRed,
-                Margin = new Thickness(0, 4, 0, 8),
+                Background = ThemeBrush("DangerBgBrush", WpfBrushes.MistyRose),
+                BorderBrush = ThemeBrush("AppBorderBrush", WpfBrushes.LightGray),
+                BorderThickness = new Thickness(1),
+                CornerRadius = new CornerRadius(6),
+                Padding = new Thickness(12, 10, 12, 10),
+                Margin = new Thickness(0, 0, 0, 12),
+                Child = new TextBlock
+                {
+                    Text = "Windows Location is not available. Enable Settings → Privacy & security → Location (Location services + desktop apps), then request permission under GPS. Until then, only USB NMEA or approximate Network IP can be used.",
+                    TextWrapping = TextWrapping.Wrap,
+                    Foreground = ThemeBrush("DangerBrush", WpfBrushes.DarkRed),
+                },
             });
             _statusPanel.Children.Add(Btn("Open Windows Location privacy settings", () =>
                 WindowsLocationGps.OpenWindowsLocationPrivacySettings()));
         }
 
-        var copyRow = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 0, 0, 8) };
+        var copyRow = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 0, 0, 4) };
         copyRow.Children.Add(Btn("Copy lat", () =>
         {
             var f = _host.Gps.CurrentFix;
             if (f is not null) Copy(f.Latitude.ToString("F6"));
         }));
-        copyRow.Children.Add(new Border { Width = 8 });
+        copyRow.Children.Add(Spacer(8));
         copyRow.Children.Add(Btn("Copy lon", () =>
         {
             var f = _host.Gps.CurrentFix;
@@ -239,30 +255,62 @@ public partial class SettingsWindow : Window
         _mapPreview ??= new MapPreviewControl();
         if (_mapPreview.Parent is System.Windows.Controls.Panel oldParent)
             oldParent.Children.Remove(_mapPreview);
-        _statusPanel.Children.Add(new TextBlock { Text = "Self map preview", FontWeight = FontWeights.SemiBold, Margin = new Thickness(0, 12, 0, 6) });
-        _statusPanel.Children.Add(_mapPreview);
+
+        _statusPanel.Children.Add(SectionHeader("Self map preview"));
+        _statusPanel.Children.Add(new Border
+        {
+            BorderBrush = ThemeBrush("AppBorderBrush", WpfBrushes.LightGray),
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(8),
+            ClipToBounds = true,
+            Child = _mapPreview,
+        });
         RefreshStatusLive();
         return _statusPanel;
     }
 
+    private UIElement StatusRow(string key, string value)
+    {
+        var grid = new Grid { Margin = new Thickness(0, 0, 0, 10) };
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(96) });
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+
+        var keyTb = new TextBlock { Text = key, Style = TryStyle("StatusKeyText") };
+        var valueTb = new TextBlock { Text = value, Style = TryStyle("StatusValueText") };
+        _statusValues[key] = valueTb;
+
+        Grid.SetColumn(keyTb, 0);
+        Grid.SetColumn(valueTb, 1);
+        grid.Children.Add(keyTb);
+        grid.Children.Add(valueTb);
+        return grid;
+    }
+
+    private void SetStatus(string key, string value)
+    {
+        if (_statusValues.TryGetValue(key, out var tb))
+            tb.Text = value;
+    }
+
     private void RefreshStatusLive()
     {
-        if (_statusSummary is null) return;
+        if (_statusValues.Count == 0) return;
         var fix = _host.Gps.CurrentFix;
-        var servers = string.Join("; ", _host.Tak.GetStatuses().Select(s => $"{s.DisplayName}:{s.State}"));
-        _statusSummary.Text =
-            $"Tray: {_host.Tray.CurrentState.ToTooltip()}\n" +
-            $"Tracking: {(_host.Pause.IsPaused ? "Paused" : "Active")}\n" +
-            $"GPS: {(fix is null ? "No fix" : $"{(fix.IsHeld ? "Held" : "Live")} via {fix.SourceDisplayName}")}\n" +
-            (fix is null ? "" :
-                $"Lat: {fix.Latitude:F6}  Lon: {fix.Longitude:F6}\n" +
-                $"Speed: {fix.SpeedMph:F1} mph  Course: {(fix.CourseDegrees is double c ? $"{c:F0}°" : "—")}  " +
-                $"Alt: {(fix.AltitudeMeters is double a ? $"{a:F1} m" : "—")}  " +
-                $"Acc: {(fix.AccuracyMeters is double ac ? $"{ac:F0} m" : "—")}" +
-                (fix.Source == GpsSourceKind.NetworkIp ? " — city/region scale, not Wi‑Fi" : "") + "\n") +
-            $"Servers: {(string.IsNullOrEmpty(servers) ? "None" : servers)}\n" +
-            $"Mesh SA: {FormatMeshStatusLine()}\n" +
-            $"Last PLI: {_host.Reporting.LastPliSentUtc?.ToLocalTime().ToString("G") ?? "—"}";
+        var servers = string.Join("; ", _host.Tak.GetStatuses().Select(s => $"{s.DisplayName}: {s.State}"));
+
+        SetStatus("Tray", _host.Tray.CurrentState.ToTooltip());
+        SetStatus("Tracking", _host.Pause.IsPaused ? "Paused" : "Active");
+        SetStatus("GPS", fix is null ? "No fix" : $"{(fix.IsHeld ? "Held" : "Live")} via {fix.SourceDisplayName}");
+        SetStatus("Position", fix is null
+            ? "—"
+            : $"{fix.Latitude:F6}, {fix.Longitude:F6}");
+        SetStatus("Motion", fix is null
+            ? "—"
+            : $"Speed {fix.SpeedMph:F1} mph · Course {(fix.CourseDegrees is double c ? $"{c:F0}°" : "—")} · Alt {(fix.AltitudeMeters is double a ? $"{a:F1} m" : "—")} · Acc {(fix.AccuracyMeters is double ac ? $"{ac:F0} m" : "—")}" +
+              (fix.Source == GpsSourceKind.NetworkIp ? " · city/region scale" : ""));
+        SetStatus("Servers", string.IsNullOrEmpty(servers) ? "None" : servers);
+        SetStatus("Mesh SA", FormatMeshStatusLine());
+        SetStatus("Last PLI", _host.Reporting.LastPliSentUtc?.ToLocalTime().ToString("G") ?? "—");
 
         _mapPreview?.UpdateFix(fix, _host.Config.Identity.Team);
     }
@@ -273,13 +321,7 @@ public partial class SettingsWindow : Window
         var panel = new StackPanel();
         var edit = CanEdit;
 
-        panel.Children.Add(new TextBlock
-        {
-            Text = "Server profiles",
-            FontWeight = FontWeights.SemiBold,
-            FontSize = 14,
-            Margin = new Thickness(0, 0, 0, 8),
-        });
+        panel.Children.Add(SectionHeader("Server profiles"));
 
         if (_host.Config.Servers.Count == 0)
         {
@@ -291,29 +333,18 @@ public partial class SettingsWindow : Window
                 panel.Children.Add(BuildServerCard(server, edit));
         }
 
-        panel.Children.Add(new TextBlock
-        {
-            Text = "+ Add server",
-            FontWeight = FontWeights.SemiBold,
-            FontSize = 14,
-            Margin = new Thickness(0, 20, 0, 8),
-        });
+        panel.Children.Add(SectionHeader("Add server", topMargin: 8));
         panel.Children.Add(Blurb("Enroll via URL/QR, SoftCert ZIP, or manual .p12. Profiles stay in LocalAppData. Portal tokens are short-lived (~15 minutes)."));
 
         var paste = new TextBox
         {
-            Height = 56,
+            MinHeight = 64,
             TextWrapping = TextWrapping.Wrap,
             AcceptsReturn = true,
             VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
             IsEnabled = edit,
         };
-        var enrollStatus = new TextBlock
-        {
-            TextWrapping = TextWrapping.Wrap,
-            Foreground = WpfBrushes.DimGray,
-            Margin = new Thickness(0, 0, 0, 8),
-        };
+        var enrollStatus = new TextBlock { Style = TryStyle("HelperText") };
         panel.Children.Add(Label("Paste enrollment URL or iTAK CSV"));
         panel.Children.Add(paste);
         panel.Children.Add(enrollStatus);
@@ -322,26 +353,26 @@ public partial class SettingsWindow : Window
         {
             if (!EnsureEditable()) return;
             enrollStatus.Text = "Enrolling certificate…";
-            enrollStatus.Foreground = WpfBrushes.DarkSlateBlue;
+            enrollStatus.Foreground = ThemeBrush("AccentBrush", WpfBrushes.DarkSlateBlue);
             var progress = new Progress<string>(msg => { enrollStatus.Text = msg; });
             var result = await _host.Enrollment.ApplyAsync(input, _host.Config, progress, CancellationToken.None);
             if (!result.Success)
             {
                 enrollStatus.Text = result.Error ?? "Enrollment failed.";
-                enrollStatus.Foreground = WpfBrushes.DarkRed;
+                enrollStatus.Foreground = ThemeBrush("DangerBrush", WpfBrushes.DarkRed);
                 Msg(result.Error ?? "Failed", MessageBoxImage.Warning);
                 return;
             }
 
             enrollStatus.Text = result.Message ?? "Enrolled.";
-            enrollStatus.Foreground = WpfBrushes.DarkGreen;
+            enrollStatus.Foreground = ThemeBrush("AccentBrush", WpfBrushes.DarkGreen);
             await _host.ReloadConnectionsAsync();
             Msg(result.Message ?? "Applied.");
             ShowSection("Servers");
         }
 
-        var addRow = new WrapPanel { Margin = new Thickness(0, 0, 0, 8) };
-        addRow.Children.Add(Btn("Apply enrollment", async () => await RunEnrollAsync(paste.Text), edit));
+        var addRow = new WrapPanel { Margin = new Thickness(0, 8, 0, 8) };
+        addRow.Children.Add(Btn("Apply enrollment", async () => await RunEnrollAsync(paste.Text), edit, primary: true));
         addRow.Children.Add(Spacer(8));
         addRow.Children.Add(Btn("Scan QR…", async () =>
         {
@@ -382,7 +413,7 @@ public partial class SettingsWindow : Window
                         MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes) return;
                 _host.Tak.WipeAll(_host.Config, _host.ConfigStore);
                 ShowSection("Servers");
-            }, edit));
+            }, edit, danger: true));
         }
 
         return panel;
@@ -396,11 +427,7 @@ public partial class SettingsWindow : Window
 
         var card = new Border
         {
-            Background = WpfBrushes.White,
-            BorderBrush = new WpfSolidBrush(WpfColor.FromRgb(0xD0, 0xD0, 0xD0)),
-            BorderThickness = new Thickness(1),
-            CornerRadius = new CornerRadius(8),
-            Padding = new Thickness(16, 14, 16, 14),
+            Style = TryStyle("ServerCard"),
             Margin = new Thickness(0, 0, 8, 0),
         };
 
@@ -414,7 +441,7 @@ public partial class SettingsWindow : Window
             Text = string.IsNullOrWhiteSpace(server.DisplayName) ? server.Host : server.DisplayName,
             FontWeight = FontWeights.SemiBold,
             FontSize = 15,
-            Foreground = new WpfSolidBrush(WpfColor.FromRgb(0x1B, 0x2E, 0x24)),
+            Foreground = ThemeBrush("TextPrimaryBrush", new WpfSolidBrush(WpfColor.FromRgb(0x1A, 0x24, 0x20))),
             VerticalAlignment = VerticalAlignment.Center,
             TextTrimming = TextTrimming.CharacterEllipsis,
         });
@@ -426,17 +453,17 @@ public partial class SettingsWindow : Window
         body.Children.Add(new TextBlock
         {
             Text = hostLine,
-            Foreground = WpfBrushes.DimGray,
-            FontSize = 12.5,
+            Foreground = ThemeBrush("TextSecondaryBrush", WpfBrushes.DimGray),
+            FontSize = 12,
             Margin = new Thickness(0, 0, 0, 6),
         });
 
         var meta = new TextBlock
         {
             FontSize = 12,
-            Foreground = new WpfSolidBrush(WpfColor.FromRgb(0x4A, 0x5C, 0x52)),
+            Foreground = ThemeBrush("TextSecondaryBrush", new WpfSolidBrush(WpfColor.FromRgb(0x4A, 0x5C, 0x52))),
             TextWrapping = TextWrapping.Wrap,
-            Margin = new Thickness(0, 0, 0, 10),
+            Margin = new Thickness(0, 0, 0, 12),
         };
         body.Children.Add(meta);
 
@@ -448,9 +475,7 @@ public partial class SettingsWindow : Window
             Persist();
             _ = _host.ReloadConnectionsAsync();
             ShowSection("Servers");
-        }, edit);
-        connectBtn.FontWeight = FontWeights.SemiBold;
-        connectBtn.Padding = new Thickness(16, 7, 16, 7);
+        }, edit, primary: true);
         connectBtn.Margin = new Thickness(0, 0, 8, 0);
         actions.Children.Add(connectBtn);
         actions.Children.Add(Btn("Test", async () =>
@@ -467,15 +492,10 @@ public partial class SettingsWindow : Window
         var removeBtn = new Button
         {
             Content = "✕",
-            Width = 36,
-            Height = 36,
-            Padding = new Thickness(0),
+            Style = TryStyle("IconButton"),
             VerticalAlignment = VerticalAlignment.Top,
             ToolTip = "Remove profile",
             IsEnabled = edit,
-            Background = WpfBrushes.Transparent,
-            BorderBrush = new WpfSolidBrush(WpfColor.FromRgb(0xD0, 0xD0, 0xD0)),
-            BorderThickness = new Thickness(1),
         };
         removeBtn.Click += (_, _) =>
         {
@@ -570,11 +590,13 @@ public partial class SettingsWindow : Window
         {
             Title = "Manual certificate import",
             Width = 480,
-            Height = 420,
+            Height = 440,
             Owner = this,
             WindowStartupLocation = WindowStartupLocation.CenterOwner,
+            Style = TryStyle("AppWindow"),
+            Background = ThemeBrush("ContentBgBrush", WpfBrushes.WhiteSmoke),
         };
-        var sp = new StackPanel { Margin = new Thickness(16) };
+        var sp = new StackPanel { Margin = new Thickness(20) };
         var host = new TextBox();
         var port = new TextBox { Text = "8089" };
         var proto = new ComboBox { ItemsSource = new[] { "ssl", "tcp" }, SelectedIndex = 0 };
@@ -600,8 +622,8 @@ public partial class SettingsWindow : Window
             _ = _host.ReloadConnectionsAsync();
             dlg.Close();
             ShowSection("Servers");
-        }));
-        dlg.Content = new ScrollViewer { Content = sp };
+        }, primary: true));
+        dlg.Content = new ScrollViewer { Content = sp, VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
         dlg.ShowDialog();
     }
 
@@ -844,7 +866,7 @@ public partial class SettingsWindow : Window
                 "Mesh SA",
                 MessageBoxButton.OK,
                 _host.Mesh.LastInterfaceWarning is null ? MessageBoxImage.Information : MessageBoxImage.Warning);
-        }, edit));
+        }, edit, primary: true));
 
         void SaveMesh()
         {
@@ -894,7 +916,7 @@ public partial class SettingsWindow : Window
             }
             OpenUrl(_host.Config.CloudTakUrl!);
         }));
-        panel.Children.Add(new TextBlock { Text = "Companion apps", FontWeight = FontWeights.SemiBold, Margin = new Thickness(0, 16, 0, 8) });
+        panel.Children.Add(SectionHeader("Companion apps", topMargin: 8));
         panel.Children.Add(Btn("ATAK-CIV (Google Play)", () => OpenUrl("https://play.google.com/store/apps/details?id=com.atakmap.app.civ")));
         panel.Children.Add(Btn("ATAK / TAK.gov", () => OpenUrl("https://tak.gov")));
         panel.Children.Add(Btn("TAK Aware (App Store)", () => OpenUrl("https://apps.apple.com/us/app/tak-aware/id6738631659")));
@@ -1015,7 +1037,8 @@ public partial class SettingsWindow : Window
             _host.Config.Updates.AutomaticallyDownloadAndInstall = false;
             Persist();
         };
-        panel.Children.Add(Btn("Check for updates", async () =>
+        var updateRow = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 8, 0, 0) };
+        updateRow.Children.Add(Btn("Check for updates", async () =>
         {
             _lastUpdateCheck = await _host.Updates.CheckAsync();
             if (!_lastUpdateCheck.Success)
@@ -1028,7 +1051,8 @@ public partial class SettingsWindow : Window
                 Msg($"You are up to date (current {_lastUpdateCheck.CurrentVersion}, latest {_lastUpdateCheck.LatestVersion ?? "unknown"}).");
             ShowSection("Updates");
         }));
-        panel.Children.Add(Btn("Update now", async () =>
+        updateRow.Children.Add(Spacer(8));
+        updateRow.Children.Add(Btn("Update now", async () =>
         {
             if (!EnsureEditable()) return;
             _lastUpdateCheck = await _host.Updates.CheckAsync();
@@ -1066,7 +1090,8 @@ public partial class SettingsWindow : Window
 
             // Helper is waiting on our PID — exit immediately (do not block on another MessageBox).
             Application.Current.Shutdown();
-        }, edit));
+        }, edit, primary: true));
+        panel.Children.Add(updateRow);
         return panel;
     }
 
@@ -1092,16 +1117,19 @@ public partial class SettingsWindow : Window
         var version = _host.Updates.CurrentVersion;
         panel.Children.Add(new TextBlock
         {
-            Text =
-                $"WinTAKTracker {version} — independent Windows PLI tracker.\n" +
-                "Not an official TAK Product Center application.\n" +
-                "TAK / ATAK / WinTAK / CloudTAK / TAK Aware are trademarks of their respective owners.\n" +
-                "Map tiles: © OpenStreetMap contributors.\n" +
-                "Network location: ipwho.is (approximate IP geolocation).\n" +
-                "License: see LICENSE in the repository.\n" +
-                "Updates: github.com/CopIXus/WinTAKTracker",
-            TextWrapping = TextWrapping.Wrap,
+            Text = $"WinTAKTracker {version}",
+            FontSize = 16,
+            FontWeight = FontWeights.SemiBold,
+            Foreground = ThemeBrush("TextPrimaryBrush", WpfBrushes.Black),
+            Margin = new Thickness(0, 0, 0, 8),
         });
+        panel.Children.Add(Blurb(
+            "Independent Windows PLI tracker. Not an official TAK Product Center application.\n\n" +
+            "TAK / ATAK / WinTAK / CloudTAK / TAK Aware are trademarks of their respective owners.\n" +
+            "Map tiles: © OpenStreetMap contributors.\n" +
+            "Network location: ipwho.is (approximate IP geolocation).\n" +
+            "License: see LICENSE in the repository.\n" +
+            "Updates: github.com/CopIXus/WinTAKTracker"));
         return panel;
     }
 
@@ -1118,21 +1146,16 @@ public partial class SettingsWindow : Window
             };
     }
 
-    private static UIElement GpsRow(string label, string value, Action onCopy)
-    {
-        var dock = new DockPanel { Margin = new Thickness(0, 0, 0, 8) };
-        var btn = new Button { Content = "Copy", Padding = new Thickness(10, 4, 10, 4), Margin = new Thickness(8, 0, 0, 0) };
-        btn.Click += (_, _) => onCopy();
-        DockPanel.SetDock(btn, Dock.Right);
-        dock.Children.Add(btn);
-        dock.Children.Add(Chip(label, value));
-        return dock;
-    }
-
     private static DockPanel RowBrowse(TextBox pathBox, string filter)
     {
-        var dock = new DockPanel();
-        var btn = new Button { Content = "…", Width = 32, Margin = new Thickness(6, 0, 0, 0) };
+        var dock = new DockPanel { Margin = new Thickness(0, 0, 0, 0) };
+        var btn = new Button
+        {
+            Content = "…",
+            Style = TryStyle("IconButton"),
+            Margin = new Thickness(8, 0, 0, 0),
+            VerticalAlignment = VerticalAlignment.Center,
+        };
         btn.Click += (_, _) =>
         {
             var ofd = new OpenFileDialog { Filter = filter };
@@ -1144,59 +1167,47 @@ public partial class SettingsWindow : Window
         return dock;
     }
 
+    private static TextBlock SectionHeader(string text, double topMargin = 0) => new()
+    {
+        Text = text,
+        Style = TryStyle("SectionHeaderText"),
+        Margin = new Thickness(0, topMargin > 0 ? topMargin + 12 : 0, 0, 8),
+    };
+
     private static TextBlock Label(string text) => new()
     {
         Text = text,
-        Margin = new Thickness(0, 8, 0, 4),
-        FontWeight = FontWeights.SemiBold,
+        Style = TryStyle("FieldLabelText"),
     };
 
     private static TextBlock Blurb(string text) => new()
     {
         Text = text,
-        TextWrapping = TextWrapping.Wrap,
-        Foreground = WpfBrushes.DimGray,
-        Margin = new Thickness(0, 0, 0, 12),
+        Style = TryStyle("BlurbText"),
     };
 
     private static Border Chip(string label, string value)
     {
-        var border = new Border
+        var border = new Border { Style = TryStyle("InfoChip") };
+        border.Child = new TextBlock
         {
-            Background = new WpfSolidBrush(
-                WpfColor.FromRgb(0xEE, 0xF5, 0xF0)),
-            CornerRadius = new CornerRadius(4),
-            Padding = new Thickness(12, 8, 12, 8),
-            Margin = new Thickness(0, 0, 0, 8),
+            Text = $"{label}: {value}",
+            FontSize = 13,
+            Foreground = ThemeBrush("TextPrimaryBrush", WpfBrushes.Black),
         };
-        border.Child = new TextBlock { Text = $"{label}: {value}", FontSize = 13 };
         return border;
     }
 
-    private static Button Btn(string content, Action action, bool enabled = true)
+    private static Button Btn(string content, Action action, bool enabled = true, bool primary = false, bool danger = false)
     {
-        var b = new Button
-        {
-            Content = content,
-            Padding = new Thickness(12, 6, 12, 6),
-            Margin = new Thickness(0, 0, 0, 8),
-            HorizontalAlignment = WpfHAlign.Left,
-            IsEnabled = enabled,
-        };
+        var b = CreateButton(content, enabled, primary, danger);
         b.Click += (_, _) => action();
         return b;
     }
 
-    private static Button Btn(string content, Func<Task> action, bool enabled = true)
+    private static Button Btn(string content, Func<Task> action, bool enabled = true, bool primary = false, bool danger = false)
     {
-        var b = new Button
-        {
-            Content = content,
-            Padding = new Thickness(12, 6, 12, 6),
-            Margin = new Thickness(0, 0, 0, 8),
-            HorizontalAlignment = WpfHAlign.Left,
-            IsEnabled = enabled,
-        };
+        var b = CreateButton(content, enabled, primary, danger);
         b.Click += async (_, _) =>
         {
             try { await action(); }
@@ -1204,6 +1215,25 @@ public partial class SettingsWindow : Window
         };
         return b;
     }
+
+    private static Button CreateButton(string content, bool enabled, bool primary, bool danger)
+    {
+        var styleKey = primary ? "PrimaryButton" : danger ? "DangerButton" : "SecondaryButton";
+        return new Button
+        {
+            Content = content,
+            Style = TryStyle(styleKey),
+            Margin = new Thickness(0, 0, 0, 8),
+            HorizontalAlignment = WpfHAlign.Left,
+            IsEnabled = enabled,
+        };
+    }
+
+    private static Style? TryStyle(string key) =>
+        Application.Current?.TryFindResource(key) as Style;
+
+    private static System.Windows.Media.Brush ThemeBrush(string key, System.Windows.Media.Brush fallback) =>
+        Application.Current?.TryFindResource(key) as System.Windows.Media.Brush ?? fallback;
 
     private static void Copy(string text)
     {

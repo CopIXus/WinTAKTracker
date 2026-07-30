@@ -209,6 +209,8 @@ public partial class SettingsWindow : Window
         _statusPanel = new StackPanel();
         _statusValues.Clear();
 
+        _statusPanel.Children.Add(BuildModeBadge());
+
         var telemetry = new StackPanel { Margin = new Thickness(0, 0, 0, 8) };
         foreach (var key in new[] { "Mode", "Tray", "Tracking", "GPS", "Position", "Motion", "Servers", "Mesh SA", "Last PLI", "Active callsign" })
         {
@@ -314,6 +316,43 @@ public partial class SettingsWindow : Window
             tb.Text = value;
     }
 
+    private UIElement BuildModeBadge()
+    {
+        var service = _host.AttachedToService;
+        var title = service ? "Mode: Windows Service" : "Mode: Standalone";
+        var sub = service
+            ? (ConfigPaths.IsServiceInstalled()
+                ? "Tray attached via IPC · tracking owned by the Windows Service"
+                : "IPC pipe connected")
+            : (ConfigPaths.IsServiceInstalled()
+                ? "In-process tracking · service installed but not attached"
+                : "In-process tracking · Windows Service not installed");
+
+        var stack = new StackPanel();
+        stack.Children.Add(new TextBlock
+        {
+            Text = title,
+            FontWeight = FontWeights.SemiBold,
+            FontSize = 14,
+            Foreground = ThemeBrush("TextPrimaryBrush", WpfBrushes.Black),
+        });
+        stack.Children.Add(new TextBlock
+        {
+            Text = sub,
+            FontSize = 12,
+            Margin = new Thickness(0, 2, 0, 0),
+            Foreground = ThemeBrush("TextSecondaryBrush", WpfBrushes.DimGray),
+            TextWrapping = TextWrapping.Wrap,
+        });
+
+        return new Border
+        {
+            Style = TryStyle("InfoChip"),
+            Margin = new Thickness(0, 0, 0, 14),
+            Child = stack,
+        };
+    }
+
     private void RefreshStatusLive()
     {
         if (_statusValues.Count == 0) return;
@@ -322,7 +361,8 @@ public partial class SettingsWindow : Window
         {
             _host.RefreshTray();
             var st = _host.LastServiceStatus;
-            SetStatus("Mode", "Windows Service (companion UI)");
+            var serverLine = FormatServerStatusSummary(_host.GetServerStatuses());
+            SetStatus("Mode", "Windows Service (IPC attached)");
             SetStatus("Tray", _host.Tray.CurrentState.ToTooltip());
             SetStatus("Tracking", st?.Paused == true ? "Paused" : "Active");
             SetStatus("GPS", st?.HasGpsFix == true
@@ -330,8 +370,7 @@ public partial class SettingsWindow : Window
                 : "No fix");
             SetStatus("Position", "— (see service / map companions)");
             SetStatus("Motion", "—");
-            SetStatus("Servers", st?.AnyTakConnected == true ? "Connected" :
-                st?.AnyTakReconnecting == true ? "Reconnecting…" : "Disconnected");
+            SetStatus("Servers", serverLine);
             SetStatus("Mesh SA", st?.MeshReady == true ? "Ready" : (st?.MeshLastError ?? "—"));
             SetStatus("Last PLI", st?.LastPliSentUtc?.ToLocalTime().ToString("G") ?? "—");
             SetStatus("Active callsign", st?.ActiveIdentity is null
@@ -341,9 +380,9 @@ public partial class SettingsWindow : Window
         }
 
         var fix = _host.Gps.CurrentFix;
-        var servers = string.Join("; ", _host.Tak.GetStatuses().Select(s => $"{s.DisplayName}: {s.State}"));
+        var servers = FormatServerStatusSummary(_host.GetServerStatuses());
 
-        SetStatus("Mode", "In-process (portable)");
+        SetStatus("Mode", "Standalone (in-process)");
         SetStatus("Tray", _host.Tray.CurrentState.ToTooltip());
         SetStatus("Tracking", _host.Pause.IsPaused ? "Paused" : "Active");
         SetStatus("GPS", fix is null ? "No fix" : $"{(fix.IsHeld ? "Held" : "Live")} via {fix.SourceDisplayName}");
@@ -361,6 +400,23 @@ public partial class SettingsWindow : Window
         SetStatus("Active callsign", $"{active.Callsign} ({active.Source})");
 
         _mapPreview?.UpdateFix(fix, active.Team);
+    }
+
+    private static string FormatServerStatusSummary(IReadOnlyList<ServerConnectionStatus> statuses)
+    {
+        if (statuses.Count == 0) return "None";
+        return string.Join("; ", statuses.Select(s =>
+        {
+            var label = s.State switch
+            {
+                TakConnectionState.Connected => "Connected",
+                TakConnectionState.Connecting or TakConnectionState.Reconnecting => "Connecting",
+                TakConnectionState.Error => "Error",
+                _ when s.Enabled => "Enabled, not connected",
+                _ => "Disconnected",
+            };
+            return $"{s.DisplayName}: {label}";
+        }));
     }
 
     private UIElement BuildServers()
@@ -382,7 +438,10 @@ public partial class SettingsWindow : Window
         }
 
         panel.Children.Add(SectionHeader("Add server", topMargin: 8));
-        panel.Children.Add(Blurb("Enroll via URL/QR, SoftCert ZIP, or manual .p12. Profiles stay in LocalAppData. Portal tokens are short-lived (~15 minutes)."));
+        panel.Children.Add(Blurb(
+            _host.AttachedToService || ConfigPaths.IsServiceInstalled()
+                ? "Enroll via URL/QR, SoftCert ZIP, or manual .p12. Profiles are stored under ProgramData for the Windows Service. Portal tokens are short-lived (~15 minutes)."
+                : "Enroll via URL/QR, SoftCert ZIP, or manual .p12. Profiles stay in LocalAppData (portable). Portal tokens are short-lived (~15 minutes)."));
 
         var paste = new TextBox
         {
@@ -469,22 +528,20 @@ public partial class SettingsWindow : Window
 
     private UIElement BuildServerCard(ServerProfile server, bool edit)
     {
-        var outer = new Grid { Margin = new Thickness(0, 0, 0, 12) };
-        outer.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-        outer.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-
         var card = new Border
         {
             Style = TryStyle("ServerCard"),
-            Margin = new Thickness(0, 0, 8, 0),
+            Margin = new Thickness(0, 0, 0, 10),
         };
 
-        var body = new StackPanel();
-        var titleRow = new DockPanel { LastChildFill = true, Margin = new Thickness(0, 0, 0, 4) };
-        var statusBadge = StatusBadge(TakConnectionState.Disconnected);
-        DockPanel.SetDock(statusBadge, Dock.Right);
-        titleRow.Children.Add(statusBadge);
-        titleRow.Children.Add(new TextBlock
+        var grid = new Grid();
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+
+        var info = new StackPanel { Margin = new Thickness(0, 0, 12, 0) };
+
+        var titleRow = new WrapPanel { Margin = new Thickness(0, 0, 0, 4) };
+        var title = new TextBlock
         {
             Text = string.IsNullOrWhiteSpace(server.DisplayName) ? server.Host : server.DisplayName,
             FontWeight = FontWeights.SemiBold,
@@ -492,18 +549,22 @@ public partial class SettingsWindow : Window
             Foreground = ThemeBrush("TextPrimaryBrush", new WpfSolidBrush(WpfColor.FromRgb(0x1A, 0x24, 0x20))),
             VerticalAlignment = VerticalAlignment.Center,
             TextTrimming = TextTrimming.CharacterEllipsis,
-        });
-        body.Children.Add(titleRow);
+            Margin = new Thickness(0, 0, 8, 0),
+        };
+        var statusBadge = StatusBadge(TakConnectionState.Disconnected);
+        titleRow.Children.Add(title);
+        titleRow.Children.Add(statusBadge);
+        info.Children.Add(titleRow);
 
         var hostLine = string.IsNullOrWhiteSpace(server.Host)
             ? $"{server.Protocol.ToUpperInvariant()} · port {server.Port}"
             : $"{server.Host} · {server.Protocol.ToUpperInvariant()}:{server.Port}";
-        body.Children.Add(new TextBlock
+        info.Children.Add(new TextBlock
         {
             Text = hostLine,
             Foreground = ThemeBrush("TextSecondaryBrush", WpfBrushes.DimGray),
             FontSize = 12,
-            Margin = new Thickness(0, 0, 0, 6),
+            Margin = new Thickness(0, 0, 0, 4),
         });
 
         var meta = new TextBlock
@@ -511,41 +572,20 @@ public partial class SettingsWindow : Window
             FontSize = 12,
             Foreground = ThemeBrush("TextSecondaryBrush", new WpfSolidBrush(WpfColor.FromRgb(0x4A, 0x5C, 0x52))),
             TextWrapping = TextWrapping.Wrap,
-            Margin = new Thickness(0, 0, 0, 12),
         };
-        body.Children.Add(meta);
+        info.Children.Add(meta);
 
-        var actions = new StackPanel { Orientation = Orientation.Horizontal };
-        var connectBtn = Btn(server.Enabled ? "Disconnect" : "Connect", () =>
-        {
-            if (!EnsureEditable()) return;
-            server.Enabled = !server.Enabled;
-            Persist();
-            _ = _host.ReloadConnectionsAsync();
-            ShowSection("Servers");
-        }, edit, primary: true);
-        connectBtn.Margin = new Thickness(0, 0, 8, 0);
-        actions.Children.Add(connectBtn);
-        actions.Children.Add(Btn("Test", async () =>
-        {
-            var (ok, message) = await _host.Tak.TestServerAsync(server.Id, _host.Config);
-            Msg(message, ok ? MessageBoxImage.Information : MessageBoxImage.Warning);
-        }, edit));
-        body.Children.Add(actions);
+        Grid.SetColumn(info, 0);
+        grid.Children.Add(info);
 
-        card.Child = body;
-        Grid.SetColumn(card, 0);
-        outer.Children.Add(card);
-
-        var removeBtn = new Button
+        var actions = new StackPanel
         {
-            Content = "✕",
-            Style = TryStyle("IconButton"),
+            Orientation = Orientation.Vertical,
             VerticalAlignment = VerticalAlignment.Top,
-            ToolTip = "Remove profile",
-            IsEnabled = edit,
+            MinWidth = 96,
         };
-        removeBtn.Click += (_, _) =>
+
+        var removeBtn = CompactBtn("Remove", () =>
         {
             if (!EnsureEditable()) return;
             if (MessageBox.Show(
@@ -554,19 +594,48 @@ public partial class SettingsWindow : Window
                     MessageBoxButton.YesNo,
                     MessageBoxImage.Warning) != MessageBoxResult.Yes) return;
             _host.Tak.WipeProfile(_host.Config, server.Id, _host.ConfigStore);
+            if (_host.AttachedToService)
+                _ = _host.ReloadConnectionsAsync();
             ShowSection("Servers");
-        };
-        Grid.SetColumn(removeBtn, 1);
-        outer.Children.Add(removeBtn);
+        }, edit, danger: true);
+
+        var connectBtn = CompactBtn("Connect", () =>
+        {
+            if (!EnsureEditable()) return;
+            var live = _host.GetServerStatuses().FirstOrDefault(s => s.ProfileId == server.Id);
+            var connected = live?.State == TakConnectionState.Connected;
+            // Label matches live stream: Connected → disconnect; otherwise connect/retry.
+            server.Enabled = !connected;
+            Persist();
+            _ = _host.ReloadConnectionsAsync();
+            ShowSection("Servers");
+        }, edit, primary: true);
+
+        var testBtn = CompactBtn("Test", async () =>
+        {
+            // One-off socket probe — does not change the Connected badge (live stream state).
+            var (ok, message) = await _host.Tak.TestServerAsync(server.Id, _host.Config);
+            Msg(
+                ok
+                    ? $"{message}\n\nTest opens a temporary socket; use Connect for a live stream."
+                    : message,
+                ok ? MessageBoxImage.Information : MessageBoxImage.Warning);
+        }, edit);
+
+        actions.Children.Add(removeBtn);
+        actions.Children.Add(connectBtn);
+        actions.Children.Add(testBtn);
+        Grid.SetColumn(actions, 1);
+        grid.Children.Add(actions);
+
+        card.Child = grid;
 
         void Refresh()
         {
-            var status = _host.Tak.GetStatuses().FirstOrDefault(s => s.ProfileId == server.Id);
+            var status = _host.GetServerStatuses().FirstOrDefault(s => s.ProfileId == server.Id);
             var state = status?.State ?? TakConnectionState.Disconnected;
-            // Prefer Connected/Connecting/Error over Enabled disconnect intent for display.
-            if (!server.Enabled && state is TakConnectionState.Disconnected or TakConnectionState.Error)
-                state = TakConnectionState.Disconnected;
-            ApplyStatusBadge(statusBadge, state, status?.LastErrorCode);
+            var enabled = status?.Enabled ?? server.Enabled;
+            ApplyStatusBadge(statusBadge, state, enabled, status?.LastErrorCode);
 
             var hasCert = !string.IsNullOrWhiteSpace(server.ClientCertFileName) &&
                           File.Exists(Path.Combine(_host.ConfigStore.CertsDirectory, server.ClientCertFileName!));
@@ -579,12 +648,12 @@ public partial class SettingsWindow : Window
                     ? "No client cert"
                     : "No cert (TCP)";
             meta.Text = $"Identity: {identity}  ·  {certText}";
-            connectBtn.Content = server.Enabled ? "Disconnect" : "Connect";
+            connectBtn.Content = state == TakConnectionState.Connected ? "Disconnect" : "Connect";
         }
 
         Refresh();
         _serverCardRefreshers.Add(Refresh);
-        return outer;
+        return card;
     }
 
     private static Border StatusBadge(TakConnectionState state)
@@ -592,35 +661,96 @@ public partial class SettingsWindow : Window
         var border = new Border
         {
             CornerRadius = new CornerRadius(10),
-            Padding = new Thickness(10, 3, 10, 3),
-            Margin = new Thickness(8, 0, 0, 0),
+            Padding = new Thickness(8, 2, 8, 2),
+            Margin = new Thickness(0, 1, 0, 0),
             VerticalAlignment = VerticalAlignment.Center,
         };
         border.Child = new TextBlock { FontSize = 11, FontWeight = FontWeights.SemiBold };
-        ApplyStatusBadge(border, state, null);
+        ApplyStatusBadge(border, state, enabled: false, null);
         return border;
     }
 
-    private static void ApplyStatusBadge(Border badge, TakConnectionState state, string? error)
+    private static void ApplyStatusBadge(Border badge, TakConnectionState state, bool enabled, string? error)
     {
-        var (label, bg, fg) = state switch
+        string label;
+        string bgKey;
+        string fgKey;
+        switch (state)
         {
-            TakConnectionState.Connected => ("Connected", WpfColor.FromRgb(0xE6, 0xF4, 0xEA), WpfColor.FromRgb(0x1B, 0x5E, 0x20)),
-            TakConnectionState.Connecting => ("Connecting", WpfColor.FromRgb(0xE3, 0xF2, 0xFD), WpfColor.FromRgb(0x0D, 0x47, 0xA1)),
-            TakConnectionState.Reconnecting => ("Connecting", WpfColor.FromRgb(0xE3, 0xF2, 0xFD), WpfColor.FromRgb(0x0D, 0x47, 0xA1)),
-            TakConnectionState.Error => ("Error", WpfColor.FromRgb(0xFF, 0xEB, 0xEE), WpfColor.FromRgb(0xB7, 0x1C, 0x1C)),
-            _ => ("Disconnected", WpfColor.FromRgb(0xEE, 0xEE, 0xEE), WpfColor.FromRgb(0x42, 0x42, 0x42)),
-        };
-        badge.Background = new WpfSolidBrush(bg);
+            case TakConnectionState.Connected:
+                label = "Connected";
+                bgKey = "StatusOkBgBrush";
+                fgKey = "StatusOkFgBrush";
+                break;
+            case TakConnectionState.Connecting:
+            case TakConnectionState.Reconnecting:
+                label = "Connecting";
+                bgKey = "StatusInfoBgBrush";
+                fgKey = "StatusInfoFgBrush";
+                break;
+            case TakConnectionState.Error:
+                label = "Error";
+                bgKey = "DangerBgBrush";
+                fgKey = "DangerBrush";
+                break;
+            default:
+                if (enabled)
+                {
+                    label = "Not connected";
+                    bgKey = "StatusWarnBgBrush";
+                    fgKey = "StatusWarnFgBrush";
+                }
+                else
+                {
+                    label = "Disconnected";
+                    bgKey = "StatusNeutralBgBrush";
+                    fgKey = "StatusNeutralFgBrush";
+                }
+                break;
+        }
+
+        badge.Background = ThemeBrush(bgKey, new WpfSolidBrush(WpfColor.FromRgb(0xEE, 0xEE, 0xEE)));
         if (badge.Child is TextBlock tb)
         {
             tb.Text = label;
-            tb.Foreground = new WpfSolidBrush(fg);
+            tb.Foreground = ThemeBrush(fgKey, new WpfSolidBrush(WpfColor.FromRgb(0x42, 0x42, 0x42)));
             if (state == TakConnectionState.Error && !string.IsNullOrWhiteSpace(error))
                 badge.ToolTip = error;
+            else if (enabled && state == TakConnectionState.Disconnected)
+                badge.ToolTip = "Enabled profile; live stream is not up. Click Connect to retry, or Test to probe.";
             else
                 badge.ToolTip = null;
         }
+    }
+
+    private static Button CompactBtn(string content, Action action, bool enabled = true, bool primary = false, bool danger = false)
+    {
+        var styleKey = primary ? "CompactPrimaryButton" : danger ? "CompactDangerButton" : "CompactButton";
+        var b = new Button
+        {
+            Content = content,
+            Style = TryStyle(styleKey) ?? TryStyle(primary ? "PrimaryButton" : danger ? "DangerButton" : "SecondaryButton"),
+            IsEnabled = enabled,
+        };
+        b.Click += (_, _) => action();
+        return b;
+    }
+
+    private static Button CompactBtn(string content, Func<Task> action, bool enabled = true, bool primary = false, bool danger = false)
+    {
+        var styleKey = primary ? "CompactPrimaryButton" : danger ? "CompactDangerButton" : "CompactButton";
+        var b = new Button
+        {
+            Content = content,
+            Style = TryStyle(styleKey) ?? TryStyle(primary ? "PrimaryButton" : danger ? "DangerButton" : "SecondaryButton"),
+            IsEnabled = enabled,
+        };
+        b.Click += async (_, _) =>
+        {
+            try { await action(); }
+            catch (Exception ex) { Msg(ex.Message, MessageBoxImage.Warning); }
+        };
+        return b;
     }
 
     private bool EnsureEditable()

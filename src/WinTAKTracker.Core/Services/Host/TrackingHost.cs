@@ -74,6 +74,16 @@ public sealed class TrackingHost : IDisposable
         var active = GetActiveIdentity();
         var hasFix = Gps.CurrentFix is not null;
         var tray = ComputeTrayState();
+        var servers = Tak.GetStatuses().Select(s => new ServerStatusDto
+        {
+            ProfileId = s.ProfileId,
+            DisplayName = s.DisplayName,
+            Enabled = s.Enabled,
+            Protocol = s.Protocol,
+            State = s.State.ToString(),
+            LastErrorCode = s.LastErrorCode,
+            LastSendUtc = s.LastSendUtc,
+        }).ToList();
         return new TrackerStatusDto
         {
             ServiceMode = ServiceMode,
@@ -88,6 +98,7 @@ public sealed class TrackingHost : IDisposable
             TrayState = tray.ToString(),
             ActiveIdentity = ActiveIdentityDto.From(active),
             ConfigRoot = ConfigStore.RootDirectory,
+            Servers = servers,
         };
     }
 

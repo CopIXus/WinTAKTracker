@@ -1,6 +1,7 @@
 ﻿using System.Windows;
 using WinTAKTracker.Services;
 using WinTAKTracker.Services.Host;
+using WinTAKTracker.Services.Theme;
 using WinTAKTracker.Views;
 
 namespace WinTAKTracker;
@@ -9,10 +10,14 @@ public partial class App : Application
 {
     private SingleInstanceMutex? _singleInstance;
     private AppHost? _host;
+    private ThemeManager? _theme;
 
     protected override async void OnStartup(StartupEventArgs e)
     {
         base.OnStartup(e);
+
+        _theme = new ThemeManager();
+        _theme.Start();
 
         UiThreadMarshal.InvokeAsync = async action =>
         {
@@ -90,6 +95,7 @@ public partial class App : Application
 
     protected override void OnExit(ExitEventArgs e)
     {
+        _theme?.Dispose();
         _host?.Dispose();
         _singleInstance?.Dispose();
         base.OnExit(e);

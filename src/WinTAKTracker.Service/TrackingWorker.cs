@@ -20,10 +20,12 @@ public sealed class TrackingWorker : BackgroundService
         try
         {
             // Prefer machine store; seed from user store once if ProgramData is empty.
+            // Setup may copy config/certs without re-protecting secrets — CompleteUserToMachineMigration
+            // fills gaps when the service can still read CU blobs (rare); tray also completes this as the user.
             var machine = AppConfigStore.ForMachine();
+            var user = AppConfigStore.ForUser();
             if (!File.Exists(Path.Combine(machine.RootDirectory, "config.json")))
             {
-                var user = AppConfigStore.ForUser();
                 if (File.Exists(Path.Combine(user.RootDirectory, "config.json")))
                 {
                     try
@@ -35,6 +37,18 @@ public sealed class TrackingWorker : BackgroundService
                     {
                         _logger.LogWarning(ex, "User→machine config migration failed; starting with fresh machine store.");
                     }
+                }
+            }
+            else
+            {
+                try
+                {
+                    if (AppConfigStore.CompleteUserToMachineMigration(user, machine))
+                        _logger.LogInformation("Completed partial user→machine migration (secrets/certs) into {Root}", machine.RootDirectory);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogDebug(ex, "Partial user→machine migration skipped.");
                 }
             }
 

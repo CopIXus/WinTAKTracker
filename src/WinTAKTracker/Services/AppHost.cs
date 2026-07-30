@@ -60,6 +60,10 @@ public sealed class AppHost : IDisposable
 
     public async Task StartAsync()
     {
+        // Tray runs as the interactive user — finish Setup's config/certs-only copy by re-protecting
+        // CurrentUser DPAPI secrets into ProgramData (LocalMachine) so the service can connect.
+        TryCompleteMachineMigrationFromUser();
+
         ServiceClient = await TrackerIpcClient.TryConnectAsync(TimeSpan.FromSeconds(2)).ConfigureAwait(false);
         if (ServiceClient is not null)
         {
@@ -70,6 +74,12 @@ public sealed class AppHost : IDisposable
                 if (remote is not null)
                     Core.ReplaceConfig(remote);
                 LastServiceStatus = await ServiceClient.GetStatusDtoAsync().ConfigureAwait(false);
+
+                // Push any locally completed migration bits, then ask service to (re)connect enabled profiles.
+                await ServiceClient.SetConfigAsync(Config).ConfigureAwait(false);
+                await ServiceClient.ReloadConnectionsAsync().ConfigureAwait(false);
+                LastServiceStatus = await ServiceClient.GetStatusDtoAsync().ConfigureAwait(false);
+
                 Log.Info("App", "Attached to WinTAKTracker Windows Service (no in-process tracker).");
             }
             catch (Exception ex)
@@ -103,6 +113,34 @@ public sealed class AppHost : IDisposable
         Log.Info("App", AttachedToService
             ? "WinTAKTracker tray started (service companion)."
             : "WinTAKTracker started (in-process tracking).");
+    }
+
+    /// <summary>
+    /// Live per-server stream status. When attached to the service, uses IPC status (not the idle local Tak manager).
+    /// </summary>
+    public IReadOnlyList<ServerConnectionStatus> GetServerStatuses()
+    {
+        if (AttachedToService)
+        {
+            var remote = LastServiceStatus?.Servers;
+            if (remote is null)
+                return Array.Empty<ServerConnectionStatus>();
+
+            return remote.Select(s => new ServerConnectionStatus
+            {
+                ProfileId = s.ProfileId,
+                DisplayName = s.DisplayName,
+                Enabled = s.Enabled,
+                Protocol = s.Protocol,
+                State = Enum.TryParse<TakConnectionState>(s.State, true, out var st)
+                    ? st
+                    : TakConnectionState.Disconnected,
+                LastErrorCode = s.LastErrorCode,
+                LastSendUtc = s.LastSendUtc,
+            }).ToList();
+        }
+
+        return Tak.GetStatuses();
     }
 
     public void SaveConfig()
@@ -206,6 +244,38 @@ public sealed class AppHost : IDisposable
                 UserSid = sid,
                 UserName = userName,
             }).GetAwaiter().GetResult();
+        }
+    }
+
+    private void TryCompleteMachineMigrationFromUser()
+    {
+        try
+        {
+            if (!string.Equals(
+                    Path.GetFullPath(ConfigStore.RootDirectory).TrimEnd(Path.DirectorySeparatorChar),
+                    Path.GetFullPath(ConfigPaths.MachineRoot).TrimEnd(Path.DirectorySeparatorChar),
+                    StringComparison.OrdinalIgnoreCase))
+                return;
+
+            var user = AppConfigStore.ForUser();
+            if (!File.Exists(Path.Combine(user.RootDirectory, "config.json")))
+                return;
+
+            // If machine config is empty/missing servers but user has them, take full migrate.
+            if (Config.Servers.Count == 0 && user.Load().Servers.Count > 0)
+            {
+                AppConfigStore.MigrateUserStoreToMachine(user, ConfigStore);
+                Core.ReplaceConfig(ConfigStore.Load());
+                Log.Info("App", "Migrated portable servers into ProgramData machine store.");
+                return;
+            }
+
+            if (AppConfigStore.CompleteUserToMachineMigration(user, ConfigStore))
+                Log.Info("App", "Re-protected portable secrets/certs into ProgramData for the Windows Service.");
+        }
+        catch (Exception ex)
+        {
+            Log.Warn("App", $"User→machine migration assist failed: {ex.Message}");
         }
     }
 

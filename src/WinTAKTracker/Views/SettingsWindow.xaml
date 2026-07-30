@@ -14,21 +14,21 @@
         </Grid.ColumnDefinitions>
 
         <!-- Sidebar -->
-        <Border Grid.Column="0" Background="{StaticResource SidebarBgBrush}">
+        <Border Grid.Column="0" Background="{DynamicResource SidebarBgBrush}">
             <DockPanel>
                 <StackPanel DockPanel.Dock="Top" Margin="20,20,20,24">
                     <TextBlock Text="WinTAKTracker"
                                FontSize="18" FontWeight="SemiBold"
-                               Foreground="{StaticResource SidebarTextBrush}"/>
+                               Foreground="{DynamicResource SidebarTextBrush}"/>
                     <TextBlock Text="Settings"
                                FontSize="12"
-                               Foreground="{StaticResource SidebarMutedBrush}"
+                               Foreground="{DynamicResource SidebarMutedBrush}"
                                Margin="0,4,0,0"/>
                 </StackPanel>
                 <ListBox x:Name="SectionList"
                          BorderThickness="0"
                          Background="Transparent"
-                         Foreground="{StaticResource SidebarTextBrush}"
+                         Foreground="{DynamicResource SidebarTextBrush}"
                          Padding="12,0"
                          ItemContainerStyle="{StaticResource SidebarNavItem}"
                          SelectionChanged="SectionList_OnSelectionChanged">
@@ -71,7 +71,7 @@
             <Border Grid.Row="2"
                     Margin="0,16,0,0"
                     Padding="0,12,0,0"
-                    BorderBrush="{StaticResource AppBorderBrush}"
+                    BorderBrush="{DynamicResource AppBorderBrush}"
                     BorderThickness="0,1,0,0">
                 <DockPanel LastChildFill="False">
                     <Button x:Name="PauseResumeButton"
@@ -86,7 +86,7 @@
                             Click="LockSettingsButton_OnClick"/>
                     <TextBlock x:Name="LockStatusText"
                                VerticalAlignment="Center"
-                               Foreground="{StaticResource TextSecondaryBrush}"
+                               Foreground="{DynamicResource TextSecondaryBrush}"
                                FontSize="12"/>
                     <Button Content="Close"
                             Style="{StaticResource SecondaryButton}"

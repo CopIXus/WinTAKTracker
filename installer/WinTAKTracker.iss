@@ -221,11 +221,13 @@ begin
   if DirExists(UserRoot + '\certs') then
     CopyDirRecursive(UserRoot + '\certs', MachineRoot + '\certs');
 
+  { Certs + config are copied here. The tray app (running as your user) re-protects DPAPI
+    secrets into LocalMachine on first launch so the service can connect without re-enroll. }
   if not WizardSilent then
     MsgBox(
       'Portable settings were copied to:' + #13#10 + MachineRoot + #13#10#13#10 +
-      'Note: secrets protected with CurrentUser DPAPI cannot be read by the service account. ' +
-      'Re-enter tokens or certificate passwords in Settings after install if connections fail.',
+      'Launch WinTAKTracker once so certificate passwords are re-protected for the Windows Service. ' +
+      'You should not need to re-add servers if certs migrated successfully.',
       mbInformation, MB_OK);
 end;
 

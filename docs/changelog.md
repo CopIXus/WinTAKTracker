@@ -18,11 +18,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - One-click **`WinTAKTracker-Setup.exe`** (Inno Setup) — service + tray, single UAC prompt ([Windows Service](windows-service.md))
 - Windows Service + Core library + named-pipe IPC; computer vs per-user callsign ([Windows Service](windows-service.md))
 - Optional Authenticode signing in release CI when secrets are set; [Code signing](code-signing.md) for SmartScreen / Smart App Control
+- Status Mode badge (Windows Service vs Standalone); system light/dark theme
 
 ### Changed
 
 - Tray attaches to service when present; portable in-process mode when absent
 - Prefer Windows Location (Wi‑Fi/OS) over IP geolocation; delayed IP fallback; Status labels distinguish Wi‑Fi vs Network IP
+- Server card layout + Connected badge from live IPC stream state; migrate/reconnect assist after Setup
 
 ## [0.1.0] - 2026-07-30
 

@@ -56,6 +56,19 @@ public sealed class TrackerStatusDto
     public string TrayState { get; set; } = nameof(TrayIconState.Disconnected);
     public ActiveIdentityDto? ActiveIdentity { get; set; }
     public string ConfigRoot { get; set; } = "";
+    /// <summary>Per-server live stream state (Connected means CotStreamClient is up).</summary>
+    public List<ServerStatusDto> Servers { get; set; } = [];
+}
+
+public sealed class ServerStatusDto
+{
+    public string ProfileId { get; set; } = "";
+    public string DisplayName { get; set; } = "";
+    public bool Enabled { get; set; }
+    public string Protocol { get; set; } = "ssl";
+    public string State { get; set; } = "Disconnected";
+    public string? LastErrorCode { get; set; }
+    public DateTimeOffset? LastSendUtc { get; set; }
 }
 
 public sealed class ActiveIdentityDto

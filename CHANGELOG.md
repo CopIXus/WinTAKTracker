@@ -17,6 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - App branding from `WinTAKTrackerLogo` assets (window, tray, EXE icon)
 - GitHub Release on every push to `main` (`0.1.<run_number>`) in addition to SemVer `v*` tags
 - Optional Authenticode signing in release CI (Azure Artifact/Trusted Signing or PFX) when secrets are set; [docs/code-signing.md](docs/code-signing.md) for SmartScreen/SAC guidance
+- Status **Mode** badge: Windows Service (IPC) vs Standalone
+- System light/dark theme from Windows `AppsUseLightTheme` (runtime swap)
 
 ### Changed
 
@@ -26,6 +28,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Fix reporting crash when Windows Location returns NaN speed/course (`TimeSpan` / CoT build)
 - Settings UI auto-saves options; service mode pushes config over IPC to ProgramData
 - Expanded project README (install, enrollment, GPS, privacy, companions, build, service)
+- Server cards: status pill beside name; compact Remove / Connect·Disconnect / Test on the right
+- Connected badge uses live stream state from the service over IPC (Test is a one-off probe and does not set Connected)
+- On tray attach: finish LocalAppData→ProgramData secret re-protect, refresh statuses, reload enabled profiles
+- Connect/Disconnect button label follows live Connected state
 
 ## [0.1.0] - 2026-07-30
 

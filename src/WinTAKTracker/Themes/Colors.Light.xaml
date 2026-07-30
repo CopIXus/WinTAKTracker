@@ -1,0 +1,69 @@
+<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+                    xmlns:sys="clr-namespace:System;assembly=System.Runtime">
+
+    <!-- Light — refined green TAK cue -->
+    <Color x:Key="SidebarBgColor">#162820</Color>
+    <Color x:Key="SidebarHoverColor">#243A30</Color>
+    <Color x:Key="SidebarSelectedColor">#355C46</Color>
+    <Color x:Key="SidebarTextColor">#E8F0EA</Color>
+    <Color x:Key="SidebarMutedColor">#9BB5A3</Color>
+    <Color x:Key="AccentColor">#2F6B4F</Color>
+    <Color x:Key="AccentHoverColor">#3A7D5C</Color>
+    <Color x:Key="AccentPressedColor">#255A42</Color>
+    <Color x:Key="ContentBgColor">#F4F5F4</Color>
+    <Color x:Key="SurfaceColor">#FFFFFF</Color>
+    <Color x:Key="SurfaceSubtleColor">#F0F3F1</Color>
+    <Color x:Key="BorderColor">#D5DBD7</Color>
+    <Color x:Key="BorderStrongColor">#B8C2BB</Color>
+    <Color x:Key="FocusBorderColor">#2F6B4F</Color>
+    <Color x:Key="TextPrimaryColor">#1A2420</Color>
+    <Color x:Key="TextSecondaryColor">#5A6B60</Color>
+    <Color x:Key="TextMutedColor">#7A8A80</Color>
+    <Color x:Key="DangerColor">#B71C1C</Color>
+    <Color x:Key="DangerBgColor">#FFEBEE</Color>
+    <Color x:Key="InfoBgColor">#E8F1EC</Color>
+    <Color x:Key="DisabledBgColor">#F0F1F0</Color>
+    <Color x:Key="DisabledFgColor">#9AA39C</Color>
+    <Color x:Key="StatusOkBgColor">#E6F4EA</Color>
+    <Color x:Key="StatusOkFgColor">#1B5E20</Color>
+    <Color x:Key="StatusInfoBgColor">#E3F2FD</Color>
+    <Color x:Key="StatusInfoFgColor">#0D47A1</Color>
+    <Color x:Key="StatusWarnBgColor">#FFF3E0</Color>
+    <Color x:Key="StatusWarnFgColor">#E65100</Color>
+    <Color x:Key="StatusNeutralBgColor">#EEEEEE</Color>
+    <Color x:Key="StatusNeutralFgColor">#424242</Color>
+
+    <SolidColorBrush x:Key="SidebarBgBrush" Color="{StaticResource SidebarBgColor}"/>
+    <SolidColorBrush x:Key="SidebarHoverBrush" Color="{StaticResource SidebarHoverColor}"/>
+    <SolidColorBrush x:Key="SidebarSelectedBrush" Color="{StaticResource SidebarSelectedColor}"/>
+    <SolidColorBrush x:Key="SidebarTextBrush" Color="{StaticResource SidebarTextColor}"/>
+    <SolidColorBrush x:Key="SidebarMutedBrush" Color="{StaticResource SidebarMutedColor}"/>
+    <SolidColorBrush x:Key="AccentBrush" Color="{StaticResource AccentColor}"/>
+    <SolidColorBrush x:Key="AccentHoverBrush" Color="{StaticResource AccentHoverColor}"/>
+    <SolidColorBrush x:Key="AccentPressedBrush" Color="{StaticResource AccentPressedColor}"/>
+    <SolidColorBrush x:Key="ContentBgBrush" Color="{StaticResource ContentBgColor}"/>
+    <SolidColorBrush x:Key="SurfaceBrush" Color="{StaticResource SurfaceColor}"/>
+    <SolidColorBrush x:Key="SurfaceSubtleBrush" Color="{StaticResource SurfaceSubtleColor}"/>
+    <SolidColorBrush x:Key="AppBorderBrush" Color="{StaticResource BorderColor}"/>
+    <SolidColorBrush x:Key="BorderStrongBrush" Color="{StaticResource BorderStrongColor}"/>
+    <SolidColorBrush x:Key="FocusBorderBrush" Color="{StaticResource FocusBorderColor}"/>
+    <SolidColorBrush x:Key="TextPrimaryBrush" Color="{StaticResource TextPrimaryColor}"/>
+    <SolidColorBrush x:Key="TextSecondaryBrush" Color="{StaticResource TextSecondaryColor}"/>
+    <SolidColorBrush x:Key="TextMutedBrush" Color="{StaticResource TextMutedColor}"/>
+    <SolidColorBrush x:Key="DangerBrush" Color="{StaticResource DangerColor}"/>
+    <SolidColorBrush x:Key="DangerBgBrush" Color="{StaticResource DangerBgColor}"/>
+    <SolidColorBrush x:Key="InfoBgBrush" Color="{StaticResource InfoBgColor}"/>
+    <SolidColorBrush x:Key="DisabledBgBrush" Color="{StaticResource DisabledBgColor}"/>
+    <SolidColorBrush x:Key="DisabledFgBrush" Color="{StaticResource DisabledFgColor}"/>
+    <SolidColorBrush x:Key="StatusOkBgBrush" Color="{StaticResource StatusOkBgColor}"/>
+    <SolidColorBrush x:Key="StatusOkFgBrush" Color="{StaticResource StatusOkFgColor}"/>
+    <SolidColorBrush x:Key="StatusInfoBgBrush" Color="{StaticResource StatusInfoBgColor}"/>
+    <SolidColorBrush x:Key="StatusInfoFgBrush" Color="{StaticResource StatusInfoFgColor}"/>
+    <SolidColorBrush x:Key="StatusWarnBgBrush" Color="{StaticResource StatusWarnBgColor}"/>
+    <SolidColorBrush x:Key="StatusWarnFgBrush" Color="{StaticResource StatusWarnFgColor}"/>
+    <SolidColorBrush x:Key="StatusNeutralBgBrush" Color="{StaticResource StatusNeutralBgColor}"/>
+    <SolidColorBrush x:Key="StatusNeutralFgBrush" Color="{StaticResource StatusNeutralFgColor}"/>
+
+    <sys:Double x:Key="FontSizeBody">13</sys:Double>
+</ResourceDictionary>

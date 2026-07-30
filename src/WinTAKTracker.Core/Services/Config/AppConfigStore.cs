@@ -145,13 +145,33 @@ public sealed class AppConfigStore
 
     /// <summary>
     /// Copy cleartext config + re-protect secrets from a CurrentUser store into this (machine) store.
-    /// Must run elevated while the source user can decrypt CU DPAPI blobs.
+    /// Must run while the source user can decrypt CU DPAPI blobs (installer user or tray).
     /// </summary>
     public static void MigrateUserStoreToMachine(AppConfigStore userStore, AppConfigStore machineStore)
     {
         machineStore.EnsureDirectories();
         var config = userStore.Load();
         machineStore.Save(config);
+        CompleteUserToMachineMigration(userStore, machineStore);
+    }
+
+    /// <summary>
+    /// Finish a partial Setup copy (config/certs only): re-protect CU secrets as LocalMachine and
+    /// fill any missing cert files. Safe to call repeatedly. Returns true if anything was written.
+    /// </summary>
+    public static bool CompleteUserToMachineMigration(AppConfigStore userStore, AppConfigStore machineStore)
+    {
+        if (!string.Equals(
+                Path.GetFullPath(machineStore.RootDirectory).TrimEnd(Path.DirectorySeparatorChar),
+                Path.GetFullPath(ConfigPaths.MachineRoot).TrimEnd(Path.DirectorySeparatorChar),
+                StringComparison.OrdinalIgnoreCase))
+            return false;
+
+        if (!Directory.Exists(userStore.RootDirectory))
+            return false;
+
+        machineStore.EnsureDirectories();
+        var changed = false;
 
         var userSecrets = Path.Combine(userStore.RootDirectory, "secrets");
         if (Directory.Exists(userSecrets))
@@ -159,9 +179,29 @@ public sealed class AppConfigStore
             foreach (var file in Directory.EnumerateFiles(userSecrets, "*.dpapi"))
             {
                 var name = Path.GetFileNameWithoutExtension(file);
+                var machinePath = Path.Combine(machineStore.RootDirectory, "secrets", SanitizeFileName(name) + ".dpapi");
+                // Prefer re-protecting from CU when machine blob is missing or still CU-encrypted.
                 var plaintext = userStore.ReadSecret(name);
-                if (plaintext is not null)
-                    machineStore.WriteSecret(name, plaintext);
+                if (plaintext is null) continue;
+
+                var needsWrite = !File.Exists(machinePath);
+                if (!needsWrite)
+                {
+                    // Probe LM decrypt; if it fails, rewrite from CU plaintext.
+                    try
+                    {
+                        var probe = machineStore.ReadSecret(name);
+                        needsWrite = probe is null;
+                    }
+                    catch
+                    {
+                        needsWrite = true;
+                    }
+                }
+
+                if (!needsWrite) continue;
+                machineStore.WriteSecret(name, plaintext);
+                changed = true;
             }
         }
 
@@ -171,9 +211,14 @@ public sealed class AppConfigStore
             foreach (var file in Directory.EnumerateFiles(userCerts))
             {
                 var dest = Path.Combine(machineStore.CertsDirectory, Path.GetFileName(file));
+                if (File.Exists(dest) && new FileInfo(dest).Length == new FileInfo(file).Length)
+                    continue;
                 File.Copy(file, dest, overwrite: true);
+                changed = true;
             }
         }
+
+        return changed;
     }
 
     private static string SanitizeFileName(string name)

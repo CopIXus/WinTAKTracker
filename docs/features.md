@@ -14,21 +14,21 @@ Status legend: **Shipping** (in the current public build), **In progress**, **Pl
 
 | Capability | Status |
 |------------|--------|
-| Paste Portal / OpenTAK Tracker–style enroll URLs (`opentaktracker://`, `tak://` enroll / preference / SoftCert import) | Planned |
-| SoftCert / pref ZIP drop-in | Planned |
-| Manual WinTAK-style `.p12` + CA import (TLS or cleartext TCP) | Planned |
-| Webcam QR scan with paste-URL fallback | Planned |
-| Manual identity edit (callsign, team, role, ground vs vehicle CoT type) | Planned |
+| Paste Portal / OpenTAK Tracker–style enroll URLs (`opentaktracker://`, `tak://` enroll / preference / SoftCert import) | Shipping |
+| SoftCert / pref ZIP drop-in | Shipping |
+| Manual WinTAK-style `.p12` + CA import (TLS or cleartext TCP) | Shipping |
+| Webcam QR scan with paste-URL fallback | Shipping |
+| Manual identity edit (callsign, team, role, ground vs vehicle CoT type) | Shipping |
 | DPAPI-protected local config and certs under `%LocalAppData%` | Shipping |
 
 ## Multi-server TAK
 
 | Capability | Status |
 |------------|--------|
-| Multiple servers with enable toggles and per-server status | Planned |
-| TLS (`ssl`) and cleartext TCP (`tcp`) CoT streaming | Planned |
-| Test server / wipe profile / forget all | Planned |
-| Auto-reconnect with backoff after link loss, sleep/wake, or VPN flap | Planned |
+| Multiple servers with enable toggles and per-server status | Shipping |
+| TLS (`ssl`) and cleartext TCP (`tcp`) CoT streaming | Shipping |
+| Test server / wipe profile / forget all | Shipping |
+| Auto-reconnect with backoff after link loss, sleep/wake, or VPN flap | Shipping |
 
 ## Mesh SA (LAN / VPN)
 

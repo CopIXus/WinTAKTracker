@@ -42,8 +42,9 @@ Every push to `main` publishes a Release with version `0.1.<run_number>` (git ta
 ## Setup / enrollment
 
 1. Enroll a TAK server from **Settings → Servers**:
-   - Paste an enrollment URL or iTAK CSV (fictional example shape only — never commit real URLs):
-     `opentaktracker://enroll?host=tak.example.com&port=8089&username=USER&token=TOKEN&callsign=CALLSIGN`
+   - Paste an enrollment URL or iTAK CSV (fictional example shape only — never commit real URLs). Portal/`tak://…/enroll` links enroll a client certificate via Marti on port **8446**, then stream CoT on **8089** SSL:
+     `tak://com.atakmap.app/enroll?host=tak.example.com&username=USER&token=TOKEN`
+   - Enroll tokens are short-lived (~15 minutes) — paste and apply promptly.
    - Or **Scan QR…**, **Import SoftCert ZIP…**, or **Manual .p12 import…**
 2. Confirm **Identity** (callsign defaults to this PC’s Windows name until enrollment or you set one).
 3. Configure **GPS** (COM port / baud, Windows Location permission, optional network fallback).

@@ -15,6 +15,8 @@ public sealed class EnrollmentParseResult
     public EnrollmentKind Kind { get; init; }
     public string? Host { get; init; }
     public int? Port { get; init; }
+    /// <summary>Marti certificate enrollment HTTPS port (default 8446).</summary>
+    public int EnrollmentPort { get; init; } = 8446;
     public string Protocol { get; init; } = "ssl";
     public string? Username { get; init; }
     public string? Token { get; init; }
@@ -59,17 +61,25 @@ public static class EnrollmentUriParser
     private static EnrollmentParseResult ParseOpenTak(Uri uri)
     {
         var q = ParseQuery(uri);
+        var hostField = Get(q, "host");
+        var (host, streamPort, protocol, enrollPort) = SplitHostField(
+            hostField,
+            ParseInt(Get(q, "port")),
+            Get(q, "protocol"),
+            ParseInt(Get(q, "enrollmentPort") ?? Get(q, "enrollPort")));
+
         return new EnrollmentParseResult
         {
             Kind = EnrollmentKind.OpenTakTrackerEnroll,
-            Host = Get(q, "host"),
+            Host = host,
             Username = Get(q, "username"),
             Token = Get(q, "token") ?? Get(q, "password"),
             Callsign = Get(q, "callsign"),
             Team = Get(q, "team"),
             Role = Get(q, "role"),
-            Port = ParseInt(Get(q, "port")) ?? 8089,
-            Protocol = NormalizeProtocol(Get(q, "protocol") ?? "ssl"),
+            Port = streamPort ?? 8089,
+            EnrollmentPort = enrollPort ?? 8446,
+            Protocol = NormalizeProtocol(protocol ?? "ssl"),
         };
     }
 
@@ -81,17 +91,25 @@ public static class EnrollmentUriParser
         if (path.EndsWith("enroll", StringComparison.OrdinalIgnoreCase) ||
             path.Contains("enroll", StringComparison.OrdinalIgnoreCase))
         {
+            var hostField = Get(q, "host");
+            var (host, streamPort, protocol, enrollPort) = SplitHostField(
+                hostField,
+                ParseInt(Get(q, "port")),
+                Get(q, "protocol"),
+                ParseInt(Get(q, "enrollmentPort") ?? Get(q, "enrollPort")));
+
             return new EnrollmentParseResult
             {
                 Kind = EnrollmentKind.TakEnroll,
-                Host = Get(q, "host"),
+                Host = host,
                 Username = Get(q, "username"),
                 Token = Get(q, "token") ?? Get(q, "password"),
                 Callsign = Get(q, "callsign"),
                 Team = Get(q, "team"),
                 Role = Get(q, "role"),
-                Port = ParseInt(Get(q, "port")) ?? 8089,
-                Protocol = NormalizeProtocol(Get(q, "protocol") ?? "ssl"),
+                Port = streamPort ?? 8089,
+                EnrollmentPort = enrollPort ?? 8446,
+                Protocol = NormalizeProtocol(protocol ?? "ssl"),
             };
         }
 
@@ -135,6 +153,67 @@ public static class EnrollmentUriParser
             Port = ParseInt(parts[2].Trim()) ?? 8089,
             Protocol = NormalizeProtocol(parts[3].Trim()),
         };
+    }
+
+    /// <summary>
+    /// Accepts host, host:port, or host:port:ssl|tcp (ATAK connect-string style).
+    /// Port 8446 in the host field is treated as the enrollment port, not CoT streaming.
+    /// </summary>
+    internal static (string? Host, int? StreamPort, string? Protocol, int? EnrollmentPort) SplitHostField(
+        string? hostField,
+        int? explicitPort,
+        string? explicitProtocol,
+        int? explicitEnrollmentPort)
+    {
+        if (string.IsNullOrWhiteSpace(hostField))
+            return (null, explicitPort, explicitProtocol, explicitEnrollmentPort);
+
+        var raw = hostField.Trim();
+        int? streamPort = explicitPort;
+        int? enrollPort = explicitEnrollmentPort;
+        string? protocol = explicitProtocol;
+
+        // host:port:protocol
+        var lastColon = raw.LastIndexOf(':');
+        if (lastColon > 0)
+        {
+            var maybeProto = raw[(lastColon + 1)..];
+            if (maybeProto.Equals("ssl", StringComparison.OrdinalIgnoreCase) ||
+                maybeProto.Equals("tcp", StringComparison.OrdinalIgnoreCase) ||
+                maybeProto.Equals("tls", StringComparison.OrdinalIgnoreCase) ||
+                maybeProto.Equals("https", StringComparison.OrdinalIgnoreCase) ||
+                maybeProto.Equals("http", StringComparison.OrdinalIgnoreCase))
+            {
+                protocol ??= maybeProto;
+                raw = raw[..lastColon];
+                lastColon = raw.LastIndexOf(':');
+                if (lastColon > 0 && int.TryParse(raw[(lastColon + 1)..], out var connectPort))
+                {
+                    ApplyPort(connectPort, ref streamPort, ref enrollPort);
+                    raw = raw[..lastColon];
+                }
+
+                return (raw, streamPort ?? 8089, protocol, enrollPort);
+            }
+        }
+
+        // host:port
+        var colon = raw.LastIndexOf(':');
+        if (colon > 0 && int.TryParse(raw[(colon + 1)..], out var portOnly))
+        {
+            ApplyPort(portOnly, ref streamPort, ref enrollPort);
+            raw = raw[..colon];
+        }
+
+        return (raw, streamPort, protocol, enrollPort);
+
+        static void ApplyPort(int port, ref int? stream, ref int? enroll)
+        {
+            if (port == 8446)
+                enroll ??= port;
+            else if (stream is null)
+                stream = port;
+        }
     }
 
     private static Dictionary<string, string> ParseQuery(Uri uri)

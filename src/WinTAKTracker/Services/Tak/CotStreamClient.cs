@@ -47,11 +47,23 @@ public sealed class CotStreamClient : IDisposable
         SetState(TakConnectionState.Connecting);
         await DisconnectCoreAsync();
 
+        if (string.Equals(profile.Protocol, "ssl", StringComparison.OrdinalIgnoreCase))
+        {
+            var missing = DescribeMissingClientCert(profile);
+            if (missing is not null)
+            {
+                LastErrorCode = missing;
+                SetState(TakConnectionState.Error);
+                throw new InvalidOperationException(missing);
+            }
+        }
+
         _cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
         try
         {
             var tcp = new TcpClient();
-            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+            // Streaming mTLS can exceed short lab timeouts; keep separate from enroll (8446).
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(45));
             using var linked = CancellationTokenSource.CreateLinkedTokenSource(_cts.Token, timeout.Token);
             await tcp.ConnectAsync(profile.Host, profile.Port, linked.Token);
 
@@ -60,6 +72,12 @@ public sealed class CotStreamClient : IDisposable
             {
                 var ssl = new SslStream(stream, leaveInnerStreamOpen: false, RemoteCertificateValidationCallback);
                 var certs = LoadClientCerts(profile);
+                if (certs.Count == 0)
+                {
+                    LastErrorCode = "No client certificate — enroll first";
+                    throw new InvalidOperationException(LastErrorCode);
+                }
+
                 await ssl.AuthenticateAsClientAsync(new SslClientAuthenticationOptions
                 {
                     TargetHost = profile.Host,
@@ -77,33 +95,75 @@ public sealed class CotStreamClient : IDisposable
             }
 
             _backoffSeconds = 2;
+            LastErrorCode = null;
             SetState(TakConnectionState.Connected);
             _readLoop = Task.Run(() => ReadLoopAsync(_cts.Token));
             _log.Info("TAK", $"Connected via {profile.Protocol} (host redacted).");
         }
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+        {
+            LastErrorCode = "Connection timed out (server unreachable or TLS handshake stalled)";
+            _log.Warn("TAK", "Connect timed out.");
+            SetState(TakConnectionState.Error);
+            await DisconnectCoreAsync();
+            throw new TimeoutException(LastErrorCode);
+        }
         catch (Exception ex)
         {
-            LastErrorCode = ex.GetType().Name;
-            _log.Warn("TAK", $"Connect failed: {ex.GetType().Name}");
+            LastErrorCode = HumanizeConnectError(ex);
+            _log.Warn("TAK", $"Connect failed: {LastErrorCode}");
             SetState(TakConnectionState.Error);
             await DisconnectCoreAsync();
             throw;
         }
     }
 
-    public async Task<bool> TestAsync(ServerProfile profile, CancellationToken ct = default)
+    public async Task<(bool Ok, string Message)> TestAsync(ServerProfile profile, CancellationToken ct = default)
     {
+        if (string.Equals(profile.Protocol, "ssl", StringComparison.OrdinalIgnoreCase))
+        {
+            var missing = DescribeMissingClientCert(profile);
+            if (missing is not null)
+                return (false, missing);
+        }
+
         try
         {
             await ConnectAsync(profile, ct);
             await DisconnectAsync();
-            return true;
+            return (true, "Connection test passed.");
         }
-        catch
+        catch (Exception ex)
         {
-            return false;
+            var msg = LastErrorCode ?? HumanizeConnectError(ex);
+            return (false, msg.StartsWith("Connection test", StringComparison.Ordinal)
+                ? msg
+                : $"Connection test failed: {msg}");
         }
     }
+
+    private string? DescribeMissingClientCert(ServerProfile profile)
+    {
+        if (string.IsNullOrWhiteSpace(profile.ClientCertFileName))
+            return "No client certificate — enroll first (paste a Portal enroll URL) or import SoftCert/.p12.";
+
+        var path = Path.Combine(_store.CertsDirectory, profile.ClientCertFileName);
+        if (!File.Exists(path))
+            return "Client certificate file missing — re-enroll or re-import SoftCert/.p12.";
+
+        return null;
+    }
+
+    private static string HumanizeConnectError(Exception ex) => ex switch
+    {
+        InvalidOperationException ioe => ioe.Message,
+        TimeoutException te => te.Message,
+        OperationCanceledException => "Connection timed out or was canceled",
+        AuthenticationException => "TLS authentication failed (client cert or trust rejected)",
+        SocketException se => $"Network error ({se.SocketErrorCode})",
+        IOException => "Stream closed during connect",
+        _ => ex.GetType().Name,
+    };
 
     public async Task SendAsync(string cotXml, CancellationToken ct = default)
     {

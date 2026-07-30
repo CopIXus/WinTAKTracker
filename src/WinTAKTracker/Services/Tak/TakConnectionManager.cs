@@ -159,14 +159,14 @@ public sealed class TakConnectionManager : ITakConnectionManager, IDisposable
         using var client = new CotStreamClient(_store, _log);
         try
         {
-            var ok = await client.TestAsync(profile);
-            return ok
-                ? (true, "Connection test passed.")
-                : (false, $"Connection test failed ({client.LastErrorCode ?? "Error"}).");
+            return await client.TestAsync(profile);
         }
         catch (Exception ex)
         {
-            return (false, $"Connection test failed ({ex.GetType().Name}).");
+            var detail = client.LastErrorCode;
+            if (!string.IsNullOrWhiteSpace(detail))
+                return (false, detail!);
+            return (false, $"Connection test failed: {ex.Message}");
         }
     }
 
@@ -220,6 +220,15 @@ public sealed class TakConnectionManager : ITakConnectionManager, IDisposable
         lock (_gate) _clients.TryGetValue(profile.Id, out client);
         if (client is null) return;
 
+        if (SslMissingClientCert(profile))
+        {
+            // Avoid endless reconnect when enroll never completed.
+            try { await client.ConnectAsync(profile); }
+            catch { /* LastErrorCode set by client */ }
+            StatusChanged?.Invoke(this, EventArgs.Empty);
+            return;
+        }
+
         try
         {
             await client.ConnectAsync(profile);
@@ -234,6 +243,7 @@ public sealed class TakConnectionManager : ITakConnectionManager, IDisposable
     {
         var profile = _config.Servers.FirstOrDefault(s => s.Id == profileId);
         if (profile is null || !profile.Enabled) return;
+        if (SslMissingClientCert(profile)) return;
 
         CancelReconnect(profileId);
         var cts = new CancellationTokenSource();
@@ -244,6 +254,15 @@ public sealed class TakConnectionManager : ITakConnectionManager, IDisposable
         if (client is null) return;
 
         await client.ReconnectWithBackoffAsync(profile, cts.Token);
+    }
+
+    private bool SslMissingClientCert(ServerProfile profile)
+    {
+        if (!string.Equals(profile.Protocol, "ssl", StringComparison.OrdinalIgnoreCase))
+            return false;
+        if (string.IsNullOrWhiteSpace(profile.ClientCertFileName))
+            return true;
+        return !File.Exists(Path.Combine(_store.CertsDirectory, profile.ClientCertFileName));
     }
 
     private void CancelReconnect(string profileId)

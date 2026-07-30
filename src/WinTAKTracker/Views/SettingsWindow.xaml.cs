@@ -158,29 +158,48 @@ public partial class SettingsWindow : Window
     {
         var panel = new StackPanel();
         panel.Children.Add(Blurb("Enroll via URL/QR, SoftCert ZIP, or manual .p12. Profiles stay in LocalAppData."));
+        panel.Children.Add(Blurb("Portal enroll tokens are short-lived (~15 minutes) — paste and enroll promptly."));
 
         var paste = new TextBox { Height = 56, TextWrapping = TextWrapping.Wrap, AcceptsReturn = true, VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
+        var enrollStatus = new TextBlock
+        {
+            TextWrapping = TextWrapping.Wrap,
+            Foreground = System.Windows.Media.Brushes.DimGray,
+            Margin = new Thickness(0, 0, 0, 8),
+        };
         panel.Children.Add(Label("Paste enrollment URL or iTAK CSV"));
         panel.Children.Add(paste);
-        panel.Children.Add(Btn("Apply enrollment", async () =>
+        panel.Children.Add(enrollStatus);
+
+        async Task RunEnrollAsync(string input)
         {
-            var result = await _host.Enrollment.ApplyAsync(paste.Text, _host.Config);
-            if (!result.Success) { Msg(result.Error ?? "Failed"); return; }
+            enrollStatus.Text = "Enrolling certificate…";
+            enrollStatus.Foreground = System.Windows.Media.Brushes.DarkSlateBlue;
+            var progress = new Progress<string>(msg => { enrollStatus.Text = msg; });
+            var result = await _host.Enrollment.ApplyAsync(input, _host.Config, progress, CancellationToken.None);
+            if (!result.Success)
+            {
+                enrollStatus.Text = result.Error ?? "Enrollment failed.";
+                enrollStatus.Foreground = System.Windows.Media.Brushes.DarkRed;
+                Msg(result.Error ?? "Failed", MessageBoxImage.Warning);
+                return;
+            }
+
+            enrollStatus.Text = result.Message ?? "Enrolled.";
+            enrollStatus.Foreground = System.Windows.Media.Brushes.DarkGreen;
             await _host.ReloadConnectionsAsync();
             Msg(result.Message ?? "Applied.");
             ShowSection("Servers");
-        }));
+        }
+
+        panel.Children.Add(Btn("Apply enrollment", async () => await RunEnrollAsync(paste.Text)));
         panel.Children.Add(Btn("Scan QR…", async () =>
         {
             var dlg = new QrScanWindow { Owner = this };
             if (dlg.ShowDialog() == true && !string.IsNullOrWhiteSpace(dlg.ScannedText))
             {
                 paste.Text = dlg.ScannedText;
-                var result = await _host.Enrollment.ApplyAsync(dlg.ScannedText!, _host.Config);
-                if (!result.Success) { Msg(result.Error ?? "Failed"); return; }
-                await _host.ReloadConnectionsAsync();
-                Msg(result.Message ?? "Enrolled from QR.");
-                ShowSection("Servers");
+                await RunEnrollAsync(dlg.ScannedText!);
             }
         }));
         panel.Children.Add(Btn("Import SoftCert ZIP…", () =>
@@ -200,9 +219,14 @@ public partial class SettingsWindow : Window
         {
             var box = new StackPanel { Margin = new Thickness(0, 0, 0, 10) };
             var status = _host.Tak.GetStatuses().FirstOrDefault(s => s.ProfileId == server.Id);
+            var hasCert = !string.IsNullOrWhiteSpace(server.ClientCertFileName) &&
+                          File.Exists(Path.Combine(_host.ConfigStore.CertsDirectory, server.ClientCertFileName));
             box.Children.Add(new TextBlock
             {
-                Text = $"{server.DisplayName} — {server.Protocol}:{server.Port} — {status?.State.ToString() ?? "—"}",
+                Text = $"{server.DisplayName} — {server.Protocol}:{server.Port} — {status?.State.ToString() ?? "—"}" +
+                       (server.Protocol.Equals("ssl", StringComparison.OrdinalIgnoreCase) && !hasCert
+                           ? " — no client cert"
+                           : hasCert ? " — cert OK" : ""),
                 FontWeight = FontWeights.SemiBold,
             });
             var en = new CheckBox { Content = "Enabled", IsChecked = server.Enabled };

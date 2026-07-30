@@ -4,8 +4,11 @@
 # OpenTAK Tracker–style
 opentaktracker://enroll?host=tak.example.com&username=USER&token=TOKEN&callsign=CALLSIGN&team=Cyan&role=Team%20Member
 
-# ATAK enroll-style
+# ATAK / TAK Portal enroll-style (username+token → Marti CSR on 8446, then CoT SSL 8089)
 tak://com.atakmap.app/enroll?host=tak.example.com&username=USER&token=TOKEN
+
+# Optional connect-string host (stream port + protocol; enrollment still uses 8446)
+tak://com.atakmap.app/enroll?host=tak.example.com:8089:ssl&username=USER&token=TOKEN
 
 # ATAK preference-style (configure-only)
 tak://com.atakmap.app/preference?callsign=CALLSIGN&team=Cyan&role=Team%20Member

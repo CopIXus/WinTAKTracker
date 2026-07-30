@@ -17,6 +17,7 @@ Lightweight Windows tray app that reports your position (PLI) to TAK over TLS/TC
 - [Features](features.md) — what ships today and what is planned
 - [Changelog](changelog.md) — release history (Keep a Changelog)
 - [Code signing](code-signing.md) — SmartScreen / SAC, workarounds, Azure Trusted Signing & CI secrets
+- [Always-on / Windows Service](windows-service.md) — design for logoff-persistent tracking (not implemented yet)
 
 ## Privacy
 

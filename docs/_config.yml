@@ -1,6 +1,7 @@
 title: WinTAKTracker
 description: Windows TAK PLI tracker — tray app for multi-server CoT and Mesh SA
-remote_theme: pages-themes/primer@v0.2.0
+# v0.2.0 zip 404s on codeload; use current pages-themes/primer release.
+remote_theme: pages-themes/primer@v0.6.0
 plugins:
   - jekyll-remote-theme
   - jekyll-seo-tag

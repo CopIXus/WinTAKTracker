@@ -643,21 +643,33 @@ public partial class SettingsWindow : Window
                 Msg(_lastUpdateCheck.Error ?? "Check failed.", MessageBoxImage.Warning);
             else if (_lastUpdateCheck.UpdateAvailable)
                 Msg($"Update available: {_lastUpdateCheck.LatestVersion}");
+            else if (!string.IsNullOrWhiteSpace(_lastUpdateCheck.Error))
+                Msg(_lastUpdateCheck.Error, MessageBoxImage.Warning);
             else
-                Msg("You are up to date (or no release asset yet).");
+                Msg($"You are up to date (current {_lastUpdateCheck.CurrentVersion}, latest {_lastUpdateCheck.LatestVersion ?? "unknown"}).");
             ShowSection("Updates");
         }));
         panel.Children.Add(Btn("Update now", async () =>
         {
-            _lastUpdateCheck ??= await _host.Updates.CheckAsync();
-            if (_lastUpdateCheck is null || !_lastUpdateCheck.UpdateAvailable)
+            _lastUpdateCheck = await _host.Updates.CheckAsync();
+            if (!_lastUpdateCheck.Success)
             {
-                Msg("No update available.");
+                Msg(_lastUpdateCheck.Error ?? "Update check failed.", MessageBoxImage.Warning);
+                ShowSection("Updates");
+                return;
+            }
+            if (!_lastUpdateCheck.UpdateAvailable)
+            {
+                Msg(!string.IsNullOrWhiteSpace(_lastUpdateCheck.Error)
+                    ? _lastUpdateCheck.Error
+                    : $"No update available (current {_lastUpdateCheck.CurrentVersion}, latest {_lastUpdateCheck.LatestVersion ?? "unknown"}).");
+                ShowSection("Updates");
                 return;
             }
             var (ok, message) = await _host.Updates.DownloadAndApplyAsync(_lastUpdateCheck);
             Msg(message, ok ? MessageBoxImage.Information : MessageBoxImage.Warning);
             if (ok) Application.Current.Shutdown();
+            else ShowSection("Updates");
         }));
         return panel;
     }

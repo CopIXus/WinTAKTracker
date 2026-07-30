@@ -1,0 +1,105 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    name: Build and publish Release
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+
+      - name: Resolve version from tag
+        id: ver
+        shell: pwsh
+        run: |
+          $tag = "${{ github.ref_name }}"
+          if ($tag -notmatch '^v(\d+\.\d+\.\d+([.-].+)?)$') {
+            throw "Tag '$tag' must look like v1.2.3"
+          }
+          $version = $Matches[1]
+          "tag=$tag" >> $env:GITHUB_OUTPUT
+          "version=$version" >> $env:GITHUB_OUTPUT
+          Write-Host "Tag=$tag Version=$version"
+
+      - name: Publish self-contained win-x64
+        shell: pwsh
+        run: |
+          $version = "${{ steps.ver.outputs.version }}"
+          dotnet publish src/WinTAKTracker/WinTAKTracker.csproj `
+            -c Release `
+            -r win-x64 `
+            --self-contained true `
+            -p:PublishSingleFile=true `
+            -p:IncludeNativeLibrariesForSelfExtract=true `
+            -p:EnableCompressionInSingleFile=true `
+            -p:Version=$version `
+            -p:AssemblyVersion="$version.0" `
+            -p:FileVersion="$version.0" `
+            -p:InformationalVersion=$version `
+            -o publish
+
+      - name: Stage EXE and SHA256
+        shell: pwsh
+        run: |
+          $exe = "publish/WinTAKTracker.exe"
+          if (-not (Test-Path $exe)) { throw "Missing $exe" }
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          Copy-Item $exe dist/WinTAKTracker.exe
+          $hash = (Get-FileHash -Algorithm SHA256 dist/WinTAKTracker.exe).Hash.ToLowerInvariant()
+          Set-Content -Path dist/WinTAKTracker.exe.sha256 -Value "$hash  WinTAKTracker.exe" -NoNewline
+          Write-Host "SHA256=$hash"
+
+      - name: Extract changelog section
+        id: notes
+        shell: pwsh
+        run: |
+          $version = "${{ steps.ver.outputs.version }}"
+          $path = "CHANGELOG.md"
+          if (-not (Test-Path $path)) { throw "CHANGELOG.md not found" }
+          $lines = Get-Content $path
+          $header = "## [$version]"
+          $start = -1
+          for ($i = 0; $i -lt $lines.Count; $i++) {
+            if ($lines[$i].StartsWith($header)) { $start = $i; break }
+          }
+          if ($start -lt 0) {
+            $body = "Release $version`n`nSee [CHANGELOG.md](https://github.com/CopIXus/WinTAKTracker/blob/main/CHANGELOG.md)."
+          } else {
+            $end = $lines.Count
+            for ($j = $start + 1; $j -lt $lines.Count; $j++) {
+              if ($lines[$j] -match '^## \[') { $end = $j; break }
+            }
+            $section = $lines[$start..($end - 1)] | Where-Object { $_ -notmatch '^\[.+\]:\s*https?://' }
+            $body = ($section -join "`n").Trim()
+            if ([string]::IsNullOrWhiteSpace($body)) {
+              $body = "Release $version"
+            }
+          }
+          $out = Join-Path $env:RUNNER_TEMP "release-notes.md"
+          Set-Content -Path $out -Value $body -Encoding utf8
+          "file=$out" >> $env:GITHUB_OUTPUT
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: WinTAKTracker ${{ steps.ver.outputs.version }}
+          body_path: ${{ steps.notes.outputs.file }}
+          files: |
+            dist/WinTAKTracker.exe
+            dist/WinTAKTracker.exe.sha256
+          fail_on_unmatched_files: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -1,0 +1,85 @@
+name: Deploy docs to GitHub Pages
+
+on:
+  push:
+    branches: [main, master]
+    paths:
+      - "docs/**"
+      - "FEATURES.md"
+      - "CHANGELOG.md"
+      - ".github/workflows/pages.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build Pages site
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Sync Features and Changelog into docs
+        run: |
+          # Keep docs pages aligned with root canonical files (preserve YAML front matter).
+          python3 <<'PY'
+          from pathlib import Path
+
+          def sync(src: Path, dest: Path, title: str) -> None:
+              body = src.read_text(encoding="utf-8")
+              # Strip a leading H1 so the page title from front matter / first heading is clean.
+              lines = body.splitlines()
+              if lines and lines[0].startswith("# "):
+                  lines = lines[1:]
+                  while lines and lines[0].strip() == "":
+                      lines = lines[1:]
+              content = "\n".join(lines).rstrip() + "\n"
+              nav = (
+                  f"[← Home](index.md) · "
+                  f"[Features](features.md) · "
+                  f"[Changelog](changelog.md) · "
+                  f"[Download latest](https://github.com/CopIXus/WinTAKTracker/releases/latest)\n\n"
+              )
+              dest.write_text(
+                  f"---\ntitle: {title}\n---\n\n# {title}\n\n{nav}{content}",
+                  encoding="utf-8",
+              )
+
+          sync(Path("FEATURES.md"), Path("docs/features.md"), "Features")
+          sync(Path("CHANGELOG.md"), Path("docs/changelog.md"), "Changelog")
+          print("Synced FEATURES.md and CHANGELOG.md into docs/")
+          PY
+
+      - name: Setup Pages
+        uses: actions/configure-pages@v5
+
+      - name: Build with Jekyll
+        uses: actions/jekyll-build-pages@v1
+        with:
+          source: ./docs
+          destination: ./_site
+
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: ./_site
+
+  deploy:
+    name: Deploy
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

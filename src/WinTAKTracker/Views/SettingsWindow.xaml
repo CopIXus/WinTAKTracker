@@ -1,0 +1,112 @@
+<Window x:Class="WinTAKTracker.Views.SettingsWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="WinTAKTracker Settings"
+        Height="560" Width="820"
+        MinHeight="420" MinWidth="640"
+        WindowStartupLocation="CenterScreen"
+        Background="#F3F3F3">
+    <Grid>
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="200"/>
+            <ColumnDefinition Width="*"/>
+        </Grid.ColumnDefinitions>
+
+        <Border Grid.Column="0" Background="#1B2E24" Padding="0,12,0,12">
+            <DockPanel>
+                <StackPanel DockPanel.Dock="Top" Margin="16,8,16,20">
+                    <TextBlock Text="WinTAKTracker"
+                               FontSize="18" FontWeight="SemiBold"
+                               Foreground="#E8F5E9"/>
+                    <TextBlock Text="Settings"
+                               FontSize="12"
+                               Foreground="#A5D6A7"
+                               Margin="0,2,0,0"/>
+                </StackPanel>
+                <ListBox x:Name="SectionList"
+                         BorderThickness="0"
+                         Background="Transparent"
+                         Foreground="#E8F5E9"
+                         FontSize="13"
+                         Padding="8,0"
+                         SelectionChanged="SectionList_OnSelectionChanged">
+                    <ListBox.ItemContainerStyle>
+                        <Style TargetType="ListBoxItem">
+                            <Setter Property="Padding" Value="12,8"/>
+                            <Setter Property="Margin" Value="0,1"/>
+                            <Setter Property="Foreground" Value="#E8F5E9"/>
+                            <Setter Property="Template">
+                                <Setter.Value>
+                                    <ControlTemplate TargetType="ListBoxItem">
+                                        <Border x:Name="Bd" Background="Transparent" CornerRadius="4" Padding="{TemplateBinding Padding}">
+                                            <ContentPresenter/>
+                                        </Border>
+                                        <ControlTemplate.Triggers>
+                                            <Trigger Property="IsMouseOver" Value="True">
+                                                <Setter TargetName="Bd" Property="Background" Value="#2E4A3A"/>
+                                            </Trigger>
+                                            <Trigger Property="IsSelected" Value="True">
+                                                <Setter TargetName="Bd" Property="Background" Value="#3D6B52"/>
+                                            </Trigger>
+                                        </ControlTemplate.Triggers>
+                                    </ControlTemplate>
+                                </Setter.Value>
+                            </Setter>
+                        </Style>
+                    </ListBox.ItemContainerStyle>
+                    <ListBoxItem Content="Status" Tag="Status"/>
+                    <ListBoxItem Content="Servers" Tag="Servers"/>
+                    <ListBoxItem Content="Identity" Tag="Identity"/>
+                    <ListBoxItem Content="GPS" Tag="Gps"/>
+                    <ListBoxItem Content="Reporting" Tag="Reporting"/>
+                    <ListBoxItem Content="Mesh SA" Tag="MeshSa"/>
+                    <ListBoxItem Content="View the map" Tag="ViewMap"/>
+                    <ListBoxItem Content="Startup" Tag="Startup"/>
+                    <ListBoxItem Content="Diagnostics" Tag="Diagnostics"/>
+                    <ListBoxItem Content="Updates" Tag="Updates"/>
+                    <ListBoxItem Content="About" Tag="About"/>
+                </ListBox>
+            </DockPanel>
+        </Border>
+
+        <Grid Grid.Column="1" Margin="24">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="*"/>
+                <RowDefinition Height="Auto"/>
+            </Grid.RowDefinitions>
+
+            <TextBlock x:Name="SectionTitle"
+                       Grid.Row="0"
+                       Text="Status"
+                       FontSize="22"
+                       FontWeight="SemiBold"
+                       Foreground="#1B2E24"
+                       Margin="0,0,0,12"/>
+
+            <Border Grid.Row="1"
+                    Background="White"
+                    BorderBrush="#D0D0D0"
+                    BorderThickness="1"
+                    Padding="20"
+                    CornerRadius="4">
+                <ScrollViewer VerticalScrollBarVisibility="Auto">
+                    <StackPanel x:Name="SectionContent"/>
+                </ScrollViewer>
+            </Border>
+
+            <DockPanel Grid.Row="2" Margin="0,16,0,0" LastChildFill="False">
+                <Button x:Name="PauseResumeButton"
+                        Content="Pause tracking"
+                        Padding="14,6"
+                        Margin="0,0,8,0"
+                        Click="PauseResumeButton_OnClick"/>
+                <Button Content="Close"
+                        Padding="14,6"
+                        DockPanel.Dock="Right"
+                        IsCancel="True"
+                        Click="CloseButton_OnClick"/>
+            </DockPanel>
+        </Grid>
+    </Grid>
+</Window>

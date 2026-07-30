@@ -1,0 +1,53 @@
+{
+  "version": 1,
+  "identity": {
+    "callsign": "CALLSIGN",
+    "team": "Cyan",
+    "role": "Team Member",
+    "cotType": "a-f-G-U-C-I"
+  },
+  "gps": {
+    "sourcePriority": "NmeaThenWindows",
+    "comPort": null,
+    "baudRate": 4800,
+    "lastFixHoldSeconds": 30
+  },
+  "reporting": {
+    "strategy": "Dynamic",
+    "reliableStationarySeconds": 180,
+    "unreliableStationarySeconds": 30,
+    "constantIntervalSeconds": 10
+  },
+  "meshSa": {
+    "enabled": true,
+    "mode": "Always",
+    "multicastAddress": "239.2.3.1",
+    "multicastPort": 6969,
+    "networkInterface": "Auto"
+  },
+  "startup": {
+    "startWithWindows": false,
+    "preventSleepWhileTracking": false
+  },
+  "updates": {
+    "automaticallyDownloadAndInstall": false,
+    "releasesApiUrl": "https://api.github.com/repos/CopIXus/WinTAKTracker/releases/latest"
+  },
+  "diagnostics": {
+    "logLevel": "Information"
+  },
+  "servers": [
+    {
+      "id": "example-server-1",
+      "displayName": "Example TAK Server",
+      "enabled": true,
+      "host": "tak.example.com",
+      "port": 8089,
+      "protocol": "ssl",
+      "secretBlobName": null,
+      "clientCertFileName": null,
+      "trustStoreFileName": null
+    }
+  ],
+  "cloudTakUrl": "https://cloudtak.example.com"
+}

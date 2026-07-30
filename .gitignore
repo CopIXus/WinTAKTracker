@@ -1,0 +1,96 @@
+# Build
+bin/
+obj/
+[Bb]uild/
+[Dd]ebug/
+[Rr]elease/
+x64/
+x86/
+[Aa]rtifacts/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+*.rsuser
+project.lock.json
+project.fragment.lock.json
+artifacts/
+
+# Publish / packaging
+publish/
+*.exe
+!samples/**
+*.msi
+*.msix
+*.appx
+*.nupkg
+*.snupkg
+
+# IDE
+.vs/
+.vscode/*
+!.vscode/extensions.json
+.idea/
+*.swp
+*~
+
+# Local / private operational data — NEVER commit
+local/
+*.local.json
+appsettings.*.local.json
+.env
+.env.*
+!.env.example
+
+# TAK / certs / enrollment (hard ban)
+*.p12
+*.pfx
+*.pem
+*.key
+*.cer
+*.crt
+*.der
+*.jks
+*.keystore
+**/certs/
+**/truststore*/
+MANIFEST
+config.pref
+*.pref
+
+# SoftCert / data zips (except empty documented placeholders if added later)
+*.zip
+*.7z
+*.rar
+
+# Runtime config & logs (live under %LocalAppData%; also block accidental copies)
+config.json
+**/config.json
+logs/
+*.log
+enrollment*.txt
+!samples/enrollment.example.txt
+!samples/config.example.json
+
+# GPS / debug dumps
+*.nmea
+*.gpx
+*.kml
+*.kmz
+
+# OS
+Thumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+.DS_Store
+
+# Cursor / agent scratch (keep rules)
+.cursor/*
+!.cursor/rules/
+!.cursor/rules/**
+
+# Test / coverage
+TestResults/
+coverage/
+*.coverage
+*.coveragexml

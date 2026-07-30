@@ -1,0 +1,14 @@
+# Fictional enrollment examples for WinTAKTracker docs/tests.
+# DO NOT replace these with real Portal URLs, hosts, tokens, or callsigns.
+
+# OpenTAK Tracker–style
+opentaktracker://enroll?host=tak.example.com&username=USER&token=TOKEN&callsign=CALLSIGN&team=Cyan&role=Team%20Member
+
+# ATAK enroll-style
+tak://com.atakmap.app/enroll?host=tak.example.com&username=USER&token=TOKEN
+
+# ATAK preference-style (configure-only)
+tak://com.atakmap.app/preference?callsign=CALLSIGN&team=Cyan&role=Team%20Member
+
+# iTAK CSV-style
+ExampleServer,tak.example.com,8089,ssl

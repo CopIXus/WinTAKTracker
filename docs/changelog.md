@@ -15,10 +15,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Windows Service + Core library + named-pipe IPC; computer vs per-user callsign ([Windows Service](windows-service.md))
 - Optional Authenticode signing in release CI when secrets are set; [Code signing](code-signing.md) for SmartScreen / Smart App Control
 
 ### Changed
 
+- Tray attaches to service when present; portable in-process mode when absent
 - Prefer Windows Location (Wi‑Fi/OS) over IP geolocation; delayed IP fallback; Status labels distinguish Wi‑Fi vs Network IP
 
 ## [0.1.0] - 2026-07-30

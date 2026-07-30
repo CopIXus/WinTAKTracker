@@ -1,7 +1,23 @@
 {
-  "version": 1,
+  "version": 2,
+  "computerIdentity": {
+    "callsign": "CALLSIGN-PC",
+    "team": "Cyan",
+    "role": "Team Member",
+    "cotType": "a-f-G-U-C-I"
+  },
+  "userIdentities": {
+    "S-1-5-21-EXAMPLE-1001": {
+      "userName": "CONTOSO\\USER",
+      "callsign": "CALLSIGN",
+      "team": "Cyan",
+      "role": "Team Member",
+      "cotType": "a-f-G-U-C-I",
+      "setupPromptDismissed": false
+    }
+  },
   "identity": {
-    "callsign": "CALLSIGN",
+    "callsign": "CALLSIGN-PC",
     "team": "Cyan",
     "role": "Team Member",
     "cotType": "a-f-G-U-C-I"

@@ -77,6 +77,16 @@ jobs:
             -p:InformationalVersion=$info `
             -o publish
 
+          dotnet publish src/WinTAKTracker.Service/WinTAKTracker.Service.csproj `
+            -c Release `
+            -r win-x64 `
+            --self-contained true `
+            -p:Version=$version `
+            -p:AssemblyVersion=$asm `
+            -p:FileVersion=$asm `
+            -p:InformationalVersion=$info `
+            -o publish/service
+
       - name: Stage EXE
         shell: pwsh
         run: |
@@ -84,6 +94,11 @@ jobs:
           if (-not (Test-Path $exe)) { throw "Missing $exe" }
           New-Item -ItemType Directory -Force -Path dist | Out-Null
           Copy-Item $exe dist/WinTAKTracker.exe -Force
+          if (-not (Test-Path "publish/service/WinTAKTracker.Service.exe")) {
+            throw "Missing publish/service/WinTAKTracker.Service.exe"
+          }
+          Compress-Archive -Path "publish/service/*" -DestinationPath "dist/WinTAKTracker.Service-win-x64.zip" -Force
+          Copy-Item "scripts/install-service.ps1" dist/install-service.ps1 -Force
 
       # Signing is optional: enabled only when secrets are present.
       # Prefer Azure Artifact Signing (Trusted Signing); else classic PFX + signtool.
@@ -238,6 +253,8 @@ jobs:
           files: |
             dist/WinTAKTracker.exe
             dist/WinTAKTracker.exe.sha256
+            dist/WinTAKTracker.Service-win-x64.zip
+            dist/install-service.ps1
           fail_on_unmatched_files: true
           generate_release_notes: ${{ steps.ver.outputs.kind == 'push' }}
         env:

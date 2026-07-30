@@ -210,7 +210,7 @@ public partial class SettingsWindow : Window
         _statusValues.Clear();
 
         var telemetry = new StackPanel { Margin = new Thickness(0, 0, 0, 8) };
-        foreach (var key in new[] { "Tray", "Tracking", "GPS", "Position", "Motion", "Servers", "Mesh SA", "Last PLI" })
+        foreach (var key in new[] { "Mode", "Tray", "Tracking", "GPS", "Position", "Motion", "Servers", "Mesh SA", "Last PLI", "Active callsign" })
         {
             var row = StatusRow(key, "—");
             telemetry.Children.Add(row);
@@ -272,7 +272,7 @@ public partial class SettingsWindow : Window
     private UIElement StatusRow(string key, string value)
     {
         var grid = new Grid { Margin = new Thickness(0, 0, 0, 10) };
-        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(96) });
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(120) });
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
 
         var keyTb = new TextBlock { Text = key, Style = TryStyle("StatusKeyText") };
@@ -295,9 +295,33 @@ public partial class SettingsWindow : Window
     private void RefreshStatusLive()
     {
         if (_statusValues.Count == 0) return;
+
+        if (_host.AttachedToService)
+        {
+            _host.RefreshTray();
+            var st = _host.LastServiceStatus;
+            SetStatus("Mode", "Windows Service (companion UI)");
+            SetStatus("Tray", _host.Tray.CurrentState.ToTooltip());
+            SetStatus("Tracking", st?.Paused == true ? "Paused" : "Active");
+            SetStatus("GPS", st?.HasGpsFix == true
+                ? $"Fix via {st.GpsSource ?? "unknown"}"
+                : "No fix");
+            SetStatus("Position", "— (see service / map companions)");
+            SetStatus("Motion", "—");
+            SetStatus("Servers", st?.AnyTakConnected == true ? "Connected" :
+                st?.AnyTakReconnecting == true ? "Reconnecting…" : "Disconnected");
+            SetStatus("Mesh SA", st?.MeshReady == true ? "Ready" : (st?.MeshLastError ?? "—"));
+            SetStatus("Last PLI", st?.LastPliSentUtc?.ToLocalTime().ToString("G") ?? "—");
+            SetStatus("Active callsign", st?.ActiveIdentity is null
+                ? "—"
+                : $"{st.ActiveIdentity.Callsign} ({st.ActiveIdentity.Source})");
+            return;
+        }
+
         var fix = _host.Gps.CurrentFix;
         var servers = string.Join("; ", _host.Tak.GetStatuses().Select(s => $"{s.DisplayName}: {s.State}"));
 
+        SetStatus("Mode", "In-process (portable)");
         SetStatus("Tray", _host.Tray.CurrentState.ToTooltip());
         SetStatus("Tracking", _host.Pause.IsPaused ? "Paused" : "Active");
         SetStatus("GPS", fix is null ? "No fix" : $"{(fix.IsHeld ? "Held" : "Live")} via {fix.SourceDisplayName}");
@@ -311,8 +335,10 @@ public partial class SettingsWindow : Window
         SetStatus("Servers", string.IsNullOrEmpty(servers) ? "None" : servers);
         SetStatus("Mesh SA", FormatMeshStatusLine());
         SetStatus("Last PLI", _host.Reporting.LastPliSentUtc?.ToLocalTime().ToString("G") ?? "—");
+        var active = _host.Core.GetActiveIdentity();
+        SetStatus("Active callsign", $"{active.Callsign} ({active.Source})");
 
-        _mapPreview?.UpdateFix(fix, _host.Config.Identity.Team);
+        _mapPreview?.UpdateFix(fix, active.Team);
     }
 
     private UIElement BuildServers()
@@ -631,58 +657,88 @@ public partial class SettingsWindow : Window
     {
         var panel = new StackPanel();
         var edit = CanEdit;
-        panel.Children.Add(Blurb("Manual identity — changes auto-save and trigger ASAP re-report. Default callsign is this PC’s Windows name until you change it."));
-        var callsign = new TextBox { Text = _host.Config.Identity.GetEffectiveCallsign(), IsEnabled = edit };
-        var team = new ComboBox
-        {
-            IsEditable = true,
-            ItemsSource = new[] { "Cyan", "Blue", "Green", "Yellow", "Orange", "Red", "Purple", "Magenta", "Maroon", "Teal", "White" },
-            Text = _host.Config.Identity.Team,
-            IsEnabled = edit,
-        };
-        var role = new ComboBox
-        {
-            IsEditable = true,
-            ItemsSource = new[] { "Team Member", "Team Lead", "HQ", "Sniper", "Medic", "Forward Observer", "RTO", "K9" },
-            Text = _host.Config.Identity.Role,
-            IsEnabled = edit,
-        };
-        var cot = new ComboBox
+        var teams = new[] { "Cyan", "Blue", "Green", "Yellow", "Orange", "Red", "Purple", "Magenta", "Maroon", "Teal", "White" };
+        var roles = new[] { "Team Member", "Team Lead", "HQ", "Sniper", "Medic", "Forward Observer", "RTO", "K9" };
+        var computer = _host.Config.ComputerIdentity;
+        var sid = Services.Identity.IdentityResolver.CurrentUserSid();
+        _host.Config.UserIdentities.TryGetValue(sid ?? "", out var user);
+
+        panel.Children.Add(Blurb(
+            "Computer callsign is used when nobody is logged on (Windows Service / logoff). " +
+            "Your callsign is used while you are logged in. Defaults for computer callsign: this PC’s Windows name."));
+
+        panel.Children.Add(SectionHeader("Computer callsign"));
+        var computerCallsign = new TextBox { Text = computer.GetEffectiveCallsign(), IsEnabled = edit };
+        var computerTeam = new ComboBox { IsEditable = true, ItemsSource = teams, Text = computer.Team, IsEnabled = edit };
+        var computerRole = new ComboBox { IsEditable = true, ItemsSource = roles, Text = computer.Role, IsEnabled = edit };
+        var computerCot = new ComboBox
         {
             ItemsSource = new[]
             {
                 $"Ground Unit ({CotEventBuilder.GroundUnitType})",
                 $"Vehicle ({CotEventBuilder.VehicleType})",
             },
-            SelectedIndex = _host.Config.Identity.CotType.Contains("E-V", StringComparison.OrdinalIgnoreCase) ? 1 : 0,
+            SelectedIndex = computer.CotType.Contains("E-V", StringComparison.OrdinalIgnoreCase) ? 1 : 0,
             IsEnabled = edit,
         };
-        panel.Children.Add(Label("Callsign")); panel.Children.Add(callsign);
-        panel.Children.Add(Label("Team")); panel.Children.Add(team);
-        panel.Children.Add(Label("Role")); panel.Children.Add(role);
-        panel.Children.Add(Label("Device / CoT type")); panel.Children.Add(cot);
+        panel.Children.Add(Label("Computer callsign")); panel.Children.Add(computerCallsign);
+        panel.Children.Add(Label("Computer team")); panel.Children.Add(computerTeam);
+        panel.Children.Add(Label("Computer role")); panel.Children.Add(computerRole);
+        panel.Children.Add(Label("Computer CoT type")); panel.Children.Add(computerCot);
 
-        void SaveIdentity()
+        void SaveComputer()
         {
             if (!CanEdit) return;
-            var next = callsign.Text.Trim();
-            _host.Config.Identity.Callsign = string.IsNullOrWhiteSpace(next)
-                ? Environment.MachineName
-                : next;
-            callsign.Text = _host.Config.Identity.Callsign;
-            _host.Config.Identity.Team = team.Text.Trim();
-            _host.Config.Identity.Role = role.Text.Trim();
-            _host.Config.Identity.CotType = cot.SelectedIndex == 1
+            var next = computerCallsign.Text.Trim();
+            if (string.IsNullOrWhiteSpace(next)) next = Environment.MachineName;
+            computerCallsign.Text = next;
+            var cotType = computerCot.SelectedIndex == 1
                 ? CotEventBuilder.VehicleType
                 : CotEventBuilder.GroundUnitType;
-            Persist();
-            _host.Reporting.NotifyIdentityChanged();
+            _host.SaveComputerIdentity(next, computerTeam.Text.Trim(), computerRole.Text.Trim(), cotType);
         }
 
-        BindPersistText(callsign, SaveIdentity);
-        BindPersistText(team, SaveIdentity);
-        BindPersistText(role, SaveIdentity);
-        cot.SelectionChanged += (_, _) => SaveIdentity();
+        BindPersistText(computerCallsign, SaveComputer);
+        BindPersistText(computerTeam, SaveComputer);
+        BindPersistText(computerRole, SaveComputer);
+        computerCot.SelectionChanged += (_, _) => SaveComputer();
+
+        panel.Children.Add(SectionHeader("My callsign (this Windows user)"));
+        var myCallsign = new TextBox { Text = user?.Callsign ?? "", IsEnabled = edit };
+        var myTeam = new ComboBox
+        {
+            IsEditable = true,
+            ItemsSource = teams,
+            Text = string.IsNullOrWhiteSpace(user?.Team) ? computer.Team : user!.Team,
+            IsEnabled = edit,
+        };
+        var myRole = new ComboBox
+        {
+            IsEditable = true,
+            ItemsSource = roles,
+            Text = string.IsNullOrWhiteSpace(user?.Role) ? computer.Role : user!.Role,
+            IsEnabled = edit,
+        };
+        panel.Children.Add(Label("My callsign")); panel.Children.Add(myCallsign);
+        panel.Children.Add(Label("My team")); panel.Children.Add(myTeam);
+        panel.Children.Add(Label("My role")); panel.Children.Add(myRole);
+        panel.Children.Add(Blurb($"Windows user: {Services.Identity.IdentityResolver.CurrentUserName() ?? Environment.UserName}"));
+
+        void SaveUser()
+        {
+            if (!CanEdit) return;
+            var next = myCallsign.Text.Trim();
+            if (string.IsNullOrWhiteSpace(next)) return;
+            _host.SaveCurrentUserIdentity(
+                next,
+                myTeam.Text.Trim(),
+                myRole.Text.Trim(),
+                computer.CotType);
+        }
+
+        BindPersistText(myCallsign, SaveUser);
+        BindPersistText(myTeam, SaveUser);
+        BindPersistText(myRole, SaveUser);
         panel.Children.Add(Chip("Persisted", "Identity saves automatically when you change a field."));
         return panel;
     }

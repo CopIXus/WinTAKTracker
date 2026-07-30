@@ -1,11 +1,12 @@
-using System.Windows;
 using Windows.Devices.Geolocation;
+using WinTAKTracker.Services.Host;
 
 namespace WinTAKTracker.Services.Gps;
 
 /// <summary>
 /// Windows Location API provider (Wi‑Fi / cell / GNSS via the OS location stack).
 /// Prefer this over IP geolocation — same class of fix browsers get when Location is enabled.
+/// Unreliable under LocalSystem / after logoff — prefer NMEA or IP for always-on service mode.
 /// </summary>
 public sealed class WindowsLocationGps : IDisposable
 {
@@ -27,36 +28,26 @@ public sealed class WindowsLocationGps : IDisposable
     public bool IsRunning => _running;
     public bool HasPublishedFix { get; private set; }
 
-    public Task<GpsPermissionState> RequestAccessAsync()
+    public async Task<GpsPermissionState> RequestAccessAsync()
     {
-        var dispatcher = Application.Current?.Dispatcher;
-        if (dispatcher is not null && !dispatcher.CheckAccess())
+        await UiThreadMarshal.InvokeAsyncOrDirect(async () =>
         {
-            // RequestAccessAsync must run on the UI thread while the app can show consent.
-            return dispatcher.InvokeAsync(RequestAccessOnUiAsync).Task.Unwrap();
-        }
-
-        return RequestAccessOnUiAsync();
-    }
-
-    private async Task<GpsPermissionState> RequestAccessOnUiAsync()
-    {
-        try
-        {
-            var status = await Geolocator.RequestAccessAsync();
-            PermissionState = status switch
+            try
             {
-                GeolocationAccessStatus.Allowed => GpsPermissionState.Allowed,
-                GeolocationAccessStatus.Denied => GpsPermissionState.Denied,
-                _ => GpsPermissionState.NotAvailable,
-            };
-        }
-        catch (Exception ex)
-        {
-            PermissionState = GpsPermissionState.NotAvailable;
-            ErrorOccurred?.Invoke(this, ex.Message);
-        }
-
+                var status = await Geolocator.RequestAccessAsync();
+                PermissionState = status switch
+                {
+                    GeolocationAccessStatus.Allowed => GpsPermissionState.Allowed,
+                    GeolocationAccessStatus.Denied => GpsPermissionState.Denied,
+                    _ => GpsPermissionState.NotAvailable,
+                };
+            }
+            catch (Exception ex)
+            {
+                PermissionState = GpsPermissionState.NotAvailable;
+                ErrorOccurred?.Invoke(this, ex.Message);
+            }
+        });
         return PermissionState;
     }
 

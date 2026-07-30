@@ -3,6 +3,7 @@ using System.Text;
 using System.Xml.Linq;
 using WinTAKTracker.Services.Config;
 using WinTAKTracker.Services.Gps;
+using WinTAKTracker.Services.Identity;
 
 namespace WinTAKTracker.Services.Reporting;
 
@@ -78,6 +79,17 @@ public static class CotEventBuilder
 
     public static CotIdentity FromConfig(AppConfig config, ServerProfile? server = null, int? battery = null)
     {
+        config.EnsureIdentityDefaults();
+        var baseIdentity = IdentityResolver.Resolve(config, activeUserSid: null);
+        return FromActiveIdentity(config, baseIdentity, server, battery);
+    }
+
+    public static CotIdentity FromActiveIdentity(
+        AppConfig config,
+        ActiveIdentity active,
+        ServerProfile? server = null,
+        int? battery = null)
+    {
         var uid = config.DeviceUid;
         if (string.IsNullOrWhiteSpace(uid))
         {
@@ -87,10 +99,10 @@ public static class CotEventBuilder
         return new CotIdentity
         {
             Uid = uid!,
-            Callsign = server?.CallsignOverride is { Length: > 0 } c ? c : config.Identity.GetEffectiveCallsign(),
-            Team = server?.TeamOverride is { Length: > 0 } t ? t : config.Identity.Team,
-            Role = server?.RoleOverride is { Length: > 0 } r ? r : config.Identity.Role,
-            CotType = string.IsNullOrWhiteSpace(config.Identity.CotType) ? GroundUnitType : config.Identity.CotType,
+            Callsign = server?.CallsignOverride is { Length: > 0 } c ? c : active.Callsign,
+            Team = server?.TeamOverride is { Length: > 0 } t ? t : active.Team,
+            Role = server?.RoleOverride is { Length: > 0 } r ? r : active.Role,
+            CotType = string.IsNullOrWhiteSpace(active.CotType) ? GroundUnitType : active.CotType,
             Version = typeof(CotEventBuilder).Assembly.GetName().Version?.ToString(3) ?? "0.1.0",
             BatteryPercent = battery,
         };

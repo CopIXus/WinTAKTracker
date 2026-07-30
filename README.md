@@ -1,6 +1,8 @@
 # WinTAKTracker
 
-Lightweight **Windows tray app** that reports your position (PLI / self-SA CoT) to one or more TAK servers over TLS or TCP, and optionally broadcasts ATAK-compatible **Mesh SA** multicast on the LAN/VPN.
+Lightweight **Windows TAK PLI tracker** that reports your position (self-SA CoT) to one or more TAK servers over TLS or TCP, and optionally broadcasts ATAK-compatible **Mesh SA** multicast on the LAN/VPN.
+
+Optionally install as a **Windows Service** for always-on tracking after logoff; the tray app then acts as a controller (see [docs/windows-service.md](docs/windows-service.md)).
 
 WinTAKTracker is **tracking-only**. It does not host a common operating picture. Use a companion map client to see yourself and others:
 
@@ -18,12 +20,13 @@ Not an official TAK Product Center application. TAK / ATAK / WinTAK / CloudTAK /
 - **Multi-server TAK** — enroll several profiles, enable/disable per server, TLS (`ssl`) or cleartext TCP, auto-reconnect
 - **Mesh SA** — ATAK-default UDP multicast (`239.2.3.1:6969`), always-on or only when disconnected
 - **GPS** — USB NMEA serial, Windows Location, last-fix hold, and **network/IP geolocation** fallback (approximate)
-- **Identity** — callsign (defaults to Windows computer name), team, role, ground/vehicle CoT type
+- **Identity** — **computer callsign** (default: Windows computer name; used when logged off) and **per-user callsign**/team/role when logged in
+- **Windows Service** (optional) — always-on PLI from Session 0; tray attaches via named-pipe IPC
 - **Enrollment** — paste Portal / OpenTAK Tracker–style URLs, SoftCert ZIP, manual `.p12`, webcam QR scan
 - **Reporting** — ATAK-style Dynamic or Constant rates (reliable servers vs unreliable mesh)
 - **Ops** — system tray states, pause/mute outbound CoT, start with Windows, optional prevent-sleep while tracking
 - **Updates** — check / auto-install from GitHub Releases (SHA256 verified)
-- **Privacy** — config, DPAPI secrets, certs, and logs stay under `%LocalAppData%\WinTAKTracker\`
+- **Privacy** — portable mode: `%LocalAppData%\WinTAKTracker\` (CurrentUser DPAPI); service mode: `%ProgramData%\WinTAKTracker\` (LocalMachine DPAPI)
 
 See [FEATURES.md](FEATURES.md) for the full status table, and the docs site: [Features](https://copixus.github.io/WinTAKTracker/features) · [Changelog](https://copixus.github.io/WinTAKTracker/changelog).
 
@@ -48,7 +51,7 @@ Every push to `main` publishes a Release with version `0.1.<run_number>` (git ta
      `tak://com.atakmap.app/enroll?host=tak.example.com&username=USER&token=TOKEN`
    - Enroll tokens are short-lived (~15 minutes) — paste and apply promptly.
    - Or **Scan QR…**, **Import SoftCert ZIP…**, or **Manual .p12 import…**
-2. Confirm **Identity** (callsign defaults to this PC’s Windows name until enrollment or you set one).
+2. Confirm **Identity** — computer callsign (defaults to this PC’s Windows name) and your per-user callsign (prompted on first login if unset).
 3. Configure **GPS** (COM port / baud, Windows Location permission, optional network fallback).
 4. Optionally set a **CloudTAK URL** under **View the map**, then open CloudTAK or a companion app to see the COP.
 5. Leave the app running in the tray; use **Pause tracking** to mute outbound CoT without quitting.
@@ -70,9 +73,19 @@ Fictional samples for docs/tests (no real hosts/tokens):
 
 Pause mutes outbound reporting; it does not invent precision. Windows Location CoT `ce` uses the OS-reported accuracy (often tens of meters with Wi‑Fi). Network IP fixes use estimated CoT `how` and a large `ce`.
 
+## Always-on Windows Service
+
+```powershell
+dotnet publish src/WinTAKTracker.Service -c Release -r win-x64 --self-contained true -o publish/service
+# Elevated:
+powershell -ExecutionPolicy Bypass -File scripts\install-service.ps1 -MigrateUserConfig
+```
+
+Then run the tray `WinTAKTracker.exe` — it attaches to the service and does not start a second tracker. Details, identity rules, and GPS notes: [docs/windows-service.md](docs/windows-service.md).
+
 ## Settings
 
-All options persist under `%LocalAppData%\WinTAKTracker\config.json` (secrets beside it as DPAPI blobs). The Settings UI **auto-saves** on change (checkboxes, combos, and fields on focus loss), including:
+Portable mode persists under `%LocalAppData%\WinTAKTracker\config.json`. With the service installed, the live store is `%ProgramData%\WinTAKTracker\` (tray pushes settings over IPC). The Settings UI **auto-saves** on change (checkboxes, combos, and fields on focus loss), including:
 
 - Startup (Start with Windows, Prevent sleep)
 - Identity, GPS, Reporting, Mesh SA
@@ -92,6 +105,8 @@ Requirements: Windows 10 1809+ or Windows 11, [.NET 8 SDK](https://dotnet.micros
 ```powershell
 dotnet build WinTAKTracker.sln -c Debug
 dotnet run --project src/WinTAKTracker
+# Optional headless service (dev):
+dotnet run --project src/WinTAKTracker.Service
 ```
 
 Self-contained single-file publish (`win-x64`):
@@ -110,6 +125,7 @@ CI (`.github/workflows/release.yml`) publishes `WinTAKTracker.exe` + SHA256 on e
 | Feature matrix | [FEATURES.md](FEATURES.md) · [docs site](https://copixus.github.io/WinTAKTracker/features) |
 | Changelog | [CHANGELOG.md](CHANGELOG.md) · [docs site](https://copixus.github.io/WinTAKTracker/changelog) |
 | Code signing / SmartScreen | [docs/code-signing.md](docs/code-signing.md) · [docs site](https://copixus.github.io/WinTAKTracker/code-signing) |
+| Windows Service / identity | [docs/windows-service.md](docs/windows-service.md) |
 | Contributing | [CONTRIBUTING.md](CONTRIBUTING.md) |
 | Security | [SECURITY.md](SECURITY.md) |
 | Releases | [GitHub Releases](https://github.com/CopIXus/WinTAKTracker/releases) |

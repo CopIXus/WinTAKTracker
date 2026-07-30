@@ -1,6 +1,9 @@
 using WinTAKTracker.Services.Config;
 using WinTAKTracker.Services.Diagnostics;
 using WinTAKTracker.Services.Gps;
+using WinTAKTracker.Services.Host;
+using WinTAKTracker.Services.Identity;
+using WinTAKTracker.Services.Ipc;
 using WinTAKTracker.Services.Pause;
 using WinTAKTracker.Services.Reporting;
 using WinTAKTracker.Services.Startup;
@@ -10,93 +13,200 @@ using WinTAKTracker.Services.Update;
 
 namespace WinTAKTracker.Services;
 
-/// <summary>Composition root for background services.</summary>
+/// <summary>
+/// Tray composition root. When the Windows Service is reachable, attaches via IPC and does not
+/// start a second in-process tracker. Otherwise runs TrackingHost in-process (portable mode).
+/// </summary>
 public sealed class AppHost : IDisposable
 {
-    public AppConfigStore ConfigStore { get; }
-    public AppConfig Config { get; private set; }
-    public SettingsLockService SettingsLock { get; }
-    public IRedactedLogger Log { get; }
-    public PauseService Pause { get; }
-    public IGpsService Gps { get; }
-    public MeshSaBroadcaster Mesh { get; }
-    public ITakConnectionManager Tak { get; }
-    public EnrollmentService Enrollment { get; }
-    public SoftCertImporter SoftCert { get; }
-    public ReportingEngine Reporting { get; }
-    public StatusExporter StatusExporter { get; }
-    public IUpdateService Updates { get; }
-    public PowerService Power { get; }
+    public TrackingHost Core { get; }
+    public TrackerIpcClient? ServiceClient { get; private set; }
+    public bool AttachedToService => ServiceClient is not null;
+
+    public AppConfigStore ConfigStore => Core.ConfigStore;
+    public AppConfig Config => Core.Config;
+    public SettingsLockService SettingsLock => Core.SettingsLock;
+    public IRedactedLogger Log => Core.Log;
+    public PauseService Pause => Core.Pause;
+    public IGpsService Gps => Core.Gps;
+    public MeshSaBroadcaster Mesh => Core.Mesh;
+    public ITakConnectionManager Tak => Core.Tak;
+    public EnrollmentService Enrollment => Core.Enrollment;
+    public SoftCertImporter SoftCert => Core.SoftCert;
+    public ReportingEngine Reporting => Core.Reporting;
+    public StatusExporter StatusExporter => Core.StatusExporter;
+    public IUpdateService Updates => Core.Updates;
+    public PowerService Power => Core.Power;
     public TrayIconService Tray { get; }
+
+    public TrackerStatusDto? LastServiceStatus { get; private set; }
 
     private System.Threading.Timer? _updateTimer;
     private System.Threading.Timer? _trayTimer;
 
     public AppHost()
     {
-        ConfigStore = new AppConfigStore();
-        ConfigStore.EnsureDirectories();
-        Config = ConfigStore.Load();
-        SettingsLock = new SettingsLockService(ConfigStore);
-        EnsureDeviceUid();
-        EnsureDefaultCallsign();
+        // Detect service before constructing host so we pick the right config root.
+        var serviceReachable = TrackerIpcClient.IsServiceReachableAsync(TimeSpan.FromMilliseconds(800))
+            .GetAwaiter().GetResult();
 
-        Log = new RedactedLogger(ConfigStore.LogsDirectory);
-        if (Enum.TryParse<LogLevel>(Config.Diagnostics.LogLevel, true, out var level))
-            Log.SetMinLevel(level);
+        if (serviceReachable || ConfigPaths.IsServiceInstalled())
+            Core = new TrackingHost(AppConfigStore.ForMachine(), serviceMode: false);
+        else
+            Core = new TrackingHost(AppConfigStore.ForUser(), serviceMode: false);
 
-        Pause = new PauseService();
-        Gps = new GpsService(Log);
-        Mesh = new MeshSaBroadcaster(Log);
-        SoftCert = new SoftCertImporter(ConfigStore, Log);
-        Enrollment = new EnrollmentService(ConfigStore, SoftCert, Log);
-        Tak = new TakConnectionManager(ConfigStore, Log);
-        Reporting = new ReportingEngine(Gps, Tak, Mesh, Pause, ConfigStore, Log);
-        StatusExporter = new StatusExporter();
-        Updates = new UpdateService(ConfigStore, Log, () => Config.Updates);
-        Power = new PowerService();
         Tray = new TrayIconService(this);
     }
 
     public async Task StartAsync()
     {
-        StartupRegistration.SetEnabled(Config.Startup.StartWithWindows);
-        Power.SetPreventSleep(Config.Startup.PreventSleepWhileTracking && !Pause.IsPaused);
+        ServiceClient = await TrackerIpcClient.TryConnectAsync(TimeSpan.FromSeconds(2)).ConfigureAwait(false);
+        if (ServiceClient is not null)
+        {
+            try
+            {
+                await ServiceClient.NotifyCurrentUserSessionAsync().ConfigureAwait(false);
+                var remote = await ServiceClient.GetConfigDtoAsync().ConfigureAwait(false);
+                if (remote is not null)
+                    Core.ReplaceConfig(remote);
+                LastServiceStatus = await ServiceClient.GetStatusDtoAsync().ConfigureAwait(false);
+                Log.Info("App", "Attached to WinTAKTracker Windows Service (no in-process tracker).");
+            }
+            catch (Exception ex)
+            {
+                Log.Warn("App", $"Service attach incomplete: {ex.Message}. Falling back to in-process mode.");
+                await ServiceClient.DisposeAsync().ConfigureAwait(false);
+                ServiceClient = null;
+            }
+        }
 
-        Pause.PauseChanged += OnPauseChanged;
-        Tak.StatusChanged += (_, _) => RefreshTray();
-        Gps.FixChanged += (_, _) => RefreshTray();
-        Reporting.Reported += (_, _) => RefreshTray();
-
-        await Gps.StartAsync(Config.Gps);
-        Mesh.ApplySettings(Config.MeshSa);
-        await Tak.StartAsync(Config);
-        Reporting.Start(Config);
+        if (ServiceClient is null)
+        {
+            // Portable / no-service: own the tracker in this process.
+            StartupRegistration.SetEnabled(Config.Startup.StartWithWindows);
+            await Core.StartAsync().ConfigureAwait(false);
+            Core.StatusChanged += (_, _) => RefreshTray();
+            Pause.PauseChanged += OnPauseChanged;
+        }
+        else
+        {
+            // Companion mode: tray autostart only; tracking owned by service.
+            StartupRegistration.SetEnabled(Config.Startup.StartWithWindows);
+            Pause.PauseChanged += OnPauseChangedService;
+        }
 
         _trayTimer = new System.Threading.Timer(_ => RefreshTray(), null, 1000, 2000);
         _updateTimer = new System.Threading.Timer(async _ => await CheckUpdatesQuietAsync(), null,
             TimeSpan.FromSeconds(20), TimeSpan.FromHours(6));
 
         RefreshTray();
-        Log.Info("App", "WinTAKTracker started.");
+        Log.Info("App", AttachedToService
+            ? "WinTAKTracker tray started (service companion)."
+            : "WinTAKTracker started (in-process tracking).");
     }
 
     public void SaveConfig()
     {
-        ConfigStore.Save(Config);
-        Reporting.ApplyConfig(Config);
-        Power.SetPreventSleep(Config.Startup.PreventSleepWhileTracking && !Pause.IsPaused);
-        StartupRegistration.SetEnabled(Config.Startup.StartWithWindows);
+        Core.SaveConfig();
+        if (ServiceClient is not null)
+        {
+            try
+            {
+                ServiceClient.SetConfigAsync(Config).GetAwaiter().GetResult();
+            }
+            catch (Exception ex)
+            {
+                Log.Warn("IPC", $"SetConfig failed: {ex.Message}");
+            }
+        }
+        else
+        {
+            StartupRegistration.SetEnabled(Config.Startup.StartWithWindows);
+        }
     }
 
     public async Task ReloadConnectionsAsync()
     {
         SaveConfig();
-        await Gps.ApplySettingsAsync(Config.Gps);
-        Mesh.ApplySettings(Config.MeshSa);
-        await Tak.ReloadAsync(Config);
-        Reporting.NotifyIdentityChanged();
+        if (ServiceClient is not null)
+        {
+            await ServiceClient.ReloadConnectionsAsync().ConfigureAwait(false);
+            LastServiceStatus = await ServiceClient.GetStatusDtoAsync().ConfigureAwait(false);
+        }
+        else
+        {
+            await Core.ReloadConnectionsAsync().ConfigureAwait(false);
+        }
+
         RefreshTray();
+    }
+
+    public bool CurrentUserNeedsCallsignSetup() =>
+        IdentityResolver.CurrentUserNeedsSetup(Config);
+
+    public void SaveCurrentUserIdentity(string callsign, string team, string role, string cotType)
+    {
+        var sid = IdentityResolver.CurrentUserSid() ?? throw new InvalidOperationException("No Windows user SID.");
+        var userName = IdentityResolver.CurrentUserName() ?? Environment.UserName;
+        Core.SetUserIdentity(sid, userName, callsign, team, role, cotType);
+        Core.SetActiveSession(sid, userName);
+
+        if (ServiceClient is not null)
+        {
+            ServiceClient.SetUserIdentityAsync(new IdentityUpdateDto
+            {
+                UserSid = sid,
+                UserName = userName,
+                Callsign = callsign,
+                Team = team,
+                Role = role,
+                CotType = cotType,
+            }).GetAwaiter().GetResult();
+            ServiceClient.NotifyCurrentUserSessionAsync().GetAwaiter().GetResult();
+        }
+        else
+        {
+            Reporting.NotifyIdentityChanged();
+        }
+
+        RefreshTray();
+    }
+
+    public void SaveComputerIdentity(string callsign, string team, string role, string cotType)
+    {
+        Core.SetComputerIdentity(callsign, team, role, cotType);
+        if (ServiceClient is not null)
+        {
+            ServiceClient.SetComputerIdentityAsync(new IdentityUpdateDto
+            {
+                Callsign = callsign,
+                Team = team,
+                Role = role,
+                CotType = cotType,
+            }).GetAwaiter().GetResult();
+        }
+        else
+        {
+            Reporting.NotifyIdentityChanged();
+        }
+
+        RefreshTray();
+    }
+
+    public void DismissCurrentUserSetupPrompt()
+    {
+        var sid = IdentityResolver.CurrentUserSid();
+        if (sid is null) return;
+        var userName = IdentityResolver.CurrentUserName();
+        Core.DismissUserSetupPrompt(sid, userName);
+        if (ServiceClient is not null)
+        {
+            ServiceClient.DismissUserSetupPromptAsync(new IdentityUpdateDto
+            {
+                UserSid = sid,
+                UserName = userName,
+            }).GetAwaiter().GetResult();
+        }
     }
 
     private void OnPauseChanged(object? sender, bool paused)
@@ -107,47 +217,66 @@ public sealed class AppHost : IDisposable
             paused ? "Outbound CoT muted (servers + mesh)." : "PLI reporting active.");
     }
 
-    public void RefreshTray()
+    private void OnPauseChangedService(object? sender, bool paused)
     {
-        var state = ComputeTrayState();
-        Tray.SetState(state);
-    }
-
-    private TrayIconState ComputeTrayState()
-    {
-        if (Pause.IsPaused) return TrayIconState.Paused;
-
-        var hasFix = Gps.CurrentFix is not null;
-        var anyConnected = Tak.AnyConnected;
-        var reconnecting = Tak.AnyReconnecting;
-        var meshOk = Config.MeshSa.Enabled && Mesh.IsReady && Mesh.LastErrorCode is null;
-        var meshSending = meshOk && Mesh.LastSendUtc.HasValue;
-
-        if (!hasFix) return TrayIconState.NoGps;
-        if (reconnecting && !anyConnected) return TrayIconState.Reconnecting;
-        if (anyConnected || meshSending || (meshOk && Config.MeshSa.Enabled))
+        try
         {
-            if (anyConnected || meshOk) return TrayIconState.Ok;
+            if (ServiceClient is null) return;
+            if (paused) ServiceClient.PauseAsync().GetAwaiter().GetResult();
+            else ServiceClient.ResumeAsync().GetAwaiter().GetResult();
+            LastServiceStatus = ServiceClient.GetStatusDtoAsync().GetAwaiter().GetResult();
+        }
+        catch (Exception ex)
+        {
+            Log.Warn("IPC", $"Pause/resume failed: {ex.Message}");
         }
 
-        return TrayIconState.Disconnected;
+        RefreshTray();
+        Tray.ShowBalloon(paused ? "Tracking paused" : "Tracking resumed",
+            paused ? "Service outbound CoT muted." : "Service PLI reporting active.");
+    }
+
+    public void RefreshTray()
+    {
+        if (ServiceClient is not null)
+        {
+            try
+            {
+                LastServiceStatus = ServiceClient.GetStatusDtoAsync().GetAwaiter().GetResult();
+            }
+            catch
+            {
+                // keep last
+            }
+
+            var state = Enum.TryParse<TrayIconState>(LastServiceStatus?.TrayState, out var parsed)
+                ? parsed
+                : TrayIconState.Disconnected;
+            Tray.SetState(state);
+            return;
+        }
+
+        Tray.SetState(Core.ComputeTrayState());
     }
 
     private async Task CheckUpdatesQuietAsync()
     {
+        // Service-aware updater (stop → replace → start) is Phase 3; tray-only update in portable mode.
+        if (AttachedToService) return;
+
         try
         {
-            var result = await Updates.CheckAsync();
+            var result = await Updates.CheckAsync().ConfigureAwait(false);
             if (!result.Success || !result.UpdateAvailable) return;
 
             if (Config.Updates.AutomaticallyDownloadAndInstall)
             {
-                var (ok, msg) = await Updates.DownloadAndApplyAsync(result);
+                var (ok, msg) = await Updates.DownloadAndApplyAsync(result).ConfigureAwait(false);
                 if (ok)
                 {
-                    // Balloon is non-blocking; helper waits for PID then swaps + relaunches.
                     Tray.ShowBalloon("Updating", msg);
-                    Application.Current.Dispatcher.Invoke(() => Application.Current.Shutdown());
+                    System.Windows.Application.Current.Dispatcher.Invoke(() =>
+                        System.Windows.Application.Current.Shutdown());
                 }
             }
             else
@@ -162,53 +291,15 @@ public sealed class AppHost : IDisposable
         }
     }
 
-    private void EnsureDeviceUid()
-    {
-        if (!string.IsNullOrWhiteSpace(Config.DeviceUid)) return;
-        try
-        {
-            var guid = Microsoft.Win32.Registry.GetValue(
-                @"HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Cryptography",
-                "MachineGuid", null) as string;
-            Config.DeviceUid = string.IsNullOrWhiteSpace(guid)
-                ? "WIN-" + Guid.NewGuid().ToString("N")[..12].ToUpperInvariant()
-                : "WIN-" + guid.Replace("-", "")[..Math.Min(16, guid.Replace("-", "").Length)].ToUpperInvariant();
-        }
-        catch
-        {
-            Config.DeviceUid = "WIN-" + Guid.NewGuid().ToString("N")[..12].ToUpperInvariant();
-        }
-
-        ConfigStore.Save(Config);
-    }
-
-    /// <summary>
-    /// Persist Windows computer name when callsign was never set (empty or legacy hard-coded default).
-    /// Enrollment / SoftCert / Identity UI overwrite this when the user sets a real callsign.
-    /// </summary>
-    private void EnsureDefaultCallsign()
-    {
-        var current = Config.Identity.Callsign?.Trim() ?? "";
-        if (current.Length > 0 &&
-            !current.Equals("WIN-TRACKER", StringComparison.OrdinalIgnoreCase))
-            return;
-
-        Config.Identity.Callsign = Environment.MachineName;
-        ConfigStore.Save(Config);
-    }
-
     public void Dispose()
     {
         _updateTimer?.Dispose();
         _trayTimer?.Dispose();
-        Reporting.Dispose();
-        (Tak as IDisposable)?.Dispose();
-        Mesh.Dispose();
-        Gps.Stop();
-        (Gps as IDisposable)?.Dispose();
-        Power.Dispose();
+        Pause.PauseChanged -= OnPauseChanged;
+        Pause.PauseChanged -= OnPauseChangedService;
+        if (ServiceClient is not null)
+            ServiceClient.DisposeAsync().AsTask().GetAwaiter().GetResult();
         Tray.Dispose();
-        (Log as IDisposable)?.Dispose();
+        Core.Dispose();
     }
 }
-

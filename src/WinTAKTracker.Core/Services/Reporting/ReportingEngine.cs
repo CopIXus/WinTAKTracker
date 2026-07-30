@@ -1,6 +1,8 @@
+using System.Runtime.InteropServices;
 using WinTAKTracker.Services.Config;
 using WinTAKTracker.Services.Diagnostics;
 using WinTAKTracker.Services.Gps;
+using WinTAKTracker.Services.Identity;
 using WinTAKTracker.Services.Pause;
 using WinTAKTracker.Services.Tak;
 
@@ -8,7 +10,7 @@ namespace WinTAKTracker.Services.Reporting;
 
 /// <summary>
 /// Dual-path (reliable server / unreliable mesh) CoT reporting with ASAP triggers.
-/// Continues while the Windows session is locked.
+/// Continues while the Windows session is locked / from a Windows Service when GPS is available.
 /// </summary>
 public sealed class ReportingEngine : IDisposable
 {
@@ -18,6 +20,7 @@ public sealed class ReportingEngine : IDisposable
     private readonly PauseService _pause;
     private readonly AppConfigStore _store;
     private readonly IRedactedLogger _log;
+    private readonly Func<ActiveIdentity>? _identityProvider;
     private readonly object _gate = new();
     private AppConfig _config = new();
     private IReportingRate _rate = new AdaptiveReportingRate(new ReportingSettings());
@@ -38,7 +41,8 @@ public sealed class ReportingEngine : IDisposable
         MeshSaBroadcaster mesh,
         PauseService pause,
         AppConfigStore store,
-        IRedactedLogger log)
+        IRedactedLogger log,
+        Func<ActiveIdentity>? identityProvider = null)
     {
         _gps = gps;
         _tak = tak;
@@ -46,6 +50,7 @@ public sealed class ReportingEngine : IDisposable
         _pause = pause;
         _store = store;
         _log = log;
+        _identityProvider = identityProvider;
         _gps.FixChanged += (_, _) => MaybeAsapFromFix();
     }
 
@@ -115,7 +120,10 @@ public sealed class ReportingEngine : IDisposable
             if (!reliableDue && !unreliableDue) return;
 
             var battery = TryGetBatteryPercent();
-            var identity = CotEventBuilder.FromConfig(config, battery: battery);
+            var active = _identityProvider?.Invoke();
+            var identity = active is not null
+                ? CotEventBuilder.FromActiveIdentity(config, active, battery: battery)
+                : CotEventBuilder.FromConfig(config, battery: battery);
             var stale = rate.GetStale(rate.GetInterval(ReportingPath.Reliable, speed));
             var cot = CotEventBuilder.Build(fix, identity, stale);
 
@@ -163,16 +171,30 @@ public sealed class ReportingEngine : IDisposable
     {
         try
         {
-            var status = System.Windows.Forms.SystemInformation.PowerStatus;
-            var pct = status.BatteryLifePercent;
-            if (pct is < 0 or > 1) return null;
-            return (int)Math.Round(pct * 100);
+            if (!GetSystemPowerStatus(out var status)) return null;
+            // 255 = unknown
+            if (status.BatteryLifePercent is 255 or > 100) return null;
+            return status.BatteryLifePercent;
         }
         catch
         {
             return null;
         }
     }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct SystemPowerStatus
+    {
+        public byte ACLineStatus;
+        public byte BatteryFlag;
+        public byte BatteryLifePercent;
+        public byte SystemStatusFlag;
+        public int BatteryLifeTime;
+        public int BatteryFullLifeTime;
+    }
+
+    [DllImport("kernel32.dll")]
+    private static extern bool GetSystemPowerStatus(out SystemPowerStatus sps);
 
     public void Dispose()
     {

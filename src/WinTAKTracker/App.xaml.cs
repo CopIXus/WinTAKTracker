@@ -1,5 +1,7 @@
 ﻿using System.Windows;
 using WinTAKTracker.Services;
+using WinTAKTracker.Services.Host;
+using WinTAKTracker.Views;
 
 namespace WinTAKTracker;
 
@@ -11,6 +13,17 @@ public partial class App : Application
     protected override async void OnStartup(StartupEventArgs e)
     {
         base.OnStartup(e);
+
+        UiThreadMarshal.InvokeAsync = async action =>
+        {
+            if (Current?.Dispatcher is null || Current.Dispatcher.CheckAccess())
+            {
+                await action().ConfigureAwait(false);
+                return;
+            }
+
+            await Current.Dispatcher.InvokeAsync(action).Task.Unwrap().ConfigureAwait(false);
+        };
 
         _singleInstance = SingleInstanceMutex.TryAcquire();
         if (!_singleInstance.IsPrimaryInstance)
@@ -28,6 +41,7 @@ public partial class App : Application
         {
             _host = new AppHost();
             await _host.StartAsync();
+            MaybePromptCallsignSetup(_host);
             _host.Tray.ShowSettings();
         }
         catch (Exception ex)
@@ -50,6 +64,27 @@ public partial class App : Application
                 MessageBoxButton.OK,
                 MessageBoxImage.Error);
             Shutdown();
+        }
+    }
+
+    private static void MaybePromptCallsignSetup(AppHost host)
+    {
+        if (!host.CurrentUserNeedsCallsignSetup()) return;
+
+        var dlg = new CallsignSetupWindow(host.Config.ComputerIdentity.Team);
+        var result = dlg.ShowDialog();
+        if (result == true && !string.IsNullOrWhiteSpace(dlg.Callsign))
+        {
+            host.SaveCurrentUserIdentity(
+                dlg.Callsign,
+                string.IsNullOrWhiteSpace(dlg.Team) ? "Cyan" : dlg.Team,
+                "Team Member",
+                host.Config.ComputerIdentity.CotType);
+        }
+        else
+        {
+            // Dismiss once — fall back to computer callsign until they set one in Settings.
+            host.DismissCurrentUserSetupPrompt();
         }
     }
 

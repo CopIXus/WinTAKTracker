@@ -12,8 +12,10 @@ Status legend: **Shipping** (in the current public build), **In progress**, **Pl
 | SoftCert / pref ZIP drop-in | Shipping |
 | Manual WinTAK-style `.p12` + CA import (TLS or cleartext TCP) | Shipping |
 | Webcam QR scan with paste-URL fallback | Shipping |
-| Manual identity edit (callsign, team, role, ground vs vehicle CoT type) | Shipping |
-| DPAPI-protected local config and certs under `%LocalAppData%` | Shipping |
+| Manual identity edit — computer callsign + per-user callsign/team/role | Shipping |
+| First-login callsign prompt (skip → computer callsign) | Shipping |
+| DPAPI-protected config (LocalAppData CurrentUser; ProgramData LocalMachine for service) | Shipping |
+| Windows Service always-on host + tray IPC companion | Shipping (vertical slice) |
 
 ## Multi-server TAK
 
@@ -67,7 +69,7 @@ Status legend: **Shipping** (in the current public build), **In progress**, **Pl
 
 ## Privacy
 
-- Runtime secrets, certs, and logs stay on the machine (`%LocalAppData%\WinTAKTracker\`).
+- Runtime secrets, certs, and logs stay on the machine (`%LocalAppData%` portable; `%ProgramData%\WinTAKTracker` for the Windows Service).
 - This public repository never contains real TAK hosts, tokens, certificates, or live enroll URLs — only fictional samples.
 - See [SECURITY.md](SECURITY.md) and [CONTRIBUTING.md](CONTRIBUTING.md).
 

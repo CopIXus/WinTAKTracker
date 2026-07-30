@@ -89,9 +89,10 @@ public sealed class EnrollmentService
         if (!result.Success || result.Profile is null)
             return Fail(result.Error ?? "Import failed.");
 
-        if (!string.IsNullOrWhiteSpace(result.Callsign)) config.Identity.Callsign = result.Callsign!;
-        if (!string.IsNullOrWhiteSpace(result.Team)) config.Identity.Team = result.Team!;
-        if (!string.IsNullOrWhiteSpace(result.Role)) config.Identity.Role = result.Role!;
+        if (!string.IsNullOrWhiteSpace(result.Callsign)) config.ComputerIdentity.Callsign = result.Callsign!;
+        if (!string.IsNullOrWhiteSpace(result.Team)) config.ComputerIdentity.Team = result.Team!;
+        if (!string.IsNullOrWhiteSpace(result.Role)) config.ComputerIdentity.Role = result.Role!;
+        config.EnsureIdentityDefaults();
 
         config.Servers.Add(result.Profile);
         _store.Save(config);
@@ -582,9 +583,10 @@ public sealed class EnrollmentService
 
     private static void ApplyIdentity(AppConfig config, EnrollmentParseResult parsed)
     {
-        if (!string.IsNullOrWhiteSpace(parsed.Callsign)) config.Identity.Callsign = parsed.Callsign!;
-        if (!string.IsNullOrWhiteSpace(parsed.Team)) config.Identity.Team = parsed.Team!;
-        if (!string.IsNullOrWhiteSpace(parsed.Role)) config.Identity.Role = parsed.Role!;
+        if (!string.IsNullOrWhiteSpace(parsed.Callsign)) config.ComputerIdentity.Callsign = parsed.Callsign!;
+        if (!string.IsNullOrWhiteSpace(parsed.Team)) config.ComputerIdentity.Team = parsed.Team!;
+        if (!string.IsNullOrWhiteSpace(parsed.Role)) config.ComputerIdentity.Role = parsed.Role!;
+        config.EnsureIdentityDefaults();
     }
 
     private static string EnsurePem(string raw, string label)

@@ -60,7 +60,7 @@ public sealed class StatusExporter
             },
             identity = new
             {
-                cotType = config.Identity.CotType,
+                cotType = config.ComputerIdentity.CotType,
                 // callsign/team omitted by default
             },
             clockSkewWarning = DetectClockSkew(),

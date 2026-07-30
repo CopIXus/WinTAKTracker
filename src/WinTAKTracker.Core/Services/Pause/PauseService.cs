@@ -46,4 +46,10 @@ public sealed class PauseService
         else
             Pause();
     }
+
+    public void SetPaused(bool paused)
+    {
+        if (paused) Pause();
+        else Resume();
+    }
 }

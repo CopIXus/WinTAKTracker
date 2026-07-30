@@ -1,16 +1,27 @@
 namespace WinTAKTracker.Services.Config;
 
 /// <summary>
-/// Application configuration persisted under %LocalAppData%\WinTAKTracker\.
+/// Application configuration. Portable mode uses %LocalAppData%; service mode uses %ProgramData%.
 /// Secrets are stored separately via DPAPI — never put real hosts/tokens in repo samples.
 /// </summary>
 public sealed class AppConfig
 {
-    public const int CurrentVersion = 1;
+    public const int CurrentVersion = 2;
 
     public int Version { get; set; } = CurrentVersion;
 
+    /// <summary>
+    /// Legacy single identity (v1). Mirrored from <see cref="ComputerIdentity"/> on save/load
+    /// for older UI paths; prefer ComputerIdentity / UserIdentities for new code.
+    /// </summary>
     public IdentitySettings Identity { get; set; } = new();
+
+    /// <summary>Machine-level CoT identity used when nobody is logged on / no user identity active.</summary>
+    public IdentitySettings ComputerIdentity { get; set; } = new();
+
+    /// <summary>Per-Windows-user identities keyed by SID string.</summary>
+    public Dictionary<string, UserIdentitySettings> UserIdentities { get; set; } =
+        new(StringComparer.OrdinalIgnoreCase);
 
     public GpsSettings Gps { get; set; } = new();
 
@@ -32,8 +43,58 @@ public sealed class AppConfig
 
     /// <summary>Stable CoT UID for this machine (generated once).</summary>
     public string? DeviceUid { get; set; }
+
+    /// <summary>
+    /// Migrate v1 Identity → ComputerIdentity and ensure computer callsign default.
+    /// </summary>
+    public void EnsureIdentityDefaults()
+    {
+        if (Identity is not null)
+        {
+            var legacy = Identity.Callsign?.Trim() ?? "";
+            var computerEmpty = string.IsNullOrWhiteSpace(ComputerIdentity.Callsign);
+            if (computerEmpty && legacy.Length > 0 &&
+                !legacy.Equals("WIN-TRACKER", StringComparison.OrdinalIgnoreCase))
+            {
+                ComputerIdentity.Callsign = Identity.Callsign ?? "";
+                if (!string.IsNullOrWhiteSpace(Identity.Team))
+                    ComputerIdentity.Team = Identity.Team;
+                if (!string.IsNullOrWhiteSpace(Identity.Role))
+                    ComputerIdentity.Role = Identity.Role;
+                if (!string.IsNullOrWhiteSpace(Identity.CotType))
+                    ComputerIdentity.CotType = Identity.CotType;
+            }
+            else if (computerEmpty)
+            {
+                // Copy team/role/cot even when callsign was empty/legacy default.
+                if (!string.IsNullOrWhiteSpace(Identity.Team))
+                    ComputerIdentity.Team = Identity.Team;
+                if (!string.IsNullOrWhiteSpace(Identity.Role))
+                    ComputerIdentity.Role = Identity.Role;
+                if (!string.IsNullOrWhiteSpace(Identity.CotType))
+                    ComputerIdentity.CotType = Identity.CotType;
+            }
+        }
+
+        var current = ComputerIdentity.Callsign?.Trim() ?? "";
+        if (current.Length == 0 ||
+            current.Equals("WIN-TRACKER", StringComparison.OrdinalIgnoreCase))
+        {
+            ComputerIdentity.Callsign = Environment.MachineName;
+        }
+
+        // Keep legacy Identity mirrored for older UI/code paths during transition.
+        Identity = new IdentitySettings
+        {
+            Callsign = ComputerIdentity.Callsign ?? Environment.MachineName,
+            Team = ComputerIdentity.Team,
+            Role = ComputerIdentity.Role,
+            CotType = ComputerIdentity.CotType,
+        };
+    }
 }
 
+/// <summary>Computer-level or shared identity fields.</summary>
 public sealed class IdentitySettings
 {
     /// <summary>Empty means resolve to <see cref="Environment.MachineName"/> at runtime / first persist.</summary>
@@ -46,6 +107,20 @@ public sealed class IdentitySettings
     /// <summary>Effective callsign for CoT/UI — machine name when unset.</summary>
     public string GetEffectiveCallsign() =>
         string.IsNullOrWhiteSpace(Callsign) ? Environment.MachineName : Callsign.Trim();
+}
+
+/// <summary>Per-Windows-user CoT identity.</summary>
+public sealed class UserIdentitySettings
+{
+    public string UserName { get; set; } = "";
+    public string Callsign { get; set; } = "";
+    public string Team { get; set; } = "";
+    public string Role { get; set; } = "";
+    public string CotType { get; set; } = "";
+    /// <summary>True when the user dismissed the first-login callsign prompt without saving.</summary>
+    public bool SetupPromptDismissed { get; set; }
+
+    public bool HasCallsign => !string.IsNullOrWhiteSpace(Callsign);
 }
 
 public sealed class GpsSettings

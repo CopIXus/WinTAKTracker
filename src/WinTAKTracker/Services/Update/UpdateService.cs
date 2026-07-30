@@ -195,9 +195,18 @@ public sealed class UpdateService : IUpdateService
     private static string Normalize(string v)
     {
         v = v.Trim().TrimStart('v', 'V');
-        var parts = v.Split('.');
-        while (parts.Length < 3) v += ".0";
-        return v;
+        var plus = v.IndexOf('+');
+        if (plus >= 0) v = v[..plus];
+        var dash = v.IndexOf('-');
+        if (dash >= 0) v = v[..dash];
+        var parts = v.Split('.', StringSplitOptions.RemoveEmptyEntries);
+        if (parts.Length >= 3)
+            return $"{parts[0]}.{parts[1]}.{parts[2]}";
+        if (parts.Length == 2)
+            return $"{parts[0]}.{parts[1]}.0";
+        if (parts.Length == 1)
+            return $"{parts[0]}.0.0";
+        return "0.0.0";
     }
 
     private static string? Truncate(string? s, int max) =>

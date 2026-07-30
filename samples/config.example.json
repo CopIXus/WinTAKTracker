@@ -10,7 +10,8 @@
     "sourcePriority": "NmeaThenWindows",
     "comPort": null,
     "baudRate": 4800,
-    "lastFixHoldSeconds": 30
+    "lastFixHoldSeconds": 30,
+    "enableNetworkFallback": true
   },
   "reporting": {
     "strategy": "Dynamic",

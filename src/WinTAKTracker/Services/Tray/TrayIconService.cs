@@ -152,13 +152,18 @@ public sealed class TrayIconService : IDisposable
 
     private static Icon LoadAppIcon()
     {
-        var icoPath = Path.Combine(AppContext.BaseDirectory, "Assets", "tak.ico");
-        if (File.Exists(icoPath))
-            return new Icon(icoPath);
+        foreach (var fileName in new[] { "WinTAKTrackerLogo.ico", "tak.ico" })
+        {
+            var icoPath = Path.Combine(AppContext.BaseDirectory, "Assets", fileName);
+            if (File.Exists(icoPath))
+                return new Icon(icoPath);
+        }
 
         var asm = typeof(TrayIconService).Assembly;
         var name = asm.GetManifestResourceNames()
-            .FirstOrDefault(n => n.EndsWith("tak.ico", StringComparison.OrdinalIgnoreCase));
+            .FirstOrDefault(n =>
+                n.EndsWith("WinTAKTrackerLogo.ico", StringComparison.OrdinalIgnoreCase) ||
+                n.EndsWith("tak.ico", StringComparison.OrdinalIgnoreCase));
         if (name is not null)
         {
             using var stream = asm.GetManifestResourceStream(name);

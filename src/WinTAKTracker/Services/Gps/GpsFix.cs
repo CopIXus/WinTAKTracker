@@ -5,6 +5,8 @@ public enum GpsSourceKind
     None,
     NmeaSerial,
     WindowsLocation,
+    /// <summary>Approximate IP-based geolocation (large CE; not precision GPS).</summary>
+    NetworkIp,
     Held,
 }
 
@@ -26,6 +28,15 @@ public sealed class GpsFix
     public bool HasFix => !double.IsNaN(Latitude) && !double.IsNaN(Longitude);
 
     public double SpeedMph => (SpeedMetersPerSecond ?? 0) * 2.23693629;
+
+    public string SourceDisplayName => Source switch
+    {
+        GpsSourceKind.NmeaSerial => "NMEA",
+        GpsSourceKind.WindowsLocation => "Windows Location",
+        GpsSourceKind.NetworkIp => "Network (approximate)",
+        GpsSourceKind.Held => "Held (last fix)",
+        _ => Source.ToString(),
+    };
 
     public GpsFix AsHeld() => new()
     {

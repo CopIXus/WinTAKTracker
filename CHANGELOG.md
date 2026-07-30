@@ -9,7 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- (Nothing yet — next release notes go here.)
+- Default callsign uses the Windows computer name when unset (replaces hard-coded `WIN-TRACKER`)
+- Network/IP geolocation fallback via ipwho.is (HTTPS) when NMEA and Windows Location have no fix
+- App branding from `WinTAKTrackerLogo` assets (window, tray, EXE icon)
+- GitHub Release on every push to `main` (`0.1.<run_number>`) in addition to SemVer `v*` tags
+
+### Changed
+
+- Settings UI auto-saves options to `%LocalAppData%\WinTAKTracker\` on change
+- Expanded project README (install, enrollment, GPS, privacy, companions, build)
 
 ## [0.1.0] - 2026-07-30
 

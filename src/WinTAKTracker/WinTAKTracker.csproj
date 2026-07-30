@@ -17,7 +17,7 @@
     <AssemblyVersion>0.1.0.0</AssemblyVersion>
     <FileVersion>0.1.0.0</FileVersion>
     <InformationalVersion>0.1.0</InformationalVersion>
-    <ApplicationIcon>Assets\tak.ico</ApplicationIcon>
+    <ApplicationIcon>Assets\WinTAKTrackerLogo.ico</ApplicationIcon>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
     <NeutralLanguage>en-US</NeutralLanguage>
@@ -44,7 +44,8 @@
   </ItemGroup>
 
   <ItemGroup>
-    <Content Include="Assets\tak.ico">
+    <Resource Include="Assets\WinTAKTrackerLogo.png" />
+    <Content Include="Assets\WinTAKTrackerLogo.ico">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
   </ItemGroup>

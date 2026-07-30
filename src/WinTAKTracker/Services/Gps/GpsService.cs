@@ -16,16 +16,18 @@ public interface IGpsService
     Task<GpsPermissionState> RequestWindowsLocationAccessAsync();
 }
 
-/// <summary>Orchestrates NMEA serial + Windows Location with last-fix hold.</summary>
+/// <summary>Orchestrates NMEA serial + Windows Location + optional IP geolocation with last-fix hold.</summary>
 public sealed class GpsService : IGpsService, IDisposable
 {
     private readonly IRedactedLogger _log;
     private readonly NmeaSerialGps _nmea = new();
     private readonly WindowsLocationGps _windows = new();
+    private readonly NetworkIpGeolocationGps _network = new();
     private readonly object _gate = new();
     private GpsSettings _settings = new();
     private GpsFix? _liveFix;
     private GpsFix? _heldFix;
+    private GpsFix? _networkFix;
     private DateTimeOffset? _lastLiveUtc;
     private System.Threading.Timer? _holdTimer;
     private bool _started;
@@ -37,6 +39,8 @@ public sealed class GpsService : IGpsService, IDisposable
         _nmea.ErrorOccurred += (_, msg) => _log.Warn("GPS/NMEA", msg);
         _windows.FixReceived += OnWindowsFix;
         _windows.ErrorOccurred += (_, msg) => _log.Warn("GPS/Windows", msg);
+        _network.FixReceived += OnNetworkFix;
+        _network.ErrorOccurred += (_, msg) => _log.Warn("GPS/Network", msg);
     }
 
     public GpsFix? CurrentFix
@@ -45,6 +49,12 @@ public sealed class GpsService : IGpsService, IDisposable
         {
             lock (_gate)
             {
+                if (_liveFix is not null && IsPrecisionSource(_liveFix.Source))
+                    return _liveFix;
+                if (_heldFix is not null && IsHoldActive() && IsPrecisionSource(_heldFix.Source))
+                    return _heldFix;
+                if (_settings.EnableNetworkFallback && _networkFix is not null)
+                    return _networkFix;
                 if (_liveFix is not null) return _liveFix;
                 if (_heldFix is not null && IsHoldActive()) return _heldFix;
                 return null;
@@ -55,7 +65,7 @@ public sealed class GpsService : IGpsService, IDisposable
     public GpsPermissionState WindowsPermission => _windows.PermissionState;
     public bool HasLiveFix
     {
-        get { lock (_gate) return _liveFix is not null; }
+        get { lock (_gate) return _liveFix is not null && IsPrecisionSource(_liveFix.Source); }
     }
 
     public event EventHandler<GpsFix?>? FixChanged;
@@ -84,6 +94,7 @@ public sealed class GpsService : IGpsService, IDisposable
 
         _nmea.Stop();
         _windows.Stop();
+        _network.Stop();
 
         if (useNmea)
         {
@@ -113,12 +124,16 @@ public sealed class GpsService : IGpsService, IDisposable
         }
 
         if (useWin)
+            await _windows.StartAsync();
+
+        if (settings.EnableNetworkFallback)
         {
-            // Prefer Windows first when configured, otherwise as fallback after NMEA attempt.
-            if (priority is "WindowsThenNmea" or "WindowsOnly" || !_nmea.IsOpen)
-                await _windows.StartAsync();
-            else
-                await _windows.StartAsync(); // keep both when NmeaThenWindows
+            _network.Start();
+            _log.Info("GPS", "Network IP geolocation fallback enabled (ipwho.is, approximate).");
+        }
+        else
+        {
+            lock (_gate) _networkFix = null;
         }
     }
 
@@ -129,9 +144,10 @@ public sealed class GpsService : IGpsService, IDisposable
         _holdTimer = null;
         _nmea.Stop();
         _windows.Stop();
+        _network.Stop();
     }
 
-    private void OnNmeaFix(object? sender, GpsFix fix) => AcceptLive(fix);
+    private void OnNmeaFix(object? sender, GpsFix fix) => AcceptPrecisionLive(fix);
 
     private void OnWindowsFix(object? sender, GpsFix fix)
     {
@@ -144,10 +160,25 @@ public sealed class GpsService : IGpsService, IDisposable
                 return;
         }
 
-        AcceptLive(fix);
+        AcceptPrecisionLive(fix);
     }
 
-    private void AcceptLive(GpsFix fix)
+    private void OnNetworkFix(object? sender, GpsFix fix)
+    {
+        lock (_gate)
+        {
+            _networkFix = fix;
+            // Do not displace a live/held precision fix.
+            if (_liveFix is not null && IsPrecisionSource(_liveFix.Source))
+                return;
+            if (_heldFix is not null && IsHoldActive() && IsPrecisionSource(_heldFix.Source))
+                return;
+        }
+
+        FixChanged?.Invoke(this, CurrentFix);
+    }
+
+    private void AcceptPrecisionLive(GpsFix fix)
     {
         lock (_gate)
         {
@@ -164,19 +195,18 @@ public sealed class GpsService : IGpsService, IDisposable
         GpsFix? publish;
         lock (_gate)
         {
-            if (_liveFix is not null && _lastLiveUtc.HasValue)
+            if (_liveFix is not null && IsPrecisionSource(_liveFix.Source) && _lastLiveUtc.HasValue)
             {
                 var age = (DateTimeOffset.UtcNow - _lastLiveUtc.Value).TotalSeconds;
                 if (age > 2.5)
                 {
-                    // Drop live; may enter hold.
                     _liveFix = null;
                     if (IsHoldActive())
                         publish = _heldFix;
                     else
                     {
                         _heldFix = null;
-                        publish = null;
+                        publish = _settings.EnableNetworkFallback ? _networkFix : null;
                     }
 
                     goto Emit;
@@ -186,7 +216,7 @@ public sealed class GpsService : IGpsService, IDisposable
             if (_liveFix is null && _heldFix is not null && !IsHoldActive())
             {
                 _heldFix = null;
-                publish = null;
+                publish = _settings.EnableNetworkFallback ? _networkFix : null;
                 goto Emit;
             }
 
@@ -204,10 +234,14 @@ public sealed class GpsService : IGpsService, IDisposable
         return (DateTimeOffset.UtcNow - _lastLiveUtc.Value).TotalSeconds <= hold;
     }
 
+    private static bool IsPrecisionSource(GpsSourceKind source) =>
+        source is GpsSourceKind.NmeaSerial or GpsSourceKind.WindowsLocation or GpsSourceKind.Held;
+
     public void Dispose()
     {
         Stop();
         _nmea.Dispose();
         _windows.Dispose();
+        _network.Dispose();
     }
 }

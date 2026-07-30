@@ -36,11 +36,16 @@ public sealed class AppConfig
 
 public sealed class IdentitySettings
 {
-    public string Callsign { get; set; } = "WIN-TRACKER";
+    /// <summary>Empty means resolve to <see cref="Environment.MachineName"/> at runtime / first persist.</summary>
+    public string Callsign { get; set; } = "";
     public string Team { get; set; } = "Cyan";
     public string Role { get; set; } = "Team Member";
     /// <summary>CoT type, e.g. a-f-G-U-C-I (Ground Unit) or a-f-G-E-V (Vehicle).</summary>
     public string CotType { get; set; } = "a-f-G-U-C-I";
+
+    /// <summary>Effective callsign for CoT/UI — machine name when unset.</summary>
+    public string GetEffectiveCallsign() =>
+        string.IsNullOrWhiteSpace(Callsign) ? Environment.MachineName : Callsign.Trim();
 }
 
 public sealed class GpsSettings
@@ -50,6 +55,8 @@ public sealed class GpsSettings
     public string? ComPort { get; set; }
     public int BaudRate { get; set; } = 4800;
     public int LastFixHoldSeconds { get; set; } = 30;
+    /// <summary>When NMEA and Windows Location have no fix, use approximate IP geolocation.</summary>
+    public bool EnableNetworkFallback { get; set; } = true;
 }
 
 public sealed class ReportingSettings

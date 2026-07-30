@@ -25,6 +25,7 @@ public partial class SettingsWindow : Window
     {
         _host = host;
         InitializeComponent();
+        TrySetWindowIcon();
         _refreshTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
         _host.Pause.PauseChanged += OnPauseChanged;
         Closed += (_, _) =>
@@ -43,6 +44,17 @@ public partial class SettingsWindow : Window
         SectionList.SelectedIndex = 0;
         RefreshPauseButton();
         ShowSection("Status");
+    }
+
+    private void TrySetWindowIcon()
+    {
+        var path = Path.Combine(AppContext.BaseDirectory, "Assets", "WinTAKTrackerLogo.ico");
+        if (!File.Exists(path)) return;
+        try
+        {
+            Icon = new System.Windows.Media.Imaging.BitmapImage(new Uri(path));
+        }
+        catch { /* optional */ }
     }
 
     private void SectionList_OnSelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -140,12 +152,13 @@ public partial class SettingsWindow : Window
         _statusSummary.Text =
             $"Tray: {_host.Tray.CurrentState.ToTooltip()}\n" +
             $"Tracking: {(_host.Pause.IsPaused ? "Paused" : "Active")}\n" +
-            $"GPS: {(fix is null ? "No fix" : $"{(fix.IsHeld ? "Held" : "Live")} via {fix.Source}")}\n" +
+            $"GPS: {(fix is null ? "No fix" : $"{(fix.IsHeld ? "Held" : "Live")} via {fix.SourceDisplayName}")}\n" +
             (fix is null ? "" :
                 $"Lat: {fix.Latitude:F6}  Lon: {fix.Longitude:F6}\n" +
                 $"Speed: {fix.SpeedMph:F1} mph  Course: {(fix.CourseDegrees is double c ? $"{c:F0}°" : "—")}  " +
                 $"Alt: {(fix.AltitudeMeters is double a ? $"{a:F1} m" : "—")}  " +
-                $"Acc: {(fix.AccuracyMeters is double ac ? $"{ac:F1} m" : "—")}\n") +
+                $"Acc: {(fix.AccuracyMeters is double ac ? $"{ac:F0} m" : "—")}" +
+                (fix.Source == GpsSourceKind.NetworkIp ? " (approximate IP location)" : "") + "\n") +
             $"Servers: {(string.IsNullOrEmpty(servers) ? "None" : servers)}\n" +
             $"Mesh SA: {(_host.Config.MeshSa.Enabled ? $"On — last {_host.Mesh.LastSendUtc?.ToLocalTime():HH:mm:ss} ({_host.Mesh.LastInterfaceDescription ?? "—"})" : "Off")}\n" +
             $"Last PLI: {_host.Reporting.LastPliSentUtc?.ToLocalTime().ToString("G") ?? "—"}";
@@ -205,8 +218,8 @@ public partial class SettingsWindow : Window
                 FontWeight = FontWeights.SemiBold,
             });
             var en = new CheckBox { Content = "Enabled", IsChecked = server.Enabled };
-            en.Checked += (_, _) => { server.Enabled = true; _ = _host.ReloadConnectionsAsync(); };
-            en.Unchecked += (_, _) => { server.Enabled = false; _ = _host.ReloadConnectionsAsync(); };
+            en.Checked += (_, _) => { server.Enabled = true; Persist(); _ = _host.ReloadConnectionsAsync(); };
+            en.Unchecked += (_, _) => { server.Enabled = false; Persist(); _ = _host.ReloadConnectionsAsync(); };
             box.Children.Add(en);
             box.Children.Add(Btn("Test server", async () =>
             {
@@ -278,8 +291,8 @@ public partial class SettingsWindow : Window
     private UIElement BuildIdentity()
     {
         var panel = new StackPanel();
-        panel.Children.Add(Blurb("Manual identity — changes trigger ASAP re-report on all paths."));
-        var callsign = new TextBox { Text = _host.Config.Identity.Callsign };
+        panel.Children.Add(Blurb("Manual identity — changes auto-save and trigger ASAP re-report. Default callsign is this PC’s Windows name until you change it."));
+        var callsign = new TextBox { Text = _host.Config.Identity.GetEffectiveCallsign() };
         var team = new ComboBox
         {
             IsEditable = true,
@@ -305,25 +318,36 @@ public partial class SettingsWindow : Window
         panel.Children.Add(Label("Team")); panel.Children.Add(team);
         panel.Children.Add(Label("Role")); panel.Children.Add(role);
         panel.Children.Add(Label("Device / CoT type")); panel.Children.Add(cot);
-        panel.Children.Add(Btn("Save identity", () =>
+
+        void SaveIdentity()
         {
-            _host.Config.Identity.Callsign = callsign.Text.Trim();
+            var next = callsign.Text.Trim();
+            _host.Config.Identity.Callsign = string.IsNullOrWhiteSpace(next)
+                ? Environment.MachineName
+                : next;
+            callsign.Text = _host.Config.Identity.Callsign;
             _host.Config.Identity.Team = team.Text.Trim();
             _host.Config.Identity.Role = role.Text.Trim();
             _host.Config.Identity.CotType = cot.SelectedIndex == 1
                 ? CotEventBuilder.VehicleType
                 : CotEventBuilder.GroundUnitType;
-            _host.SaveConfig();
+            Persist();
             _host.Reporting.NotifyIdentityChanged();
-            Msg("Identity saved.");
-        }));
+        }
+
+        BindPersistText(callsign, SaveIdentity);
+        BindPersistText(team, SaveIdentity);
+        BindPersistText(role, SaveIdentity);
+        cot.SelectionChanged += (_, _) => SaveIdentity();
+        panel.Children.Add(Chip("Persisted", "Identity saves automatically when you change a field."));
         return panel;
     }
 
     private UIElement BuildGps()
     {
         var panel = new StackPanel();
-        panel.Children.Add(Blurb("Primary: USB NMEA serial. Alternate: Windows Location."));
+        panel.Children.Add(Blurb(
+            "Primary: USB NMEA serial. Alternate: Windows Location. Fallback: network/IP geolocation (approximate, large CE) via ipwho.is HTTPS when no GPS fix is available."));
         var ports = _host.Gps.GetComPorts().ToList();
         if (ports.Count == 0) ports.Add("(none detected)");
         var port = new ComboBox { ItemsSource = ports, IsEditable = true, Text = _host.Config.Gps.ComPort ?? ports[0] };
@@ -338,32 +362,48 @@ public partial class SettingsWindow : Window
             SelectedItem = _host.Config.Gps.SourcePriority,
         };
         var hold = new TextBox { Text = _host.Config.Gps.LastFixHoldSeconds.ToString() };
+        var network = new CheckBox
+        {
+            Content = "Network / IP geolocation fallback (approximate)",
+            IsChecked = _host.Config.Gps.EnableNetworkFallback,
+            Margin = new Thickness(0, 8, 0, 8),
+        };
         panel.Children.Add(Label("COM port")); panel.Children.Add(port);
         panel.Children.Add(Label("Baud")); panel.Children.Add(baud);
         panel.Children.Add(Label("Source priority")); panel.Children.Add(priority);
         panel.Children.Add(Label("Last-fix hold (seconds)")); panel.Children.Add(hold);
+        panel.Children.Add(network);
         panel.Children.Add(Btn("Request Windows Location permission", async () =>
         {
             var state = await _host.Gps.RequestWindowsLocationAccessAsync();
             Msg($"Permission: {state}");
         }));
-        panel.Children.Add(Btn("Save GPS settings", async () =>
+
+        async Task SaveGpsAsync()
         {
             _host.Config.Gps.ComPort = port.Text.StartsWith('(') ? null : port.Text;
             _host.Config.Gps.BaudRate = int.TryParse(baud.Text, out var b) ? b : 4800;
             _host.Config.Gps.SourcePriority = priority.SelectedItem?.ToString() ?? "NmeaThenWindows";
             _host.Config.Gps.LastFixHoldSeconds = int.TryParse(hold.Text, out var h) ? h : 30;
-            _host.SaveConfig();
+            _host.Config.Gps.EnableNetworkFallback = network.IsChecked == true;
+            Persist();
             await _host.Gps.ApplySettingsAsync(_host.Config.Gps);
-            Msg("GPS settings saved.");
-        }));
+        }
+
+        BindPersistText(port, () => _ = SaveGpsAsync());
+        BindPersistText(baud, () => _ = SaveGpsAsync());
+        BindPersistText(hold, () => _ = SaveGpsAsync());
+        priority.SelectionChanged += (_, _) => _ = SaveGpsAsync();
+        network.Checked += (_, _) => _ = SaveGpsAsync();
+        network.Unchecked += (_, _) => _ = SaveGpsAsync();
+        panel.Children.Add(Chip("Persisted", "GPS settings save automatically."));
         return panel;
     }
 
     private UIElement BuildReporting()
     {
         var panel = new StackPanel();
-        panel.Children.Add(Blurb("ATAK-style Dynamic (default) or Constant rates. Reliable = servers; Unreliable = mesh."));
+        panel.Children.Add(Blurb("ATAK-style Dynamic (default) or Constant rates. Reliable = servers; Unreliable = mesh. Changes auto-save."));
         var strategy = new ComboBox { ItemsSource = new[] { "Dynamic", "Constant" }, SelectedItem = _host.Config.Reporting.Strategy };
         var relStat = new TextBox { Text = _host.Config.Reporting.ReliableStationarySeconds.ToString() };
         var unrelStat = new TextBox { Text = _host.Config.Reporting.UnreliableStationarySeconds.ToString() };
@@ -372,22 +412,27 @@ public partial class SettingsWindow : Window
         panel.Children.Add(Label("Reliable stationary (s)")); panel.Children.Add(relStat);
         panel.Children.Add(Label("Unreliable stationary (s)")); panel.Children.Add(unrelStat);
         panel.Children.Add(Label("Constant interval (s)")); panel.Children.Add(constant);
-        panel.Children.Add(Btn("Save reporting", () =>
+
+        void SaveReporting()
         {
             _host.Config.Reporting.Strategy = strategy.SelectedItem?.ToString() ?? "Dynamic";
             if (int.TryParse(relStat.Text, out var rs)) _host.Config.Reporting.ReliableStationarySeconds = rs;
             if (int.TryParse(unrelStat.Text, out var us)) _host.Config.Reporting.UnreliableStationarySeconds = us;
             if (int.TryParse(constant.Text, out var c)) _host.Config.Reporting.ConstantIntervalSeconds = c;
-            _host.SaveConfig();
-            Msg("Reporting settings saved.");
-        }));
+            Persist();
+        }
+
+        strategy.SelectionChanged += (_, _) => SaveReporting();
+        BindPersistText(relStat, SaveReporting);
+        BindPersistText(unrelStat, SaveReporting);
+        BindPersistText(constant, SaveReporting);
         return panel;
     }
 
     private UIElement BuildMeshSa()
     {
         var panel = new StackPanel();
-        panel.Children.Add(Blurb("UDP multicast Mesh SA (ATAK defaults 239.2.3.1:6969). Always-on with servers by default."));
+        panel.Children.Add(Blurb("UDP multicast Mesh SA (ATAK defaults 239.2.3.1:6969). Always-on with servers by default. Changes auto-save."));
         var enabled = new CheckBox { Content = "Broadcast Mesh SA", IsChecked = _host.Config.MeshSa.Enabled };
         var mode = new ComboBox
         {
@@ -403,15 +448,20 @@ public partial class SettingsWindow : Window
         panel.Children.Add(Label("Network interface")); panel.Children.Add(nic);
         panel.Children.Add(Chip("Status",
             $"Last send {_host.Mesh.LastSendUtc?.ToLocalTime():G} via {_host.Mesh.LastInterfaceDescription ?? "—"}"));
-        panel.Children.Add(Btn("Save Mesh SA", () =>
+
+        void SaveMesh()
         {
             _host.Config.MeshSa.Enabled = enabled.IsChecked == true;
             _host.Config.MeshSa.Mode = mode.SelectedItem?.ToString() ?? "Always";
             _host.Config.MeshSa.NetworkInterface = nic.SelectedItem?.ToString() ?? "Auto";
-            _host.SaveConfig();
+            Persist();
             _host.Mesh.ApplySettings(_host.Config.MeshSa);
-            Msg("Mesh SA settings saved.");
-        }));
+        }
+
+        enabled.Checked += (_, _) => SaveMesh();
+        enabled.Unchecked += (_, _) => SaveMesh();
+        mode.SelectionChanged += (_, _) => SaveMesh();
+        nic.SelectionChanged += (_, _) => SaveMesh();
         return panel;
     }
 
@@ -423,12 +473,12 @@ public partial class SettingsWindow : Window
         var url = new TextBox { Text = _host.Config.CloudTakUrl ?? "" };
         panel.Children.Add(Label("CloudTAK URL"));
         panel.Children.Add(url);
-        panel.Children.Add(Btn("Save CloudTAK URL", () =>
+        BindPersistText(url, () =>
         {
             _host.Config.CloudTakUrl = string.IsNullOrWhiteSpace(url.Text) ? null : url.Text.Trim();
-            _host.SaveConfig();
-            Msg("Saved.");
-        }));
+            Persist();
+        });
+        panel.Children.Add(Chip("Persisted", "CloudTAK URL saves when the field loses focus."));
         panel.Children.Add(Btn("Open CloudTAK", () =>
         {
             if (string.IsNullOrWhiteSpace(_host.Config.CloudTakUrl))
@@ -455,16 +505,21 @@ public partial class SettingsWindow : Window
             Content = "Prevent sleep while tracking (uses more power)",
             IsChecked = _host.Config.Startup.PreventSleepWhileTracking,
         };
-        panel.Children.Add(Blurb("PLI continues while the screen is locked. Prevent-sleep is optional and off by default."));
+        panel.Children.Add(Blurb("PLI continues while the screen is locked. Prevent-sleep is optional and off by default. Changes auto-save."));
         panel.Children.Add(start);
         panel.Children.Add(sleep);
-        panel.Children.Add(Btn("Save startup options", () =>
+
+        void SaveStartup()
         {
             _host.Config.Startup.StartWithWindows = start.IsChecked == true;
             _host.Config.Startup.PreventSleepWhileTracking = sleep.IsChecked == true;
-            _host.SaveConfig();
-            Msg("Startup options saved.");
-        }));
+            Persist();
+        }
+
+        start.Checked += (_, _) => SaveStartup();
+        start.Unchecked += (_, _) => SaveStartup();
+        sleep.Checked += (_, _) => SaveStartup();
+        sleep.Unchecked += (_, _) => SaveStartup();
         return panel;
     }
 
@@ -477,14 +532,13 @@ public partial class SettingsWindow : Window
             SelectedItem = _host.Config.Diagnostics.LogLevel,
         };
         panel.Children.Add(Label("Log level")); panel.Children.Add(level);
-        panel.Children.Add(Btn("Save log level", () =>
+        level.SelectionChanged += (_, _) =>
         {
             _host.Config.Diagnostics.LogLevel = level.SelectedItem?.ToString() ?? "Information";
             if (Enum.TryParse<Services.Diagnostics.LogLevel>(_host.Config.Diagnostics.LogLevel, true, out var lv))
                 _host.Log.SetMinLevel(lv);
-            _host.SaveConfig();
-            Msg("Saved.");
-        }));
+            Persist();
+        };
         panel.Children.Add(Btn("Open log folder", () =>
         {
             Directory.CreateDirectory(_host.ConfigStore.LogsDirectory);
@@ -529,6 +583,16 @@ public partial class SettingsWindow : Window
             });
         }
         panel.Children.Add(auto);
+        auto.Checked += (_, _) =>
+        {
+            _host.Config.Updates.AutomaticallyDownloadAndInstall = true;
+            Persist();
+        };
+        auto.Unchecked += (_, _) =>
+        {
+            _host.Config.Updates.AutomaticallyDownloadAndInstall = false;
+            Persist();
+        };
         panel.Children.Add(Btn("Check for updates", async () =>
         {
             _lastUpdateCheck = await _host.Updates.CheckAsync();
@@ -552,30 +616,55 @@ public partial class SettingsWindow : Window
             Msg(message, ok ? MessageBoxImage.Information : MessageBoxImage.Warning);
             if (ok) Application.Current.Shutdown();
         }));
-        panel.Children.Add(Btn("Save update preferences", () =>
-        {
-            _host.Config.Updates.AutomaticallyDownloadAndInstall = auto.IsChecked == true;
-            _host.SaveConfig();
-            Msg("Saved.");
-        }));
         return panel;
     }
 
     private UIElement BuildAbout()
     {
         var panel = new StackPanel();
+        try
+        {
+            var logo = new System.Windows.Controls.Image
+            {
+                Source = new System.Windows.Media.Imaging.BitmapImage(
+                    new Uri("pack://application:,,,/Assets/WinTAKTrackerLogo.png")),
+                Width = 96,
+                Height = 96,
+                Stretch = System.Windows.Media.Stretch.Uniform,
+                HorizontalAlignment = WpfHAlign.Left,
+                Margin = new Thickness(0, 0, 0, 12),
+            };
+            panel.Children.Add(logo);
+        }
+        catch { /* branding optional */ }
+
+        var version = _host.Updates.CurrentVersion;
         panel.Children.Add(new TextBlock
         {
             Text =
-                "WinTAKTracker 0.1.0 — independent Windows PLI tracker.\n" +
+                $"WinTAKTracker {version} — independent Windows PLI tracker.\n" +
                 "Not an official TAK Product Center application.\n" +
                 "TAK / ATAK / WinTAK / CloudTAK / TAK Aware are trademarks of their respective owners.\n" +
                 "Map tiles: © OpenStreetMap contributors.\n" +
+                "Network location: ipwho.is (approximate IP geolocation).\n" +
                 "License: see LICENSE in the repository.\n" +
                 "Updates: github.com/CopIXus/WinTAKTracker",
             TextWrapping = TextWrapping.Wrap,
         });
         return panel;
+    }
+
+    private void Persist() => _host.SaveConfig();
+
+    private static void BindPersistText(System.Windows.Controls.Control control, Action save)
+    {
+        control.LostFocus += (_, _) => save();
+        if (control is ComboBox combo)
+            combo.SelectionChanged += (_, _) =>
+            {
+                if (combo.IsDropDownOpen) return;
+                save();
+            };
     }
 
     private static UIElement GpsRow(string label, string value, Action onCopy)

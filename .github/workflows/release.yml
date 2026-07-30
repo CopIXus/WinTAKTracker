@@ -2,6 +2,8 @@ name: Release
 
 on:
   push:
+    branches:
+      - main
     tags:
       - "v*"
 
@@ -21,23 +23,47 @@ jobs:
         with:
           dotnet-version: "8.0.x"
 
-      - name: Resolve version from tag
+      - name: Resolve version
         id: ver
         shell: pwsh
         run: |
-          $tag = "${{ github.ref_name }}"
-          if ($tag -notmatch '^v(\d+\.\d+\.\d+([.-].+)?)$') {
-            throw "Tag '$tag' must look like v1.2.3"
+          $ref = "${{ github.ref }}"
+          $sha = "${{ github.sha }}".Substring(0, 7)
+          $run = "${{ github.run_number }}"
+
+          if ($ref -match '^refs/tags/v(\d+\.\d+\.\d+([.-].+)?)$') {
+            $version = $Matches[1]
+            $tag = "${{ github.ref_name }}"
+            $name = "WinTAKTracker $version"
+            $prerelease = "false"
+            $kind = "tag"
+          } elseif ($ref -eq 'refs/heads/main') {
+            # Continuous SemVer: 0.1.<run_number> so /releases/latest and in-app updater stay ordered.
+            # Tag prefix "build-" (not "v*") avoids a second workflow run when the release tag is created.
+            $version = "0.1.$run"
+            $tag = "build-$version"
+            $name = "WinTAKTracker $version (main @$sha)"
+            $prerelease = "false"
+            $kind = "push"
+          } else {
+            throw "Unsupported ref '$ref'"
           }
-          $version = $Matches[1]
+
           "tag=$tag" >> $env:GITHUB_OUTPUT
           "version=$version" >> $env:GITHUB_OUTPUT
-          Write-Host "Tag=$tag Version=$version"
+          "name=$name" >> $env:GITHUB_OUTPUT
+          "prerelease=$prerelease" >> $env:GITHUB_OUTPUT
+          "kind=$kind" >> $env:GITHUB_OUTPUT
+          "sha=$sha" >> $env:GITHUB_OUTPUT
+          Write-Host "kind=$kind tag=$tag version=$version"
 
       - name: Publish self-contained win-x64
         shell: pwsh
         run: |
           $version = "${{ steps.ver.outputs.version }}"
+          $sha = "${{ steps.ver.outputs.sha }}"
+          $info = if ("${{ steps.ver.outputs.kind }}" -eq "push") { "$version+$sha" } else { $version }
+          $asm = if ($version -match '^\d+\.\d+\.\d+$') { "$version.0" } else { "0.1.0.0" }
           dotnet publish src/WinTAKTracker/WinTAKTracker.csproj `
             -c Release `
             -r win-x64 `
@@ -46,9 +72,9 @@ jobs:
             -p:IncludeNativeLibrariesForSelfExtract=true `
             -p:EnableCompressionInSingleFile=true `
             -p:Version=$version `
-            -p:AssemblyVersion="$version.0" `
-            -p:FileVersion="$version.0" `
-            -p:InformationalVersion=$version `
+            -p:AssemblyVersion=$asm `
+            -p:FileVersion=$asm `
+            -p:InformationalVersion=$info `
             -o publish
 
       - name: Stage EXE and SHA256
@@ -62,11 +88,13 @@ jobs:
           Set-Content -Path dist/WinTAKTracker.exe.sha256 -Value "$hash  WinTAKTracker.exe" -NoNewline
           Write-Host "SHA256=$hash"
 
-      - name: Extract changelog section
+      - name: Extract release notes
         id: notes
         shell: pwsh
         run: |
           $version = "${{ steps.ver.outputs.version }}"
+          $kind = "${{ steps.ver.outputs.kind }}"
+          $sha = "${{ steps.ver.outputs.sha }}"
           $path = "CHANGELOG.md"
           if (-not (Test-Path $path)) { throw "CHANGELOG.md not found" }
           $lines = Get-Content $path
@@ -76,7 +104,11 @@ jobs:
             if ($lines[$i].StartsWith($header)) { $start = $i; break }
           }
           if ($start -lt 0) {
-            $body = "Release $version`n`nSee [CHANGELOG.md](https://github.com/CopIXus/WinTAKTracker/blob/main/CHANGELOG.md)."
+            if ($kind -eq "push") {
+              $body = "Continuous build ``$version`` from ``main`` @ ``$sha``.`n`nSee [CHANGELOG.md](https://github.com/CopIXus/WinTAKTracker/blob/main/CHANGELOG.md) for notable changes."
+            } else {
+              $body = "Release $version`n`nSee [CHANGELOG.md](https://github.com/CopIXus/WinTAKTracker/blob/main/CHANGELOG.md)."
+            }
           } else {
             $end = $lines.Count
             for ($j = $start + 1; $j -lt $lines.Count; $j++) {
@@ -95,11 +127,14 @@ jobs:
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          name: WinTAKTracker ${{ steps.ver.outputs.version }}
+          tag_name: ${{ steps.ver.outputs.tag }}
+          name: ${{ steps.ver.outputs.name }}
           body_path: ${{ steps.notes.outputs.file }}
+          prerelease: ${{ steps.ver.outputs.prerelease }}
           files: |
             dist/WinTAKTracker.exe
             dist/WinTAKTracker.exe.sha256
           fail_on_unmatched_files: true
+          generate_release_notes: ${{ steps.ver.outputs.kind == 'push' }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -29,7 +29,8 @@ public static class CotEventBuilder
         var start = now;
         var time = fix.Timestamp;
         var staleTime = now + stale;
-        var how = fix.IsHeld ? "h-e" : "m-g";
+        // Network IP and held fixes are approximate — use estimated how + large CE.
+        var how = fix.IsHeld || fix.Source == GpsSourceKind.NetworkIp ? "h-e" : "m-g";
         var ce = fix.AccuracyMeters ?? (fix.Hdop.HasValue ? fix.Hdop.Value * 5 : 9999999);
         var le = fix.AccuracyMeters ?? 9999999;
         var hae = fix.AltitudeMeters ?? 0;
@@ -86,7 +87,7 @@ public static class CotEventBuilder
         return new CotIdentity
         {
             Uid = uid!,
-            Callsign = server?.CallsignOverride is { Length: > 0 } c ? c : config.Identity.Callsign,
+            Callsign = server?.CallsignOverride is { Length: > 0 } c ? c : config.Identity.GetEffectiveCallsign(),
             Team = server?.TeamOverride is { Length: > 0 } t ? t : config.Identity.Team,
             Role = server?.RoleOverride is { Length: > 0 } r ? r : config.Identity.Role,
             CotType = string.IsNullOrWhiteSpace(config.Identity.CotType) ? GroundUnitType : config.Identity.CotType,

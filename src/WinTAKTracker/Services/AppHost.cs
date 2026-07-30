@@ -37,6 +37,7 @@ public sealed class AppHost : IDisposable
         ConfigStore.EnsureDirectories();
         Config = ConfigStore.Load();
         EnsureDeviceUid();
+        EnsureDefaultCallsign();
 
         Log = new RedactedLogger(ConfigStore.LogsDirectory);
         if (Enum.TryParse<LogLevel>(Config.Diagnostics.LogLevel, true, out var level))
@@ -175,6 +176,21 @@ public sealed class AppHost : IDisposable
             Config.DeviceUid = "WIN-" + Guid.NewGuid().ToString("N")[..12].ToUpperInvariant();
         }
 
+        ConfigStore.Save(Config);
+    }
+
+    /// <summary>
+    /// Persist Windows computer name when callsign was never set (empty or legacy hard-coded default).
+    /// Enrollment / SoftCert / Identity UI overwrite this when the user sets a real callsign.
+    /// </summary>
+    private void EnsureDefaultCallsign()
+    {
+        var current = Config.Identity.Callsign?.Trim() ?? "";
+        if (current.Length > 0 &&
+            !current.Equals("WIN-TRACKER", StringComparison.OrdinalIgnoreCase))
+            return;
+
+        Config.Identity.Callsign = Environment.MachineName;
         ConfigStore.Save(Config);
     }
 

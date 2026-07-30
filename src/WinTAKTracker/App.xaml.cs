@@ -24,9 +24,33 @@ public partial class App : Application
             return;
         }
 
-        _host = new AppHost();
-        await _host.StartAsync();
-        _host.Tray.ShowSettings();
+        try
+        {
+            _host = new AppHost();
+            await _host.StartAsync();
+            _host.Tray.ShowSettings();
+        }
+        catch (Exception ex)
+        {
+            try
+            {
+                var dir = Path.Combine(
+                    Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                    "WinTAKTracker", "logs");
+                Directory.CreateDirectory(dir);
+                File.AppendAllText(
+                    Path.Combine(dir, "startup-crash.log"),
+                    $"{DateTimeOffset.Now:o} Startup failed: {ex}\n");
+            }
+            catch { /* ignore */ }
+
+            MessageBox.Show(
+                $"WinTAKTracker failed to start:\n\n{ex.Message}",
+                "WinTAKTracker",
+                MessageBoxButton.OK,
+                MessageBoxImage.Error);
+            Shutdown();
+        }
     }
 
     protected override void OnExit(ExitEventArgs e)

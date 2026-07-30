@@ -13,9 +13,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Added
+### Changed
 
-- (Nothing yet — next release notes go here.)
+- Prefer Windows Location (Wi‑Fi/OS) over IP geolocation; delayed IP fallback; Status labels distinguish Wi‑Fi vs Network IP
 
 ## [0.1.0] - 2026-07-30
 

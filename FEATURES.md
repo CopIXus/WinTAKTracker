@@ -37,8 +37,8 @@ Status legend: **Shipping** (in the current public build), **In progress**, **Pl
 | Capability | Status |
 |------------|--------|
 | USB NMEA serial GPS | Shipping |
-| Windows Location API fallback | Shipping |
-| Network / IP geolocation fallback (approximate, ipwho.is HTTPS) | Shipping |
+| Windows Location (Wi‑Fi/OS) preferred over IP | Shipping |
+| Network / IP geolocation last-resort fallback (approximate, ipwho.is HTTPS) | Shipping |
 | Last-fix hold with honest stale / confidence | Shipping |
 | Default callsign = Windows computer name when unset | Shipping |
 | Adaptive (Dynamic) and Constant reporting rates (reliable vs unreliable) | In progress |

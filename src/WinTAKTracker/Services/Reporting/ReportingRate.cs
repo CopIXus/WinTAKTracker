@@ -24,6 +24,9 @@ public sealed class AdaptiveReportingRate : IReportingRate
 
     public TimeSpan GetInterval(ReportingPath path, double speedMph)
     {
+        if (double.IsNaN(speedMph) || double.IsInfinity(speedMph))
+            speedMph = 0;
+
         var stationary = path == ReportingPath.Reliable
             ? _settings.ReliableStationarySeconds
             : _settings.UnreliableStationarySeconds;
@@ -43,6 +46,8 @@ public sealed class AdaptiveReportingRate : IReportingRate
         // Linear interpolate 1–30 mph: maxMove → min
         var t = (speedMph - 1.0) / 29.0;
         var seconds = maxMove + (min - maxMove) * t;
+        if (double.IsNaN(seconds) || double.IsInfinity(seconds))
+            seconds = stationary;
         return TimeSpan.FromSeconds(Math.Max(1, seconds));
     }
 

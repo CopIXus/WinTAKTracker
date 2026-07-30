@@ -96,11 +96,11 @@ public partial class SettingsWindow : Window
         _statusSummary = new TextBlock { TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 0, 0, 8) };
         _statusPanel.Children.Add(_statusSummary);
 
-        if (_host.Gps.WindowsPermission == GpsPermissionState.Denied)
+        if (_host.Gps.WindowsPermission is GpsPermissionState.Denied or GpsPermissionState.NotAvailable)
         {
             _statusPanel.Children.Add(new TextBlock
             {
-                Text = "Windows Location permission is denied. Enable it in Windows Settings to use built-in location.",
+                Text = "Windows Location is not available. Enable Settings → Privacy & security → Location (Location services + desktop apps), then request permission under GPS. Until then, only USB NMEA or approximate Network IP can be used.",
                 TextWrapping = TextWrapping.Wrap,
                 Foreground = System.Windows.Media.Brushes.DarkRed,
                 Margin = new Thickness(0, 4, 0, 8),
@@ -146,7 +146,7 @@ public partial class SettingsWindow : Window
                 $"Speed: {fix.SpeedMph:F1} mph  Course: {(fix.CourseDegrees is double c ? $"{c:F0}°" : "—")}  " +
                 $"Alt: {(fix.AltitudeMeters is double a ? $"{a:F1} m" : "—")}  " +
                 $"Acc: {(fix.AccuracyMeters is double ac ? $"{ac:F0} m" : "—")}" +
-                (fix.Source == GpsSourceKind.NetworkIp ? " (approximate IP location)" : "") + "\n") +
+                (fix.Source == GpsSourceKind.NetworkIp ? " — city/region scale, not Wi‑Fi" : "") + "\n") +
             $"Servers: {(string.IsNullOrEmpty(servers) ? "None" : servers)}\n" +
             $"Mesh SA: {FormatMeshStatusLine()}\n" +
             $"Last PLI: {_host.Reporting.LastPliSentUtc?.ToLocalTime().ToString("G") ?? "—"}";
@@ -335,10 +335,14 @@ public partial class SettingsWindow : Window
     {
         var panel = new StackPanel();
         panel.Children.Add(Blurb(
-            "Primary: USB NMEA serial. Alternate: Windows Location. Fallback: network/IP geolocation (approximate, large CE) via ipwho.is HTTPS when no GPS fix is available."));
+            "Preferred order: USB NMEA (if you select a COM port) → Windows Location (Wi‑Fi/OS, same stack browsers use) → network/IP geolocation last (approximate, large CE via ipwho.is).\n\n" +
+            "For accurate location without a GPS dongle: turn on Windows Location — Settings → Privacy & security → Location → Location services ON, and allow desktop apps to use your location. Then use Request Windows Location permission below."));
         var ports = _host.Gps.GetComPorts().ToList();
-        if (ports.Count == 0) ports.Add("(none detected)");
-        var port = new ComboBox { ItemsSource = ports, IsEditable = true, Text = _host.Config.Gps.ComPort ?? ports[0] };
+        ports.Insert(0, "(none — use Windows Location)");
+        var selectedPort = string.IsNullOrWhiteSpace(_host.Config.Gps.ComPort)
+            ? ports[0]
+            : _host.Config.Gps.ComPort!;
+        var port = new ComboBox { ItemsSource = ports, IsEditable = true, Text = selectedPort };
         var baud = new ComboBox
         {
             ItemsSource = new[] { "4800", "9600", "19200", "38400", "57600", "115200" },
@@ -361,11 +365,18 @@ public partial class SettingsWindow : Window
         panel.Children.Add(Label("Source priority")); panel.Children.Add(priority);
         panel.Children.Add(Label("Last-fix hold (seconds)")); panel.Children.Add(hold);
         panel.Children.Add(network);
-        panel.Children.Add(Btn("Request Windows Location permission", async () =>
+        var permRow = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 4, 0, 8) };
+        permRow.Children.Add(Btn("Request Windows Location permission", async () =>
         {
             var state = await _host.Gps.RequestWindowsLocationAccessAsync();
-            Msg($"Permission: {state}");
+            Msg(state == GpsPermissionState.Allowed
+                ? "Windows Location allowed. If Status still shows Network IP, wait a few seconds for a Wi‑Fi fix or confirm Location services are on."
+                : $"Permission: {state}. Open Windows Location privacy settings and enable Location + desktop apps.");
         }));
+        permRow.Children.Add(new Border { Width = 8 });
+        permRow.Children.Add(Btn("Open Windows Location settings", () =>
+            WindowsLocationGps.OpenWindowsLocationPrivacySettings()));
+        panel.Children.Add(permRow);
 
         async Task SaveGpsAsync()
         {

@@ -16,6 +16,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Prefer Windows Location (Wi‑Fi/OS) over IP geolocation: high-accuracy Geolocator, retries, continuous updates while stationary, delayed IP fallback, and no auto-open of unrelated COM ports
+- Status labels: **Windows Location (Wi‑Fi/network)** vs **Network IP (approximate)**; GPS settings document enabling Windows Location privacy toggles
+- Fix reporting crash when Windows Location returns NaN speed/course (`TimeSpan` / CoT build)
 - Settings UI auto-saves options to `%LocalAppData%\WinTAKTracker\` on change
 - Expanded project README (install, enrollment, GPS, privacy, companions, build)
 

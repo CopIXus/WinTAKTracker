@@ -59,11 +59,13 @@ Fictional samples for docs/tests (no real hosts/tokens):
 
 | Source | When used | Notes |
 |--------|-----------|--------|
-| NMEA serial | USB GPS with COM port | Preferred when available |
-| Windows Location | Built-in / OS providers | Requires Location permission |
-| Network (IP) | Fallback when neither has a fix | [ipwho.is](https://ipwho.is/) over **HTTPS**, no API key; city/region scale (~25 km CE in CoT); Status labels it **Network (approximate)** |
+| NMEA serial | USB GPS with COM port | Used when you select a COM port in Settings |
+| Windows Location (Wi‑Fi/network) | Default without a USB GPS | OS Wi‑Fi / network positioning (browser-quality). Requires Windows Location services |
+| Network IP (approximate) | Last resort only | [ipwho.is](https://ipwho.is/) over **HTTPS**, no API key; city/region scale (~25 km CE); Status labels it **Network IP (approximate)** |
 
-Pause mutes outbound reporting; it does not invent precision. Network fixes use estimated CoT `how` and a large `ce`.
+**Without a GPS dongle:** enable **Settings → Privacy & security → Location** (Location services ON, and allow desktop apps to use your location), then use **Request Windows Location permission** in the app. IP geolocation is delayed until Windows Location has had a real chance to get a fix, and is not used while a Windows/NMEA fix is active.
+
+Pause mutes outbound reporting; it does not invent precision. Windows Location CoT `ce` uses the OS-reported accuracy (often tens of meters with Wi‑Fi). Network IP fixes use estimated CoT `how` and a large `ce`.
 
 ## Settings
 

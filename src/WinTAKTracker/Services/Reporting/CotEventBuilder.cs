@@ -96,7 +96,11 @@ public static class CotEventBuilder
         };
     }
 
-    private static string F(double v) => v.ToString("0.#######", CultureInfo.InvariantCulture);
+    private static string F(double v)
+    {
+        if (double.IsNaN(v) || double.IsInfinity(v)) v = 0;
+        return v.ToString("0.#######", CultureInfo.InvariantCulture);
+    }
 
     private static string FormatTakTime(DateTimeOffset dto) =>
         dto.UtcDateTime.ToString("yyyy-MM-ddTHH:mm:ss.fffZ", CultureInfo.InvariantCulture);

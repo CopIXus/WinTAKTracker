@@ -147,7 +147,7 @@ public sealed class ReportingEngine : IDisposable
         }
         catch (Exception ex)
         {
-            _log.Warn("Report", $"Tick error: {ex.GetType().Name}");
+            _log.Warn("Report", $"Tick error: {ex.GetType().Name}: {ex.Message}");
         }
     }
 

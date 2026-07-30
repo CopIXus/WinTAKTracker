@@ -31,6 +31,7 @@ public sealed class NetworkIpGeolocationGps : IDisposable
     public event EventHandler<string>? ErrorOccurred;
 
     public GpsFix? LastFix { get; private set; }
+    public bool IsRunning => _running;
 
     public void Start()
     {

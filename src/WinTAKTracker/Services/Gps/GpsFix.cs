@@ -27,13 +27,21 @@ public sealed class GpsFix
     public bool IsHeld { get; init; }
     public bool HasFix => !double.IsNaN(Latitude) && !double.IsNaN(Longitude);
 
-    public double SpeedMph => (SpeedMetersPerSecond ?? 0) * 2.23693629;
+    public double SpeedMph
+    {
+        get
+        {
+            var mps = SpeedMetersPerSecond ?? 0;
+            if (double.IsNaN(mps) || double.IsInfinity(mps)) return 0;
+            return mps * 2.23693629;
+        }
+    }
 
     public string SourceDisplayName => Source switch
     {
         GpsSourceKind.NmeaSerial => "NMEA",
-        GpsSourceKind.WindowsLocation => "Windows Location",
-        GpsSourceKind.NetworkIp => "Network (approximate)",
+        GpsSourceKind.WindowsLocation => "Windows Location (Wi‑Fi/network)",
+        GpsSourceKind.NetworkIp => "Network IP (approximate)",
         GpsSourceKind.Held => "Held (last fix)",
         _ => Source.ToString(),
     };

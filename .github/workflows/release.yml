@@ -138,8 +138,12 @@ jobs:
           "method=$method" >> $env:GITHUB_OUTPUT
           Write-Host "Code signing method: $method (signing enabled when secrets are set; see docs/code-signing.md)"
 
+      # Soft-fail: secrets may be present before Azure identity validation / certificate
+      # profile is ready. Prefer an unsigned release over blocking Setup + GitHub Release.
       - name: Sign with Azure Artifact Signing
+        id: azure-sign-exe
         if: steps.sign.outputs.method == 'trusted-signing'
+        continue-on-error: true
         uses: azure/artifact-signing-action@v2
         with:
           azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
@@ -154,7 +158,9 @@ jobs:
           timestamp-digest: SHA256
 
       - name: Sign with PFX (signtool)
+        id: pfx-sign-exe
         if: steps.sign.outputs.method == 'pfx'
+        continue-on-error: true
         shell: pwsh
         env:
           CODE_SIGN_PFX_BASE64: ${{ secrets.CODE_SIGN_PFX_BASE64 }}
@@ -194,9 +200,20 @@ jobs:
           $exe = "dist/WinTAKTracker.exe"
           $sig = Get-AuthenticodeSignature -FilePath $exe
           Write-Host "Status=$($sig.Status) Signer=$($sig.SignerCertificate.Subject)"
-          if ($sig.Status -ne 'Valid') {
-            throw "Authenticode signature not Valid after signing (Status=$($sig.Status))"
+          if ($sig.Status -eq 'Valid') { exit 0 }
+
+          $method = "${{ steps.sign.outputs.method }}"
+          $attemptFailed = ($method -eq 'trusted-signing' -and '${{ steps.azure-sign-exe.outcome }}' -ne 'success') -or
+            ($method -eq 'pfx' -and '${{ steps.pfx-sign-exe.outcome }}' -ne 'success')
+          if ($attemptFailed) {
+            Write-Warning @"
+          Code signing did not succeed (Status=$($sig.Status)). Publishing unsigned artifacts.
+          Usual cause: Azure Artifact Signing identity validation still Pending, or no certificate profile yet.
+          Complete Objects → Identity validations + Certificate profiles in the Trusted Signing account, or remove signing secrets to skip this step. See docs/code-signing.md.
+          "@
+            exit 0
           }
+          throw "Authenticode signature not Valid after signing (Status=$($sig.Status))"
 
       - name: Write SHA256 sidecar (portable EXE)
         shell: pwsh
@@ -253,7 +270,9 @@ jobs:
           }
 
       - name: Sign Setup with Azure Artifact Signing
-        if: steps.sign.outputs.method == 'trusted-signing'
+        id: azure-sign-setup
+        if: steps.sign.outputs.method == 'trusted-signing' && steps.azure-sign-exe.outcome == 'success'
+        continue-on-error: true
         uses: azure/artifact-signing-action@v2
         with:
           azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
@@ -268,7 +287,9 @@ jobs:
           timestamp-digest: SHA256
 
       - name: Sign Setup with PFX (signtool)
-        if: steps.sign.outputs.method == 'pfx'
+        id: pfx-sign-setup
+        if: steps.sign.outputs.method == 'pfx' && steps.pfx-sign-exe.outcome == 'success'
+        continue-on-error: true
         shell: pwsh
         env:
           CODE_SIGN_PFX_BASE64: ${{ secrets.CODE_SIGN_PFX_BASE64 }}
@@ -307,9 +328,19 @@ jobs:
           $exe = "dist/WinTAKTracker-Setup.exe"
           $sig = Get-AuthenticodeSignature -FilePath $exe
           Write-Host "Status=$($sig.Status) Signer=$($sig.SignerCertificate.Subject)"
-          if ($sig.Status -ne 'Valid') {
-            throw "Authenticode signature not Valid after signing Setup (Status=$($sig.Status))"
+          if ($sig.Status -eq 'Valid') { exit 0 }
+
+          $method = "${{ steps.sign.outputs.method }}"
+          # Skipped Setup sign (exe sign already failed) or soft-failed Setup sign → publish unsigned.
+          $exeOk = ($method -eq 'trusted-signing' -and '${{ steps.azure-sign-exe.outcome }}' -eq 'success') -or
+            ($method -eq 'pfx' -and '${{ steps.pfx-sign-exe.outcome }}' -eq 'success')
+          $setupOk = ($method -eq 'trusted-signing' -and '${{ steps.azure-sign-setup.outcome }}' -eq 'success') -or
+            ($method -eq 'pfx' -and '${{ steps.pfx-sign-setup.outcome }}' -eq 'success')
+          if (-not $exeOk -or -not $setupOk) {
+            Write-Warning "Setup code signing did not succeed (Status=$($sig.Status)). Publishing unsigned Setup. See docs/code-signing.md."
+            exit 0
           }
+          throw "Authenticode signature not Valid after signing Setup (Status=$($sig.Status))"
 
       - name: Write SHA256 sidecar (Setup)
         shell: pwsh

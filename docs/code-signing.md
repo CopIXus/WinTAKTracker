@@ -105,6 +105,8 @@ Azure setup sketch:
 4. Push to `main` (or cut a `v*` tag) and confirm the release job logs show signing succeeded.
 5. On a Windows PC: `Get-AuthenticodeSignature .\WinTAKTracker.exe` → `Status` should be `Valid`.
 
+If identity validation is still **Pending** or no certificate profile exists yet, CI will **attempt** Trusted Signing, warn on failure, and still publish **unsigned** Setup/EXE so releases are not blocked. Remove the Azure signing secrets (or finish validation + create a Public Trust profile) once you want hard-fail signing again.
+
 Optional hardening: switch from client secret to **OIDC federated credentials** (`azure/login` + `id-token: write`) so no long-lived secret is stored in GitHub. See [Azure artifact-signing-action OIDC docs](https://github.com/Azure/artifact-signing-action/blob/main/docs/OIDC.md).
 
 #### Classic PFX (alternative)

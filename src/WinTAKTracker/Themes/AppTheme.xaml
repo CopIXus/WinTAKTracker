@@ -224,6 +224,28 @@
     </Style>
 
     <!-- ComboBox: full chrome + themed dropdown (fixes light popup on dark). -->
+    <Style x:Key="ComboBoxEditableTextBoxStyle" TargetType="TextBox">
+        <Setter Property="FontFamily" Value="{StaticResource AppFont}"/>
+        <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}"/>
+        <Setter Property="CaretBrush" Value="{DynamicResource TextPrimaryBrush}"/>
+        <Setter Property="Background" Value="Transparent"/>
+        <Setter Property="BorderThickness" Value="0"/>
+        <Setter Property="Padding" Value="2,0"/>
+        <Setter Property="SelectionBrush" Value="{DynamicResource AccentBrush}"/>
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="TextBox">
+                    <ScrollViewer x:Name="PART_ContentHost"
+                                  Focusable="False"
+                                  HorizontalScrollBarVisibility="Hidden"
+                                  VerticalScrollBarVisibility="Hidden"
+                                  Background="Transparent"
+                                  Margin="0"/>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
     <ControlTemplate x:Key="ComboBoxToggleButtonTemplate" TargetType="ToggleButton">
         <Grid Background="Transparent">
             <Grid.ColumnDefinitions>
@@ -232,9 +254,9 @@
             </Grid.ColumnDefinitions>
             <Border x:Name="Bd"
                     Grid.ColumnSpan="2"
-                    Background="{DynamicResource SurfaceBrush}"
-                    BorderBrush="{DynamicResource AppBorderBrush}"
-                    BorderThickness="1"
+                    Background="{TemplateBinding Background}"
+                    BorderBrush="{TemplateBinding BorderBrush}"
+                    BorderThickness="{TemplateBinding BorderThickness}"
                     CornerRadius="6"
                     SnapsToDevicePixels="True"/>
             <Path x:Name="Arrow"
@@ -249,12 +271,6 @@
                   StrokeLineJoin="Round"/>
         </Grid>
         <ControlTemplate.Triggers>
-            <Trigger Property="IsMouseOver" Value="True">
-                <Setter TargetName="Bd" Property="BorderBrush" Value="{DynamicResource BorderStrongBrush}"/>
-            </Trigger>
-            <Trigger Property="IsChecked" Value="True">
-                <Setter TargetName="Bd" Property="BorderBrush" Value="{DynamicResource FocusBorderBrush}"/>
-            </Trigger>
             <Trigger Property="IsEnabled" Value="False">
                 <Setter TargetName="Bd" Property="Background" Value="{DynamicResource DisabledBgBrush}"/>
                 <Setter TargetName="Arrow" Property="Stroke" Value="{DynamicResource DisabledFgBrush}"/>
@@ -265,6 +281,9 @@
     <ControlTemplate x:Key="ComboBoxTemplate" TargetType="ComboBox">
         <Grid>
             <ToggleButton x:Name="ToggleButton"
+                          Background="{TemplateBinding Background}"
+                          BorderBrush="{TemplateBinding BorderBrush}"
+                          BorderThickness="{TemplateBinding BorderThickness}"
                           Template="{StaticResource ComboBoxToggleButtonTemplate}"
                           Focusable="False"
                           ClickMode="Press"
@@ -279,17 +298,12 @@
                               HorizontalAlignment="Left"
                               RecognizesAccessKey="True"/>
             <TextBox x:Name="PART_EditableTextBox"
-                     Style="{x:Null}"
+                     Style="{StaticResource ComboBoxEditableTextBoxStyle}"
                      Visibility="Hidden"
-                     Background="Transparent"
-                     BorderThickness="0"
                      Focusable="True"
                      HorizontalAlignment="Stretch"
                      VerticalAlignment="Center"
                      Margin="8,0,30,0"
-                     Padding="2,0"
-                     Foreground="{DynamicResource TextPrimaryBrush}"
-                     CaretBrush="{DynamicResource TextPrimaryBrush}"
                      FontFamily="{TemplateBinding FontFamily}"
                      FontSize="{TemplateBinding FontSize}"
                      IsReadOnly="{TemplateBinding IsReadOnly}"/>
@@ -325,8 +339,15 @@
             <Trigger Property="IsEnabled" Value="False">
                 <Setter Property="Foreground" Value="{DynamicResource DisabledFgBrush}"/>
             </Trigger>
+            <Trigger Property="IsMouseOver" Value="True">
+                <Setter TargetName="ToggleButton" Property="BorderBrush" Value="{DynamicResource BorderStrongBrush}"/>
+            </Trigger>
+            <Trigger Property="IsDropDownOpen" Value="True">
+                <Setter TargetName="ToggleButton" Property="BorderBrush" Value="{DynamicResource FocusBorderBrush}"/>
+            </Trigger>
             <Trigger Property="IsKeyboardFocusWithin" Value="True">
                 <Setter TargetName="ToggleButton" Property="BorderBrush" Value="{DynamicResource FocusBorderBrush}"/>
+                <Setter TargetName="ToggleButton" Property="BorderThickness" Value="1.5"/>
             </Trigger>
         </ControlTemplate.Triggers>
     </ControlTemplate>
@@ -354,9 +375,17 @@
                             <Setter TargetName="Bd" Property="Background" Value="{DynamicResource InfoBgBrush}"/>
                         </Trigger>
                         <Trigger Property="IsSelected" Value="True">
-                            <Setter TargetName="Bd" Property="Background" Value="{DynamicResource SidebarSelectedBrush}"/>
-                            <Setter Property="Foreground" Value="{DynamicResource SidebarTextBrush}"/>
+                            <Setter TargetName="Bd" Property="Background" Value="{DynamicResource AccentBrush}"/>
+                            <Setter Property="Foreground" Value="{DynamicResource OnAccentBrush}"/>
                         </Trigger>
+                        <MultiTrigger>
+                            <MultiTrigger.Conditions>
+                                <Condition Property="IsSelected" Value="True"/>
+                                <Condition Property="IsHighlighted" Value="True"/>
+                            </MultiTrigger.Conditions>
+                            <Setter TargetName="Bd" Property="Background" Value="{DynamicResource AccentHoverBrush}"/>
+                            <Setter Property="Foreground" Value="{DynamicResource OnAccentBrush}"/>
+                        </MultiTrigger>
                         <Trigger Property="IsEnabled" Value="False">
                             <Setter Property="Foreground" Value="{DynamicResource DisabledFgBrush}"/>
                         </Trigger>
@@ -403,7 +432,7 @@
                                 SnapsToDevicePixels="True">
                             <Path x:Name="Check"
                                   Data="M 3 9 L 7 13 L 15 4"
-                                  Stroke="{DynamicResource SurfaceBrush}"
+                                  Stroke="{DynamicResource OnAccentBrush}"
                                   StrokeThickness="2"
                                   StrokeStartLineCap="Round"
                                   StrokeEndLineCap="Round"
@@ -687,6 +716,20 @@
         <Setter Property="BorderBrush" Value="{DynamicResource BorderStrongBrush}"/>
         <Setter Property="BorderThickness" Value="1"/>
         <Setter Property="Padding" Value="10,6"/>
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="ToolTip">
+                    <Border Background="{TemplateBinding Background}"
+                            BorderBrush="{TemplateBinding BorderBrush}"
+                            BorderThickness="{TemplateBinding BorderThickness}"
+                            CornerRadius="6"
+                            Padding="{TemplateBinding Padding}"
+                            SnapsToDevicePixels="True">
+                        <ContentPresenter/>
+                    </Border>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
     </Style>
 
 </ResourceDictionary>

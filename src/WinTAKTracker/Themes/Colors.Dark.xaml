@@ -11,6 +11,7 @@
     <Color x:Key="AccentColor">#3D8F68</Color>
     <Color x:Key="AccentHoverColor">#4AA178</Color>
     <Color x:Key="AccentPressedColor">#2F6B4F</Color>
+    <Color x:Key="OnAccentColor">#F5FBF7</Color>
     <Color x:Key="ContentBgColor">#121816</Color>
     <Color x:Key="SurfaceColor">#1C2420</Color>
     <Color x:Key="SurfaceSubtleColor">#252E2A</Color>
@@ -45,6 +46,7 @@
     <SolidColorBrush x:Key="AccentBrush" Color="{StaticResource AccentColor}"/>
     <SolidColorBrush x:Key="AccentHoverBrush" Color="{StaticResource AccentHoverColor}"/>
     <SolidColorBrush x:Key="AccentPressedBrush" Color="{StaticResource AccentPressedColor}"/>
+    <SolidColorBrush x:Key="OnAccentBrush" Color="{StaticResource OnAccentColor}"/>
     <SolidColorBrush x:Key="ContentBgBrush" Color="{StaticResource ContentBgColor}"/>
     <SolidColorBrush x:Key="SurfaceBrush" Color="{StaticResource SurfaceColor}"/>
     <SolidColorBrush x:Key="SurfaceSubtleBrush" Color="{StaticResource SurfaceSubtleColor}"/>

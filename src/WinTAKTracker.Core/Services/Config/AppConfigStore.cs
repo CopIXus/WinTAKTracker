@@ -47,6 +47,9 @@ public sealed class AppConfigStore
 
     public void EnsureDirectories()
     {
+        if (MachineStoreAcl.IsMachineRoot(_rootDir))
+            MachineStoreAcl.EnsureUsersCanModify(_rootDir);
+
         Directory.CreateDirectory(_rootDir);
         Directory.CreateDirectory(_secretsDir);
         Directory.CreateDirectory(LogsDirectory);

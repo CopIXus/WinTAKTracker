@@ -22,6 +22,8 @@ public sealed class TrackingWorker : BackgroundService
             // Prefer machine store; seed from user store once if ProgramData is empty.
             // Setup may copy config/certs without re-protecting secrets — CompleteUserToMachineMigration
             // fills gaps when the service can still read CU blobs (rare); tray also completes this as the user.
+            // As LocalSystem, open the machine root so interactive users (tray) can Modify it.
+            MachineStoreAcl.EnsureUsersCanModify();
             var machine = AppConfigStore.ForMachine();
             var user = AppConfigStore.ForUser();
             if (!File.Exists(Path.Combine(machine.RootDirectory, "config.json")))

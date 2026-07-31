@@ -14,10 +14,7 @@ using WinTAKTracker.Services.Tray;
 using WinTAKTracker.Services.Update;
 using OpenFileDialog = Microsoft.Win32.OpenFileDialog;
 using SaveFileDialog = Microsoft.Win32.SaveFileDialog;
-using WpfBrushes = System.Windows.Media.Brushes;
-using WpfColor = System.Windows.Media.Color;
 using WpfHAlign = System.Windows.HorizontalAlignment;
-using WpfSolidBrush = System.Windows.Media.SolidColorBrush;
 
 namespace WinTAKTracker.Views;
 
@@ -223,21 +220,23 @@ public partial class SettingsWindow : Window
 
         if (_host.Gps.WindowsPermission is GpsPermissionState.Denied or GpsPermissionState.NotAvailable)
         {
-            _statusPanel.Children.Add(new Border
+            var locWarnText = new TextBlock
             {
-                Background = ThemeBrush("DangerBgBrush", WpfBrushes.MistyRose),
-                BorderBrush = ThemeBrush("AppBorderBrush", WpfBrushes.LightGray),
+                Text = "Windows Location is not available. Enable Settings → Privacy & security → Location (Location services + desktop apps), then request permission under GPS. Until then, only USB NMEA or approximate Network IP can be used.",
+                TextWrapping = TextWrapping.Wrap,
+            };
+            SetTheme(locWarnText, TextBlock.ForegroundProperty, "DangerBrush");
+            var locWarn = new Border
+            {
                 BorderThickness = new Thickness(1),
                 CornerRadius = new CornerRadius(6),
                 Padding = new Thickness(12, 10, 12, 10),
                 Margin = new Thickness(0, 0, 0, 12),
-                Child = new TextBlock
-                {
-                    Text = "Windows Location is not available. Enable Settings → Privacy & security → Location (Location services + desktop apps), then request permission under GPS. Until then, only USB NMEA or approximate Network IP can be used.",
-                    TextWrapping = TextWrapping.Wrap,
-                    Foreground = ThemeBrush("DangerBrush", WpfBrushes.DarkRed),
-                },
-            });
+                Child = locWarnText,
+            };
+            SetTheme(locWarn, Border.BackgroundProperty, "DangerBgBrush");
+            SetTheme(locWarn, Border.BorderBrushProperty, "AppBorderBrush");
+            _statusPanel.Children.Add(locWarn);
             _statusPanel.Children.Add(Btn("Open Windows Location privacy settings", () =>
                 WindowsLocationGps.OpenWindowsLocationPrivacySettings()));
         }
@@ -260,14 +259,15 @@ public partial class SettingsWindow : Window
         DetachFromLogicalParent(_mapPreview);
 
         _statusPanel.Children.Add(SectionHeader("Self map preview"));
-        _statusPanel.Children.Add(new Border
+        var mapChrome = new Border
         {
-            BorderBrush = ThemeBrush("AppBorderBrush", WpfBrushes.LightGray),
             BorderThickness = new Thickness(1),
             CornerRadius = new CornerRadius(8),
             ClipToBounds = true,
             Child = _mapPreview,
-        });
+        };
+        SetTheme(mapChrome, Border.BorderBrushProperty, "AppBorderBrush");
+        _statusPanel.Children.Add(mapChrome);
         RefreshStatusLive();
         return _statusPanel;
     }
@@ -331,21 +331,23 @@ public partial class SettingsWindow : Window
                 : "In-process tracking · Windows Service not installed");
 
         var stack = new StackPanel();
-        stack.Children.Add(new TextBlock
+        var titleTb = new TextBlock
         {
             Text = title,
             FontWeight = FontWeights.SemiBold,
             FontSize = 14,
-            Foreground = ThemeBrush("TextPrimaryBrush", WpfBrushes.Black),
-        });
-        stack.Children.Add(new TextBlock
+        };
+        SetTheme(titleTb, TextBlock.ForegroundProperty, "TextPrimaryBrush");
+        stack.Children.Add(titleTb);
+        var subTb = new TextBlock
         {
             Text = sub,
             FontSize = 12,
             Margin = new Thickness(0, 2, 0, 0),
-            Foreground = ThemeBrush("TextSecondaryBrush", WpfBrushes.DimGray),
             TextWrapping = TextWrapping.Wrap,
-        });
+        };
+        SetTheme(subTb, TextBlock.ForegroundProperty, "TextSecondaryBrush");
+        stack.Children.Add(subTb);
 
         return new Border
         {
@@ -462,19 +464,19 @@ public partial class SettingsWindow : Window
         {
             if (!EnsureEditable()) return;
             enrollStatus.Text = "Enrolling certificate…";
-            enrollStatus.Foreground = ThemeBrush("AccentBrush", WpfBrushes.DarkSlateBlue);
+            SetTheme(enrollStatus, TextBlock.ForegroundProperty, "AccentBrush");
             var progress = new Progress<string>(msg => { enrollStatus.Text = msg; });
             var result = await _host.Enrollment.ApplyAsync(input, _host.Config, progress, CancellationToken.None);
             if (!result.Success)
             {
                 enrollStatus.Text = result.Error ?? "Enrollment failed.";
-                enrollStatus.Foreground = ThemeBrush("DangerBrush", WpfBrushes.DarkRed);
+                SetTheme(enrollStatus, TextBlock.ForegroundProperty, "DangerBrush");
                 Msg(result.Error ?? "Failed", MessageBoxImage.Warning);
                 return;
             }
 
             enrollStatus.Text = result.Message ?? "Enrolled.";
-            enrollStatus.Foreground = ThemeBrush("AccentBrush", WpfBrushes.DarkGreen);
+            SetTheme(enrollStatus, TextBlock.ForegroundProperty, "AccentBrush");
             await _host.ReloadConnectionsAsync();
             Msg(result.Message ?? "Applied.");
             ShowSection("Servers");
@@ -607,11 +609,11 @@ public partial class SettingsWindow : Window
             Text = string.IsNullOrWhiteSpace(host) ? protoPort : $"{host}  ·  {protoPort}",
             FontWeight = FontWeights.SemiBold,
             FontSize = 13,
-            Foreground = ThemeBrush("TextPrimaryBrush", new WpfSolidBrush(WpfColor.FromRgb(0x1A, 0x24, 0x20))),
             VerticalAlignment = VerticalAlignment.Center,
             TextTrimming = TextTrimming.CharacterEllipsis,
             ToolTip = BuildServerTooltip(server),
         };
+        SetTheme(title, TextBlock.ForegroundProperty, "TextPrimaryBrush");
 
         primary.Children.Add(connectCheck);
         primary.Children.Add(statusBadge);
@@ -726,11 +728,11 @@ public partial class SettingsWindow : Window
                 break;
         }
 
-        badge.Background = ThemeBrush(bgKey, new WpfSolidBrush(WpfColor.FromRgb(0xEE, 0xEE, 0xEE)));
+        SetTheme(badge, Border.BackgroundProperty, bgKey);
         if (badge.Child is TextBlock tb)
         {
             tb.Text = label;
-            tb.Foreground = ThemeBrush(fgKey, new WpfSolidBrush(WpfColor.FromRgb(0x42, 0x42, 0x42)));
+            SetTheme(tb, TextBlock.ForegroundProperty, fgKey);
             if (state == TakConnectionState.Error && !string.IsNullOrWhiteSpace(error))
                 badge.ToolTip = error;
             else if (enabled && state == TakConnectionState.Disconnected)
@@ -789,8 +791,8 @@ public partial class SettingsWindow : Window
             Owner = this,
             WindowStartupLocation = WindowStartupLocation.CenterOwner,
             Style = TryStyle("AppWindow"),
-            Background = ThemeBrush("ContentBgBrush", WpfBrushes.WhiteSmoke),
         };
+        SetTheme(dlg, Window.BackgroundProperty, "ContentBgBrush");
         var sp = new StackPanel { Margin = new Thickness(20) };
         var host = new TextBox();
         var port = new TextBox { Text = "8089" };
@@ -1296,13 +1298,14 @@ public partial class SettingsWindow : Window
 
         if (!string.IsNullOrWhiteSpace(_lastUpdateCheck?.ReleaseNotes) && _lastUpdateCheck.UpdateAvailable)
         {
-            panel.Children.Add(new TextBlock
+            var notes = new TextBlock
             {
                 Text = _lastUpdateCheck.ReleaseNotes,
                 TextWrapping = TextWrapping.Wrap,
                 Margin = new Thickness(0, 8, 0, 8),
-                Foreground = ThemeBrush("TextSecondaryBrush", WpfBrushes.DimGray),
-            });
+            };
+            SetTheme(notes, TextBlock.ForegroundProperty, "TextSecondaryBrush");
+            panel.Children.Add(notes);
         }
 
         panel.Children.Add(auto);
@@ -1369,13 +1372,14 @@ public partial class SettingsWindow : Window
         panel.Children.Add(updateRow);
         if (_lastUpdateCheck is { Success: false } && !string.IsNullOrWhiteSpace(_lastUpdateCheck.Error))
         {
-            panel.Children.Add(new TextBlock
+            var err = new TextBlock
             {
                 Text = _lastUpdateCheck.Error,
                 Style = TryStyle("HelperText"),
-                Foreground = ThemeBrush("DangerBrush", WpfBrushes.DarkRed),
                 Margin = new Thickness(0, 10, 0, 0),
-            });
+            };
+            SetTheme(err, TextBlock.ForegroundProperty, "DangerBrush");
+            panel.Children.Add(err);
         }
 
         return panel;
@@ -1432,22 +1436,24 @@ public partial class SettingsWindow : Window
                           .GetCustomAttribute<AssemblyCompanyAttribute>()?.Company
                       ?? "CopIX LLC";
 
-        panel.Children.Add(new TextBlock
+        var verTb = new TextBlock
         {
             Text = $"WinTAKTracker {version}",
             FontSize = 16,
             FontWeight = FontWeights.SemiBold,
-            Foreground = ThemeBrush("TextPrimaryBrush", WpfBrushes.Black),
             Margin = new Thickness(0, 0, 0, 4),
-        });
-        panel.Children.Add(new TextBlock
+        };
+        SetTheme(verTb, TextBlock.ForegroundProperty, "TextPrimaryBrush");
+        panel.Children.Add(verTb);
+        var companyTb = new TextBlock
         {
             Text = company,
             FontSize = 13,
             FontWeight = FontWeights.SemiBold,
-            Foreground = ThemeBrush("TextSecondaryBrush", WpfBrushes.DimGray),
             Margin = new Thickness(0, 0, 0, 12),
-        });
+        };
+        SetTheme(companyTb, TextBlock.ForegroundProperty, "TextSecondaryBrush");
+        panel.Children.Add(companyTb);
         panel.Children.Add(Blurb(
             "Independent Windows PLI tracker. Not an official TAK Product Center application.\n\n" +
             "TAK / ATAK / WinTAK / CloudTAK / TAK Aware are trademarks of their respective owners.\n" +
@@ -1514,12 +1520,13 @@ public partial class SettingsWindow : Window
     private static Border Chip(string label, string value)
     {
         var border = new Border { Style = TryStyle("InfoChip") };
-        border.Child = new TextBlock
+        var tb = new TextBlock
         {
             Text = $"{label}: {value}",
             FontSize = 13,
-            Foreground = ThemeBrush("TextPrimaryBrush", WpfBrushes.Black),
         };
+        SetTheme(tb, TextBlock.ForegroundProperty, "TextPrimaryBrush");
+        border.Child = tb;
         return border;
     }
 
@@ -1557,8 +1564,9 @@ public partial class SettingsWindow : Window
     private static Style? TryStyle(string key) =>
         Application.Current?.TryFindResource(key) as Style;
 
-    private static System.Windows.Media.Brush ThemeBrush(string key, System.Windows.Media.Brush fallback) =>
-        Application.Current?.TryFindResource(key) as System.Windows.Media.Brush ?? fallback;
+    /// <summary>Live DynamicResource binding so code-built UI follows light/dark swaps.</summary>
+    private static void SetTheme(FrameworkElement element, DependencyProperty property, string resourceKey) =>
+        element.SetResourceReference(property, resourceKey);
 
     private static void Copy(string text)
     {

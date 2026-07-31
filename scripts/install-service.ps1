@@ -95,11 +95,15 @@ sc.exe create $ServiceName binPath= "`"$binPath`"" start= auto DisplayName= "$Di
 sc.exe description $ServiceName "Always-on TAK PLI tracker (NMEA/Mesh/TAK). Tray UI is a companion controller. $PipeHint" | Out-Null
 sc.exe failure $ServiceName reset= 86400 actions= restart/5000/restart/10000/restart/30000 | Out-Null
 
+$machineRoot = Join-Path $env:ProgramData 'WinTAKTracker'
+New-Item -ItemType Directory -Force -Path $machineRoot | Out-Null
+# Builtin\Users Modify — tray runs asInvoker and must write ProgramData after SYSTEM creates the folder.
+icacls $machineRoot /grant '*S-1-5-32-545:(OI)(CI)M' /T | Out-Null
+Write-Host "Machine store ACL: Users Modify → $machineRoot"
+
 if ($MigrateUserConfig) {
     $userRoot = Join-Path $env:LOCALAPPDATA 'WinTAKTracker'
-    $machineRoot = Join-Path $env:ProgramData 'WinTAKTracker'
     if (Test-Path (Join-Path $userRoot 'config.json')) {
-        New-Item -ItemType Directory -Force -Path $machineRoot | Out-Null
         Copy-Item (Join-Path $userRoot 'config.json') (Join-Path $machineRoot 'config.json') -Force
         foreach ($sub in @('certs')) {
             $from = Join-Path $userRoot $sub

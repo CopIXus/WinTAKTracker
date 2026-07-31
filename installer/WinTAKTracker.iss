@@ -149,6 +149,28 @@ begin
   end;
 end;
 
+{ Grant Builtin\Users Modify on %ProgramData%\WinTAKTracker so the tray (asInvoker)
+  can read/write config after the LocalSystem service creates the folder. }
+procedure EnsureMachineStoreAcl;
+var
+  MachineRoot: String;
+  ResultCode: Integer;
+begin
+  MachineRoot := ExpandConstant('{commonappdata}\WinTAKTracker');
+  ForceDirectories(MachineRoot);
+  Log('Setting ACL on ' + MachineRoot + ' for Builtin Users (Modify)');
+  { S-1-5-32-545 = BUILTIN\Users — locale-independent }
+  if not Exec(
+      ExpandConstant('{sys}\icacls.exe'),
+      '"' + MachineRoot + '" /grant "*S-1-5-32-545:(OI)(CI)M" /T',
+      '', SW_HIDE, ewWaitUntilTerminated, ResultCode) then
+    Log('icacls failed to launch')
+  else if ResultCode <> 0 then
+    Log('icacls exit ' + IntToStr(ResultCode))
+  else
+    Log('Machine store ACL OK');
+end;
+
 procedure CreateAndStartService;
 var
   BinPath: String;
@@ -161,6 +183,7 @@ begin
     Exit;
   end;
 
+  EnsureMachineStoreAcl;
   DeleteServiceIfPresent;
 
   Log('Creating service ' + ServiceName);
@@ -244,6 +267,7 @@ begin
   if CurStep = ssPostInstall then
   begin
     WizardForm.StatusLabel.Caption := 'Configuring Windows Service…';
+    EnsureMachineStoreAcl;
     if WizardIsTaskSelected('migrateconfig') then
       MigratePortableConfig;
     CreateAndStartService;

@@ -118,6 +118,8 @@ dotnet run --project src/WinTAKTracker
 | Portable tray | `%LocalAppData%\WinTAKTracker\` | CurrentUser |
 | Service | `%ProgramData%\WinTAKTracker\` | LocalMachine |
 
+**Permissions:** Setup and the service grant **Builtin Users Modify** on `%ProgramData%\WinTAKTracker` so the tray (runs `asInvoker`, not as admin) can save settings. If you see *Access to the path is denied* after an older install, elevated once: `icacls "%ProgramData%\WinTAKTracker" /grant "*S-1-5-32-545:(OI)(CI)M" /T`, or reinstall Setup.
+
 **Migration:** On first service start, if ProgramData has no `config.json` but LocalAppData does, the service copies config/certs and attempts to re-protect secrets. CurrentUser DPAPI blobs **cannot** be decrypted as LocalSystem — re-enter tokens/cert passwords after install if migration could not re-protect them. Prefer running `install-service.ps1 -MigrateUserConfig` while logged on as the enrolled user, then re-save secrets from Settings (writes LocalMachine blobs via the service).
 
 **Never** commit real hosts, tokens, or certs. Use fakes only (`tak.example.com`, `USER`, `TOKEN`, `CALLSIGN`).

@@ -63,8 +63,16 @@ public partial class App : Application
             }
             catch { /* ignore */ }
 
+            var detail = ex is UnauthorizedAccessException or IOException
+                ? $"{ex.Message}\n\n" +
+                  $"Usually this means %ProgramData%\\WinTAKTracker is locked to SYSTEM after Setup.\n" +
+                  $"The tray does not need admin. Fix once (elevated PowerShell), then relaunch:\n\n" +
+                  $"icacls \"%ProgramData%\\WinTAKTracker\" /grant \"*S-1-5-32-545:(OI)(CI)M\" /T\n\n" +
+                  $"Or reinstall WinTAKTracker-Setup.exe (newer builds set this ACL automatically)."
+                : ex.Message;
+
             MessageBox.Show(
-                $"WinTAKTracker failed to start:\n\n{ex.Message}",
+                $"WinTAKTracker failed to start:\n\n{detail}",
                 "WinTAKTracker",
                 MessageBoxButton.OK,
                 MessageBoxImage.Error);

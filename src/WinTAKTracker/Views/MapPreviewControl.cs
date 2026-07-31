@@ -13,7 +13,6 @@ using NtsPoint = NetTopologySuite.Geometries.Point;
 using MapsuiPen = Mapsui.Styles.Pen;
 using MapsuiBrush = Mapsui.Styles.Brush;
 using MapsuiColor = Mapsui.Styles.Color;
-using WpfColor = System.Windows.Media.Color;
 using WpfHAlign = System.Windows.HorizontalAlignment;
 using WpfVAlign = System.Windows.VerticalAlignment;
 
@@ -43,19 +42,19 @@ public sealed class MapPreviewControl : System.Windows.Controls.UserControl
             Text = "Waiting for GPS…",
             HorizontalAlignment = WpfHAlign.Center,
             VerticalAlignment = WpfVAlign.Center,
-            Foreground = new SolidColorBrush(WpfColor.FromRgb(0x66, 0x66, 0x66)),
             FontSize = 14,
         };
+        _placeholder.SetResourceReference(TextBlock.ForegroundProperty, "TextMutedBrush");
 
         var attribution = new TextBlock
         {
             Text = "© OpenStreetMap contributors",
             FontSize = 10,
-            Foreground = new SolidColorBrush(WpfColor.FromRgb(0x88, 0x88, 0x88)),
             HorizontalAlignment = WpfHAlign.Right,
             VerticalAlignment = WpfVAlign.Bottom,
             Margin = new Thickness(0, 0, 6, 4),
         };
+        attribution.SetResourceReference(TextBlock.ForegroundProperty, "TextMutedBrush");
 
         var root = new Grid { Height = 220 };
         root.Children.Add(_mapControl);

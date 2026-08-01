@@ -34,3 +34,7 @@ Internal API: `TrackingHost.ApplyRemoteIdentity(callsign, team, role)` and `Remo
 ## Operator tip
 
 After changing callsign/team in Portal, reconnect the client (or restart the WinTAKTracker service/tray) so profile sync runs again. Callsigns appear on the network as `NAME.wtt`.
+
+## For Portal developers
+
+See [portal-send-config-wintaktracker.md](portal-send-config-wintaktracker.md) — how to enable Send Configuration for `takv.platform=WinTAKTracker` using the same Marti device-profile path as ATAK.

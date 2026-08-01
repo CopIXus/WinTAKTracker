@@ -182,6 +182,8 @@ CI (`.github/workflows/release.yml`) publishes **`WinTAKTracker-Setup.exe`** (pr
 | fail2ban / reconnect safety | [docs/fail2ban.md](docs/fail2ban.md) |
 | Code signing / SmartScreen | [docs/code-signing.md](docs/code-signing.md) · [docs site](https://copixus.github.io/WinTAKTracker/code-signing) |
 | Windows Service / identity | [docs/windows-service.md](docs/windows-service.md) |
+| Managed devices (Portal / Server) | [docs/managed-devices.md](docs/managed-devices.md) |
+| Beta testing checklist | [docs/beta-testing.md](docs/beta-testing.md) |
 | Contributing | [CONTRIBUTING.md](CONTRIBUTING.md) |
 | Security | [SECURITY.md](SECURITY.md) |
 | Releases | [GitHub Releases](https://github.com/CopIXus/WinTAKTracker/releases) |

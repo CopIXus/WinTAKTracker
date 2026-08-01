@@ -1,0 +1,35 @@
+---
+description: Callsign, computer vs user identity, and TAK Server/Portal presence PLI behavior
+alwaysApply: true
+---
+
+# Identity and TAK presence
+
+WinTAKTracker is tracking-only. Map clients (CloudTAK / ATAK / WinTAK) show PLI from CoT. TAK Server and Portal connection lists identify a TLS session from the **first usable self-SA (PLI)**.
+
+## Callsign sources
+
+1. **Per-user callsign** (`userIdentities[sid]`) — when an interactive tray session is bound; this is what operators set under Identity → “My callsign”.
+2. **Computer callsign** (`computerIdentity`) — when logged off / no user session (service headless). Default = Windows computer name.
+3. Never put a **bare hostname** in CoT `remarks` (some Portal UIs mis-read that as the callsign). Optional remarks must be prefixed (`Computer: {name}`). Default `IncludeComputerNameInRemarks` is **off**.
+
+## Presence announce (must keep working)
+
+- After TAK connect: delay briefly, then `AnnouncePresenceAsync` so tray `SetActiveSession` can win the race before the first PLI.
+- When active session / callsign changes: re-announce so Portal/Server labels update from machine name → user callsign.
+- Self-SA must include ATAK-shaped fields: `contact@callsign` + `endpoint=*:-1:stcp`, `uid@Droid` (= callsign), `__group`, `takv platform=WinTAKTracker`, `precisionlocation`.
+- Reply to server `t-x-c-t` with `t-x-c-t-r`.
+- Device UID: `WINDOWS-WinTAKTracker-*` for new installs (existing `WIN-*` OK). Do **not** spoof `ANDROID-*` or `ATAK-CIV`.
+
+## Client certs (Windows Schannel)
+
+Load client `.p12` with `MachineKeySet` (service) / `UserKeySet` (portable) via `SchannelCertificateLoader`. Never use `EphemeralKeySet` for SslStream mTLS on Windows.
+
+## Portal vs map
+
+- CloudTAK/ATAK maps use `contact@callsign` — that is the source of truth for “am I tracking?”
+- Portal Connected Users may omit raw SSL clients or lag on first-PLI identity; that is often Portal-side. See `docs/managed-devices.md`.
+
+## Secrets
+
+Follow `no-tak-secrets.mdc`. No real hosts, tokens, enroll URLs, or certs in the repo.

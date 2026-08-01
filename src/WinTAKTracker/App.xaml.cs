@@ -89,7 +89,7 @@ public partial class App : Application
     {
         if (!host.CurrentUserNeedsCallsignSetup()) return;
 
-        var dlg = new CallsignSetupWindow(host.Config.ComputerIdentity.Team);
+        var dlg = new CallsignSetupWindow(host.Config.ComputerIdentity.Team, host.Updates.CurrentVersion);
         var result = dlg.ShowDialog();
         if (result == true && !string.IsNullOrWhiteSpace(dlg.Callsign))
         {

@@ -195,6 +195,10 @@ public sealed class UpdateSettings
         "https://api.github.com/repos/CopIXus/WinTAKTracker/releases/latest";
     /// <summary>UTC timestamp of the last successful or failed update check (ISO 8601).</summary>
     public string? LastCheckedUtc { get; set; }
+    /// <summary>
+    /// Newest version reported by the last successful check when an update was available; cleared when up to date.
+    /// </summary>
+    public string? LastAvailableVersion { get; set; }
 }
 
 public sealed class DiagnosticsSettings

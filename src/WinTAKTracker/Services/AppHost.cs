@@ -41,6 +41,9 @@ public sealed class AppHost : IDisposable
 
     public TrackerStatusDto? LastServiceStatus { get; private set; }
 
+    /// <summary>Most recent update check result (tray quiet check or Settings → Updates).</summary>
+    public UpdateCheckResult? LastUpdateCheck { get; private set; }
+
     /// <summary>Tray-side WinRT location when attached to the Windows Service (null in portable mode).</summary>
     public CompanionLocationBridge? CompanionLocation { get; private set; }
 
@@ -366,6 +369,27 @@ public sealed class AppHost : IDisposable
         Tray.SetState(Core.ComputeTrayState());
     }
 
+    /// <summary>
+    /// Record an update check (from Settings or quiet tray check), persist availability hint, refresh tray tip.
+    /// </summary>
+    public void NoteUpdateCheck(UpdateCheckResult result, bool persist = true)
+    {
+        LastUpdateCheck = result;
+        Config.Updates.LastCheckedUtc = DateTimeOffset.UtcNow.ToString("O");
+        if (result.Success)
+        {
+            Config.Updates.LastAvailableVersion = result.UpdateAvailable &&
+                                                 !string.IsNullOrWhiteSpace(result.LatestVersion)
+                ? result.LatestVersion
+                : null;
+        }
+
+        if (persist)
+            SaveConfig();
+
+        Tray.RefreshTooltip();
+    }
+
     private async Task CheckUpdatesQuietAsync()
     {
         // Service-aware updater (stop → replace → start) is Phase 3; tray-only update in portable mode.
@@ -374,6 +398,8 @@ public sealed class AppHost : IDisposable
         try
         {
             var result = await Updates.CheckAsync().ConfigureAwait(false);
+            NoteUpdateCheck(result, persist: result.Success);
+
             if (!result.Success || !result.UpdateAvailable) return;
 
             if (Config.Updates.AutomaticallyDownloadAndInstall)

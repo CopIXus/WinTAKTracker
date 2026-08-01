@@ -15,14 +15,27 @@ public enum TrayIconState
 
 public static class TrayIconStateExtensions
 {
-    public static string ToTooltip(this TrayIconState state) => state switch
+    public static string ToStatusLabel(this TrayIconState state) => state switch
     {
-        TrayIconState.Ok => "WinTAKTracker — OK",
-        TrayIconState.NoGps => "WinTAKTracker — No GPS",
-        TrayIconState.Disconnected => "WinTAKTracker — Disconnected",
-        TrayIconState.Reconnecting => "WinTAKTracker — Reconnecting…",
-        TrayIconState.Paused => "WinTAKTracker — Paused",
-        TrayIconState.Error => "WinTAKTracker — Error",
-        _ => "WinTAKTracker",
+        TrayIconState.Ok => "OK",
+        TrayIconState.NoGps => "No GPS",
+        TrayIconState.Disconnected => "Disconnected",
+        TrayIconState.Reconnecting => "Reconnecting…",
+        TrayIconState.Paused => "Paused",
+        TrayIconState.Error => "Error",
+        _ => "Unknown",
     };
+
+    /// <summary>
+    /// Concise tray tip: app + version + status, optionally a short update hint.
+    /// Keep under NotifyIcon.Text limits (~63–128 chars).
+    /// </summary>
+    public static string ToTooltip(this TrayIconState state, string version, string? updateVersion = null)
+    {
+        var ver = string.IsNullOrWhiteSpace(version) ? "" : $" {version.Trim()}";
+        var tip = $"WinTAKTracker{ver} — {state.ToStatusLabel()}";
+        if (!string.IsNullOrWhiteSpace(updateVersion))
+            tip += $" · upd {updateVersion.Trim()}";
+        return tip;
+    }
 }

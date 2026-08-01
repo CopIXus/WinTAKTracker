@@ -35,6 +35,8 @@ public partial class SettingsWindow : Window
     {
         _host = host;
         InitializeComponent();
+        Title = AppVersionDisplay.WindowTitle(_host.Updates.CurrentVersion, "Settings");
+        _lastUpdateCheck = _host.LastUpdateCheck;
         _refreshTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
         _host.Pause.PauseChanged += OnPauseChanged;
         _host.SettingsLock.LockStateChanged += OnLockStateChanged;
@@ -485,7 +487,7 @@ public partial class SettingsWindow : Window
         }
 
         SetStatusTile("Tracking", paused ? "Paused" : "Active",
-            _host.Tray.CurrentState.ToTooltip(),
+            _host.Tray.CurrentState.ToStatusLabel(),
             paused ? "warn" : "ok");
 
         if (fix is null)
@@ -1577,8 +1579,7 @@ public partial class SettingsWindow : Window
         updateRow.Children.Add(Btn("Check for updates", async () =>
         {
             _lastUpdateCheck = await _host.Updates.CheckAsync();
-            _host.Config.Updates.LastCheckedUtc = DateTimeOffset.UtcNow.ToString("O");
-            Persist();
+            _host.NoteUpdateCheck(_lastUpdateCheck);
             // Inline only — no popup for up-to-date / available results.
             ShowSection("Updates");
         }));
@@ -1591,8 +1592,7 @@ public partial class SettingsWindow : Window
             {
                 if (!EnsureEditable()) return;
                 _lastUpdateCheck = await _host.Updates.CheckAsync();
-                _host.Config.Updates.LastCheckedUtc = DateTimeOffset.UtcNow.ToString("O");
-                Persist();
+                _host.NoteUpdateCheck(_lastUpdateCheck);
                 if (!_lastUpdateCheck.Success || !_lastUpdateCheck.UpdateAvailable)
                 {
                     ShowSection("Updates");

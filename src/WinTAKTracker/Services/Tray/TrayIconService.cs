@@ -23,7 +23,7 @@ public sealed class TrayIconService : IDisposable
         {
             Icon = _baseIcon,
             Visible = true,
-            Text = _state.ToTooltip(),
+            Text = TruncateTooltip(BuildTooltip(_state)),
         };
 
         var menu = new Forms.ContextMenuStrip();
@@ -64,6 +64,9 @@ public sealed class TrayIconService : IDisposable
         ApplyState(state);
     }
 
+    /// <summary>Rebuild NotifyIcon.Text from current tray state, version, and last update check.</summary>
+    public void RefreshTooltip() => ApplyState(_state);
+
     public void ShowBalloon(string title, string text)
     {
         try
@@ -95,8 +98,25 @@ public sealed class TrayIconService : IDisposable
     private void ApplyState(TrayIconState state)
     {
         _state = state;
-        _notifyIcon.Text = TruncateTooltip(state.ToTooltip());
+        _notifyIcon.Text = TruncateTooltip(BuildTooltip(state));
         _notifyIcon.Icon = _baseIcon;
+    }
+
+    private string BuildTooltip(TrayIconState state)
+    {
+        var version = _host.Updates.CurrentVersion;
+        var updateVersion = ResolveUpdateVersionHint();
+        return state.ToTooltip(version, updateVersion);
+    }
+
+    private string? ResolveUpdateVersionHint()
+    {
+        if (_host.LastUpdateCheck is { Success: true, UpdateAvailable: true } check &&
+            !string.IsNullOrWhiteSpace(check.LatestVersion))
+            return check.LatestVersion;
+
+        var fromConfig = _host.Config.Updates.LastAvailableVersion;
+        return string.IsNullOrWhiteSpace(fromConfig) ? null : fromConfig;
     }
 
     private void OnPauseChanged(object? sender, bool paused)

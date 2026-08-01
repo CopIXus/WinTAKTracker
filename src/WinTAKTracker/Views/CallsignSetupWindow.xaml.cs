@@ -6,6 +6,7 @@ public partial class CallsignSetupWindow : Window
 {
     public string Callsign => CallsignBox.Text.Trim();
     public string Team => TeamBox.Text.Trim();
+    public string Phone => PhoneBox.Text.Trim();
     public bool Skipped { get; private set; }
 
     public CallsignSetupWindow(string defaultTeam)

@@ -195,11 +195,11 @@ public sealed class AppHost : IDisposable
     public bool CurrentUserNeedsCallsignSetup() =>
         IdentityResolver.CurrentUserNeedsSetup(Config);
 
-    public void SaveCurrentUserIdentity(string callsign, string team, string role, string cotType)
+    public void SaveCurrentUserIdentity(string callsign, string team, string role, string cotType, string? phone = null)
     {
         var sid = IdentityResolver.CurrentUserSid() ?? throw new InvalidOperationException("No Windows user SID.");
         var userName = IdentityResolver.CurrentUserName() ?? Environment.UserName;
-        Core.SetUserIdentity(sid, userName, callsign, team, role, cotType);
+        Core.SetUserIdentity(sid, userName, callsign, team, role, cotType, phone);
         Core.SetActiveSession(sid, userName);
 
         if (ServiceClient is not null)
@@ -212,6 +212,7 @@ public sealed class AppHost : IDisposable
                 Team = team,
                 Role = role,
                 CotType = cotType,
+                Phone = phone,
             }).GetAwaiter().GetResult();
             ServiceClient.NotifyCurrentUserSessionAsync().GetAwaiter().GetResult();
         }
@@ -223,9 +224,9 @@ public sealed class AppHost : IDisposable
         RefreshTray();
     }
 
-    public void SaveComputerIdentity(string callsign, string team, string role, string cotType)
+    public void SaveComputerIdentity(string callsign, string team, string role, string cotType, string? phone = null)
     {
-        Core.SetComputerIdentity(callsign, team, role, cotType);
+        Core.SetComputerIdentity(callsign, team, role, cotType, phone);
         if (ServiceClient is not null)
         {
             ServiceClient.SetComputerIdentityAsync(new IdentityUpdateDto
@@ -234,6 +235,7 @@ public sealed class AppHost : IDisposable
                 Team = team,
                 Role = role,
                 CotType = cotType,
+                Phone = phone,
             }).GetAwaiter().GetResult();
         }
         else

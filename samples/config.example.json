@@ -4,7 +4,8 @@
     "callsign": "CALLSIGN-PC",
     "team": "Cyan",
     "role": "Team Member",
-    "cotType": "a-f-G-U-C-I"
+    "cotType": "a-f-G-U-C-I",
+    "phone": "+15555550100"
   },
   "userIdentities": {
     "S-1-5-21-EXAMPLE-1001": {
@@ -13,6 +14,7 @@
       "team": "Cyan",
       "role": "Team Member",
       "cotType": "a-f-G-U-C-I",
+      "phone": "+15555550100",
       "setupPromptDismissed": false
     }
   },
@@ -20,7 +22,8 @@
     "callsign": "CALLSIGN-PC",
     "team": "Cyan",
     "role": "Team Member",
-    "cotType": "a-f-G-U-C-I"
+    "cotType": "a-f-G-U-C-I",
+    "phone": "+15555550100"
   },
   "gps": {
     "sourcePriority": "NmeaThenWindows",

@@ -177,7 +177,7 @@ public sealed class TrackerIpcServer : IAsyncDisposable
     private object SetComputerIdentity(JsonElement? payload)
     {
         var dto = DeserializePayload<IdentityUpdateDto>(payload);
-        _host.SetComputerIdentity(dto.Callsign, dto.Team, dto.Role, dto.CotType);
+        _host.SetComputerIdentity(dto.Callsign, dto.Team, dto.Role, dto.CotType, dto.Phone);
         return _host.GetStatus();
     }
 
@@ -186,7 +186,7 @@ public sealed class TrackerIpcServer : IAsyncDisposable
         var dto = DeserializePayload<IdentityUpdateDto>(payload);
         if (string.IsNullOrWhiteSpace(dto.UserSid))
             throw new InvalidOperationException("UserSid is required.");
-        _host.SetUserIdentity(dto.UserSid!, dto.UserName ?? "", dto.Callsign, dto.Team, dto.Role, dto.CotType);
+        _host.SetUserIdentity(dto.UserSid!, dto.UserName ?? "", dto.Callsign, dto.Team, dto.Role, dto.CotType, dto.Phone);
         return _host.GetStatus();
     }
 

@@ -104,6 +104,7 @@ public sealed class ActiveIdentityDto
     public string Team { get; set; } = "";
     public string Role { get; set; } = "";
     public string CotType { get; set; } = "";
+    public string? Phone { get; set; }
     public string Source { get; set; } = "Computer";
     public string? UserSid { get; set; }
     public string? UserName { get; set; }
@@ -114,6 +115,7 @@ public sealed class ActiveIdentityDto
         Team = id.Team,
         Role = id.Role,
         CotType = id.CotType,
+        Phone = string.IsNullOrWhiteSpace(id.Phone) ? null : id.Phone,
         Source = id.Source,
         UserSid = id.UserSid,
         UserName = id.UserName,
@@ -128,6 +130,7 @@ public sealed class IdentityUpdateDto
     public string Team { get; set; } = "Cyan";
     public string Role { get; set; } = "Team Member";
     public string CotType { get; set; } = "a-f-G-U-C-I";
+    public string? Phone { get; set; }
 }
 
 public sealed class SessionUpdateDto

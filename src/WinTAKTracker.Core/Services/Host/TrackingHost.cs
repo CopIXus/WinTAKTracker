@@ -206,7 +206,7 @@ public sealed class TrackingHost : IDisposable
         StatusChanged?.Invoke(this, EventArgs.Empty);
     }
 
-    public void SetComputerIdentity(string callsign, string team, string role, string cotType)
+    public void SetComputerIdentity(string callsign, string team, string role, string cotType, string? phone = null)
     {
         Config.ComputerIdentity.Callsign = string.IsNullOrWhiteSpace(callsign)
             ? Environment.MachineName
@@ -216,6 +216,7 @@ public sealed class TrackingHost : IDisposable
         Config.ComputerIdentity.CotType = string.IsNullOrWhiteSpace(cotType)
             ? CotEventBuilder.GroundUnitType
             : cotType.Trim();
+        Config.ComputerIdentity.Phone = phone?.Trim() ?? "";
         SaveConfig();
         Reporting.NotifyIdentityChanged();
         StatusChanged?.Invoke(this, EventArgs.Empty);
@@ -227,7 +228,8 @@ public sealed class TrackingHost : IDisposable
         string callsign,
         string team,
         string role,
-        string cotType)
+        string cotType,
+        string? phone = null)
     {
         if (!Config.UserIdentities.TryGetValue(userSid, out var user))
         {
@@ -240,6 +242,7 @@ public sealed class TrackingHost : IDisposable
         user.Team = team.Trim();
         user.Role = role.Trim();
         user.CotType = string.IsNullOrWhiteSpace(cotType) ? "" : cotType.Trim();
+        user.Phone = phone?.Trim() ?? "";
         user.SetupPromptDismissed = false;
         SaveConfig();
 

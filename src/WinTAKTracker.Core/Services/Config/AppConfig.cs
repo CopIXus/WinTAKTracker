@@ -63,6 +63,9 @@ public sealed class AppConfig
                     ComputerIdentity.Role = Identity.Role;
                 if (!string.IsNullOrWhiteSpace(Identity.CotType))
                     ComputerIdentity.CotType = Identity.CotType;
+                if (string.IsNullOrWhiteSpace(ComputerIdentity.Phone) &&
+                    !string.IsNullOrWhiteSpace(Identity.Phone))
+                    ComputerIdentity.Phone = Identity.Phone;
             }
             else if (computerEmpty)
             {
@@ -73,6 +76,14 @@ public sealed class AppConfig
                     ComputerIdentity.Role = Identity.Role;
                 if (!string.IsNullOrWhiteSpace(Identity.CotType))
                     ComputerIdentity.CotType = Identity.CotType;
+                if (string.IsNullOrWhiteSpace(ComputerIdentity.Phone) &&
+                    !string.IsNullOrWhiteSpace(Identity.Phone))
+                    ComputerIdentity.Phone = Identity.Phone;
+            }
+            else if (string.IsNullOrWhiteSpace(ComputerIdentity.Phone) &&
+                     !string.IsNullOrWhiteSpace(Identity.Phone))
+            {
+                ComputerIdentity.Phone = Identity.Phone;
             }
         }
 
@@ -90,6 +101,7 @@ public sealed class AppConfig
             Team = ComputerIdentity.Team,
             Role = ComputerIdentity.Role,
             CotType = ComputerIdentity.CotType,
+            Phone = ComputerIdentity.Phone,
         };
     }
 }
@@ -103,6 +115,8 @@ public sealed class IdentitySettings
     public string Role { get; set; } = "Team Member";
     /// <summary>CoT type, e.g. a-f-G-U-C-I (Ground Unit) or a-f-G-E-V (Vehicle).</summary>
     public string CotType { get; set; } = "a-f-G-U-C-I";
+    /// <summary>Optional phone for ATAK contact Call (detail/contact@phone). Empty = omit from CoT.</summary>
+    public string Phone { get; set; } = "";
 
     /// <summary>Effective callsign for CoT/UI — machine name when unset.</summary>
     public string GetEffectiveCallsign() =>
@@ -117,6 +131,8 @@ public sealed class UserIdentitySettings
     public string Team { get; set; } = "";
     public string Role { get; set; } = "";
     public string CotType { get; set; } = "";
+    /// <summary>Optional phone for ATAK contact Call (detail/contact@phone). Empty = omit from CoT.</summary>
+    public string Phone { get; set; } = "";
     /// <summary>True when the user dismissed the first-login callsign prompt without saving.</summary>
     public bool SetupPromptDismissed { get; set; }
 

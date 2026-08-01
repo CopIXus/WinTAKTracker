@@ -92,7 +92,8 @@ public partial class App : Application
                 dlg.Callsign,
                 string.IsNullOrWhiteSpace(dlg.Team) ? "Cyan" : dlg.Team,
                 "Team Member",
-                host.Config.ComputerIdentity.CotType);
+                host.Config.ComputerIdentity.CotType,
+                dlg.Phone);
         }
         else
         {

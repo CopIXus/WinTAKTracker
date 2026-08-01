@@ -14,6 +14,8 @@ public sealed class CotIdentity
     public required string Team { get; init; }
     public required string Role { get; init; }
     public required string CotType { get; init; }
+    /// <summary>Optional; emitted as contact@phone only when non-whitespace.</summary>
+    public string? Phone { get; init; }
     public string Platform { get; init; } = "WinTAKTracker";
     public string Version { get; init; } = "0.1.0";
     public int? BatteryPercent { get; init; }
@@ -53,7 +55,7 @@ public static class CotEventBuilder
                 new XAttribute("ce", F(ce)),
                 new XAttribute("le", F(le))),
             new XElement("detail",
-                new XElement("contact", new XAttribute("callsign", identity.Callsign)),
+                BuildContact(identity),
                 new XElement("__group",
                     new XAttribute("name", identity.Team),
                     new XAttribute("role", identity.Role)),
@@ -103,9 +105,18 @@ public static class CotEventBuilder
             Team = server?.TeamOverride is { Length: > 0 } t ? t : active.Team,
             Role = server?.RoleOverride is { Length: > 0 } r ? r : active.Role,
             CotType = string.IsNullOrWhiteSpace(active.CotType) ? GroundUnitType : active.CotType,
+            Phone = string.IsNullOrWhiteSpace(active.Phone) ? null : active.Phone.Trim(),
             Version = typeof(CotEventBuilder).Assembly.GetName().Version?.ToString(3) ?? "0.1.0",
             BatteryPercent = battery,
         };
+    }
+
+    private static XElement BuildContact(CotIdentity identity)
+    {
+        var contact = new XElement("contact", new XAttribute("callsign", identity.Callsign));
+        if (!string.IsNullOrWhiteSpace(identity.Phone))
+            contact.Add(new XAttribute("phone", identity.Phone.Trim()));
+        return contact;
     }
 
     private static string F(double v)

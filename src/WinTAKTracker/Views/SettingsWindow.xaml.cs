@@ -971,6 +971,7 @@ public partial class SettingsWindow : Window
         var computerCallsign = new TextBox { Text = computer.GetEffectiveCallsign(), IsEnabled = edit };
         var computerTeam = new ComboBox { IsEditable = true, ItemsSource = teams, Text = computer.Team, IsEnabled = edit };
         var computerRole = new ComboBox { IsEditable = true, ItemsSource = roles, Text = computer.Role, IsEnabled = edit };
+        var computerPhone = new TextBox { Text = computer.Phone ?? "", IsEnabled = edit };
         var computerCot = new ComboBox
         {
             ItemsSource = new[]
@@ -984,6 +985,14 @@ public partial class SettingsWindow : Window
         panel.Children.Add(Label("Computer callsign")); panel.Children.Add(computerCallsign);
         panel.Children.Add(Label("Computer team")); panel.Children.Add(computerTeam);
         panel.Children.Add(Label("Computer role")); panel.Children.Add(computerRole);
+        panel.Children.Add(Label("Computer phone (optional)")); panel.Children.Add(computerPhone);
+        panel.Children.Add(new TextBlock
+        {
+            Text = "Used on ATAK contact cards for Call when the computer identity is active. Sent cleartext on the TAK network.",
+            Style = TryStyle("HelperText"),
+            Margin = new Thickness(0, 0, 0, 8),
+            TextWrapping = TextWrapping.Wrap,
+        });
         panel.Children.Add(Label("Computer CoT type")); panel.Children.Add(computerCot);
 
         void SaveComputer()
@@ -995,12 +1004,13 @@ public partial class SettingsWindow : Window
             var cotType = computerCot.SelectedIndex == 1
                 ? CotEventBuilder.VehicleType
                 : CotEventBuilder.GroundUnitType;
-            _host.SaveComputerIdentity(next, computerTeam.Text.Trim(), computerRole.Text.Trim(), cotType);
+            _host.SaveComputerIdentity(next, computerTeam.Text.Trim(), computerRole.Text.Trim(), cotType, computerPhone.Text.Trim());
         }
 
         BindPersistText(computerCallsign, SaveComputer);
         BindPersistText(computerTeam, SaveComputer);
         BindPersistText(computerRole, SaveComputer);
+        BindPersistText(computerPhone, SaveComputer);
         computerCot.SelectionChanged += (_, _) => SaveComputer();
 
         panel.Children.Add(SectionHeader("My callsign (this Windows user)"));
@@ -1019,9 +1029,18 @@ public partial class SettingsWindow : Window
             Text = string.IsNullOrWhiteSpace(user?.Role) ? computer.Role : user!.Role,
             IsEnabled = edit,
         };
+        var myPhone = new TextBox { Text = user?.Phone ?? "", IsEnabled = edit };
         panel.Children.Add(Label("My callsign")); panel.Children.Add(myCallsign);
         panel.Children.Add(Label("My team")); panel.Children.Add(myTeam);
         panel.Children.Add(Label("My role")); panel.Children.Add(myRole);
+        panel.Children.Add(Label("My phone (optional)")); panel.Children.Add(myPhone);
+        panel.Children.Add(new TextBlock
+        {
+            Text = "Used on ATAK contact cards for Call while you are logged in. Sent cleartext on the TAK network.",
+            Style = TryStyle("HelperText"),
+            Margin = new Thickness(0, 0, 0, 8),
+            TextWrapping = TextWrapping.Wrap,
+        });
         panel.Children.Add(Blurb($"Windows user: {Services.Identity.IdentityResolver.CurrentUserName() ?? Environment.UserName}"));
 
         void SaveUser()
@@ -1033,12 +1052,14 @@ public partial class SettingsWindow : Window
                 next,
                 myTeam.Text.Trim(),
                 myRole.Text.Trim(),
-                computer.CotType);
+                computer.CotType,
+                myPhone.Text.Trim());
         }
 
         BindPersistText(myCallsign, SaveUser);
         BindPersistText(myTeam, SaveUser);
         BindPersistText(myRole, SaveUser);
+        BindPersistText(myPhone, SaveUser);
         panel.Children.Add(Chip("Persisted", "Identity saves automatically when you change a field."));
         return panel;
     }

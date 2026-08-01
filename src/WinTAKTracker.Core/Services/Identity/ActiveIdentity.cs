@@ -10,6 +10,8 @@ public sealed class ActiveIdentity
     public required string Team { get; init; }
     public required string Role { get; init; }
     public required string CotType { get; init; }
+    /// <summary>Optional phone for ATAK Call; empty means omit from CoT contact.</summary>
+    public string Phone { get; init; } = "";
     /// <summary>Computer | User</summary>
     public required string Source { get; init; }
     public string? UserSid { get; init; }
@@ -64,6 +66,7 @@ public static class IdentityResolver
                 Team = string.IsNullOrWhiteSpace(user.Team) ? computer.Team : user.Team,
                 Role = string.IsNullOrWhiteSpace(user.Role) ? computer.Role : user.Role,
                 CotType = string.IsNullOrWhiteSpace(user.CotType) ? computer.CotType : user.CotType,
+                Phone = string.IsNullOrWhiteSpace(user.Phone) ? "" : user.Phone.Trim(),
                 Source = "User",
                 UserSid = activeUserSid,
                 UserName = user.UserName,
@@ -76,6 +79,7 @@ public static class IdentityResolver
             Team = computer.Team,
             Role = computer.Role,
             CotType = computer.CotType,
+            Phone = string.IsNullOrWhiteSpace(computer.Phone) ? "" : computer.Phone.Trim(),
             Source = "Computer",
             UserSid = activeUserSid,
             UserName = null,

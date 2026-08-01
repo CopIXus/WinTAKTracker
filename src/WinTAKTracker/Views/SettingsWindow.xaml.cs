@@ -1586,8 +1586,12 @@ public partial class SettingsWindow : Window
             else
                 _host.Config.Diagnostics.MaxLogSizeMb = 30;
             maxSize.Text = _host.Config.Diagnostics.MaxLogSizeMb.ToString();
+            var softChanged = _host.Config.Diagnostics.AllowInsecureTlsSoftAccept != (softTls.IsChecked == true);
             _host.Config.Diagnostics.AllowInsecureTlsSoftAccept = softTls.IsChecked == true;
             Persist();
+            // Soft-accept must reach CotStreamClient before the next Test/connect.
+            if (softChanged)
+                _ = _host.ReloadConnectionsAsync();
         }
 
         level.SelectionChanged += (_, _) => SaveDiagnostics();

@@ -538,19 +538,33 @@ public sealed class EnrollmentService
         {
             try
             {
+                // Persist the full CA chain (not only ca0). Private TAK roots are often ca1+;
+                // trusting only an intermediate makes SSL:8089 fail after a successful enroll.
                 trustFile = $"{profileId}-trust.p12";
                 var trustPath = Path.Combine(_store.CertsDirectory, trustFile);
-                using var caCert = X509Certificate2.CreateFromPem(caPems[0]);
-                // Store first CA; additional CAs appended as PEM sidecar if present.
-                File.WriteAllBytes(trustPath, caCert.Export(X509ContentType.Pkcs12, DefaultP12Password));
+                var trustCol = new X509Certificate2Collection();
+                var owned = new List<X509Certificate2>();
+                try
+                {
+                    foreach (var pem in caPems)
+                    {
+                        var ca = X509Certificate2.CreateFromPem(pem);
+                        owned.Add(ca);
+                        trustCol.Add(ca);
+                    }
+
+                    File.WriteAllBytes(trustPath, trustCol.Export(X509ContentType.Pkcs12, DefaultP12Password)!);
+                }
+                finally
+                {
+                    foreach (var c in owned) c.Dispose();
+                }
+
                 trustPwdBlob = $"{profileId}-trustpwd";
                 _store.WriteSecret(trustPwdBlob, DefaultP12Password);
 
-                if (caPems.Count > 1)
-                {
-                    var pemPath = Path.Combine(_store.CertsDirectory, $"{profileId}-trust-chain.pem");
-                    File.WriteAllText(pemPath, string.Join('\n', caPems));
-                }
+                var pemPath = Path.Combine(_store.CertsDirectory, $"{profileId}-trust-chain.pem");
+                File.WriteAllText(pemPath, string.Join('\n', caPems));
             }
             catch (Exception ex)
             {

@@ -29,8 +29,7 @@ Those directories must never be copied into this repository.
 
 ### Machine store ACLs (`%ProgramData%\WinTAKTracker`)
 
-- **Root / logs / updates:** `SYSTEM` + Administrators Full; Authenticated Users **Modify** (tray can write `config.json` and logs asInvoker).
-- **`secrets/` and `certs/`:** `SYSTEM` + Administrators Full **only** (no Authenticated Users Modify). The service creates these directories. Prefer mutating secret blobs via the tray → named-pipe IPC when the service is running.
+- **Root / `secrets/` / `certs/` / logs / updates:** `SYSTEM` + Administrators Full; Authenticated Users **Modify** (tray enroll/import writes certs and DPAPI secrets asInvoker; mutating IPC still requires an interactive client).
 
 ### Named-pipe IPC (`WinTAKTracker.Control`)
 

@@ -31,6 +31,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Private-CA TLS after enroll** — persist/load the full Marti CA chain in the trust store (not only `ca0`); clearer errors when the *server* cert is untrusted vs client cert rejected; tray can write `certs`/`secrets` again for enroll; soft-accept toggle reloads connections
 - **No double tracker** — when the Windows Service is installed, tray retries IPC attach (backoff) and never falls back to in-process `Core.StartAsync` if the service is unreachable (companion-only)
 - **Safe config load** — parse failures quarantine the file; TrackingHost ctor does not Save over corrupt `config.json`
 - **IPC hardening** — mutating methods require an interactive pipe client; settings lock gates `SetConfig`/identity; one active companion SID for GPS/session; clear companion GPS on logoff

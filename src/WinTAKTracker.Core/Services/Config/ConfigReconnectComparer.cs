@@ -14,8 +14,12 @@ public static class ConfigReconnectComparer
         if (!MeshEqual(before.MeshSa, after.MeshSa)) return true;
         if (!ServersEqual(before.Servers, after.Servers)) return true;
 
+        // Soft-accept affects the next TLS handshake; bounce so live clients pick up the flag.
+        if (before.Diagnostics.AllowInsecureTlsSoftAccept != after.Diagnostics.AllowInsecureTlsSoftAccept)
+            return true;
+
         // Reporting intervals alone do not bounce sockets; ReportingEngine.ApplyConfig handles that.
-        // Soft-accept / identity / diagnostics / updates / startup do not require reconnect.
+        // Identity / other diagnostics / updates / startup do not require reconnect.
         return false;
     }
 

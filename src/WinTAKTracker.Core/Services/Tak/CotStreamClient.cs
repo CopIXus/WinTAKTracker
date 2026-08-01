@@ -36,6 +36,8 @@ public sealed class CotStreamClient : IDisposable
     private int _consecutiveFailures;
     private string? _lastLoggedFailureKey;
     private DateTimeOffset _lastLoggedFailureUtc = DateTimeOffset.MinValue;
+    /// <summary>Set when remote cert callback rejects — distinguishes server-trust vs client-cert faults.</summary>
+    private string? _pendingServerTrustReject;
 
     /// <summary>
     /// infra-TAK TAK Server fail2ban jail: ~20 TLS handshake failures / 5 minutes → UFW ban.
@@ -80,6 +82,7 @@ public sealed class CotStreamClient : IDisposable
         try
         {
             Profile = profile;
+            _pendingServerTrustReject = null;
             SetState(TakConnectionState.Connecting);
             await DisconnectCoreAsync().ConfigureAwait(false);
 
@@ -151,7 +154,9 @@ public sealed class CotStreamClient : IDisposable
             }
             catch (Exception ex)
             {
-                var human = HumanizeConnectError(ex);
+                var human = !string.IsNullOrWhiteSpace(_pendingServerTrustReject)
+                    ? _pendingServerTrustReject!
+                    : HumanizeConnectError(ex);
                 NoteFailure(profile, human, IsTlsOrCertFailure(ex, human));
                 LastErrorCode = human;
                 SetState(TakConnectionState.Error);
@@ -207,8 +212,9 @@ public sealed class CotStreamClient : IDisposable
         TimeoutException te => te.Message,
         OperationCanceledException => "Connection timed out or was canceled",
         AuthenticationException =>
-            "TLS authentication failed — client certificate rejected or not trusted by the TAK Server. " +
-            "Re-enroll or re-import SoftCert/.p12. Repeated retries can trigger fail2ban on infra-TAK hosts.",
+            "TLS authentication failed — client certificate rejected or not trusted by the TAK Server " +
+            "(or server cert rejected — see Diagnostics soft-accept / re-enroll for private CA). " +
+            "Repeated retries can trigger fail2ban on infra-TAK hosts.",
         SocketException se => $"Network error ({se.SocketErrorCode})",
         IOException => "Stream closed during connect (often TLS handshake rejected)",
         CryptographicException =>
@@ -388,42 +394,21 @@ public sealed class CotStreamClient : IDisposable
     {
         if (sslPolicyErrors == SslPolicyErrors.None) return true;
 
-        // Accept when configured trust store validates the chain.
-        if (!string.IsNullOrWhiteSpace(Profile.TrustStoreFileName))
+        // Accept when configured trust store validates the chain (full CA set from enroll).
+        if (!string.IsNullOrWhiteSpace(Profile.TrustStoreFileName)
+            && certificate is not null
+            && chain is not null
+            && TryValidateWithTrustStore(certificate, chain))
         {
-            var trustPath = Path.Combine(_store.CertsDirectory, Profile.TrustStoreFileName);
-            if (File.Exists(trustPath) && certificate is not null)
-            {
-                X509Certificate2? leaf = null;
-                try
-                {
-                    var pwd = Profile.TrustPasswordBlobName is null
-                        ? (Profile.CertPasswordBlobName is null ? "atakatak" : _store.ReadSecret(Profile.CertPasswordBlobName) ?? "atakatak")
-                        : _store.ReadSecret(Profile.TrustPasswordBlobName) ?? "";
-                    using var trust = LoadPfx(trustPath, pwd);
-                    if (chain is not null)
-                    {
-                        chain.ChainPolicy.TrustMode = X509ChainTrustMode.CustomRootTrust;
-                        chain.ChainPolicy.CustomTrustStore.Add(trust);
-                        chain.ChainPolicy.RevocationMode = X509RevocationMode.NoCheck;
-                        leaf = new X509Certificate2(certificate);
-                        if (chain.Build(leaf))
-                            return true;
-                    }
-                }
-                catch
-                {
-                    // fall through
-                }
-                finally
-                {
-                    leaf?.Dispose();
-                }
-            }
+            return true;
         }
 
         if (!AllowInsecureTlsSoftAccept)
         {
+            _pendingServerTrustReject =
+                "TLS failed — TAK Server certificate not trusted (private CA / incomplete trust store). " +
+                "Re-enroll so the full CA chain is saved, or enable Diagnostics → TLS soft-accept for lab CAs. " +
+                $"({sslPolicyErrors})";
             if (ShouldLog($"{Profile.Id}|tls-reject|{sslPolicyErrors}"))
                 _log.Warn("TAK",
                     $"TLS rejected ({sslPolicyErrors}) profile={ProfileLabel(Profile)} — soft-accept disabled.");
@@ -434,6 +419,92 @@ public sealed class CotStreamClient : IDisposable
         if (ShouldLog($"{Profile.Id}|soft-accept|{sslPolicyErrors}"))
             _log.Warn("TAK", $"TLS soft-accept ({sslPolicyErrors}) profile={ProfileLabel(Profile)}.");
         return true;
+    }
+
+    private bool TryValidateWithTrustStore(X509Certificate certificate, X509Chain chain)
+    {
+        var trustPath = Path.Combine(_store.CertsDirectory, Profile.TrustStoreFileName!);
+        if (!File.Exists(trustPath)) return false;
+
+        X509Certificate2? leaf = null;
+        var owned = new List<X509Certificate2>();
+        try
+        {
+            var pwd = Profile.TrustPasswordBlobName is null
+                ? (Profile.CertPasswordBlobName is null
+                    ? "atakatak"
+                    : _store.ReadSecret(Profile.CertPasswordBlobName) ?? "atakatak")
+                : _store.ReadSecret(Profile.TrustPasswordBlobName) ?? "";
+
+            var trustCol = new X509Certificate2Collection();
+            trustCol.Import(trustPath, pwd, X509KeyStorageFlags.EphemeralKeySet | X509KeyStorageFlags.Exportable);
+            foreach (var c in trustCol)
+                owned.Add(c);
+
+            // Sidecar PEM from enroll — covers older profiles that only saved ca0 in the .p12.
+            var trustFile = Profile.TrustStoreFileName!;
+            if (trustFile.EndsWith("-trust.p12", StringComparison.OrdinalIgnoreCase))
+            {
+                var idPrefix = trustFile[..^"-trust.p12".Length];
+                var pemSidecar = Path.Combine(_store.CertsDirectory, $"{idPrefix}-trust-chain.pem");
+                if (File.Exists(pemSidecar))
+                {
+                    foreach (var pemCert in ReadPemCertificates(File.ReadAllText(pemSidecar)))
+                    {
+                        owned.Add(pemCert);
+                        trustCol.Add(pemCert);
+                    }
+                }
+            }
+
+            chain.ChainPolicy.TrustMode = X509ChainTrustMode.CustomRootTrust;
+            chain.ChainPolicy.RevocationMode = X509RevocationMode.NoCheck;
+            foreach (var ca in trustCol)
+                chain.ChainPolicy.CustomTrustStore.Add(ca);
+
+            leaf = new X509Certificate2(certificate);
+            return chain.Build(leaf);
+        }
+        catch (Exception ex)
+        {
+            if (ShouldLog($"{Profile.Id}|trust-store|{ex.GetType().Name}"))
+                _log.Warn("TAK", $"Trust store validation failed ({ex.GetType().Name}) profile={ProfileLabel(Profile)}.");
+            return false;
+        }
+        finally
+        {
+            leaf?.Dispose();
+            foreach (var c in owned) c.Dispose();
+        }
+    }
+
+    private static List<X509Certificate2> ReadPemCertificates(string pemText)
+    {
+        var list = new List<X509Certificate2>();
+        const string begin = "-----BEGIN CERTIFICATE-----";
+        const string end = "-----END CERTIFICATE-----";
+        var idx = 0;
+        while (idx < pemText.Length)
+        {
+            var start = pemText.IndexOf(begin, idx, StringComparison.Ordinal);
+            if (start < 0) break;
+            var stop = pemText.IndexOf(end, start, StringComparison.Ordinal);
+            if (stop < 0) break;
+            stop += end.Length;
+            var block = pemText[start..stop];
+            try
+            {
+                list.Add(X509Certificate2.CreateFromPem(block));
+            }
+            catch
+            {
+                // skip malformed block
+            }
+
+            idx = stop;
+        }
+
+        return list;
     }
 
     private void LogConnectionFailure(ServerProfile profile, string error)

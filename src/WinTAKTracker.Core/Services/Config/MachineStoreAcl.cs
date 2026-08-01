@@ -5,13 +5,13 @@ namespace WinTAKTracker.Services.Config;
 
 /// <summary>
 /// Hardens %ProgramData%\WinTAKTracker ACLs for the Windows Service + tray companion.
-/// Root / logs / updates: SYSTEM + Administrators Full; Authenticated Users Modify.
-/// secrets / certs: SYSTEM + Administrators Full only (tray mutates secrets via IPC when possible).
+/// Root / secrets / certs / logs / updates: SYSTEM + Administrators Full; Authenticated Users Modify.
+/// Tray enroll/import writes certs + DPAPI secrets directly; mutating IPC still requires an interactive client.
 /// </summary>
 public static class MachineStoreAcl
 {
     /// <summary>
-    /// Create machine root + sensitive subdirs and apply the hardened ACL model.
+    /// Create machine root + subdirs and apply the ACL model.
     /// Best-effort: succeeds when called as SYSTEM/admin; tray may fail silently if already locked down.
     /// </summary>
     public static void EnsureUsersCanModify(string? rootDir = null)
@@ -30,9 +30,9 @@ public static class MachineStoreAcl
         try
         {
             ApplyRootAcl(root);
-            ApplySensitiveAcl(secrets);
-            ApplySensitiveAcl(certs);
-            // logs / updates inherit Authenticated Users Modify from root (also re-assert for clarity).
+            // Tray Settings enroll/import must write here as the interactive user.
+            ApplyRootAcl(secrets);
+            ApplyRootAcl(certs);
             ApplyRootAcl(logs);
             ApplyRootAcl(updates);
         }

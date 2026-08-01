@@ -6,7 +6,7 @@ namespace WinTAKTracker.Services.Config;
 /// </summary>
 public sealed class AppConfig
 {
-    public const int CurrentVersion = 2;
+    public const int CurrentVersion = 3;
 
     public int Version { get; set; } = CurrentVersion;
 
@@ -57,6 +57,13 @@ public sealed class AppConfig
     /// </summary>
     public void EnsureIdentityDefaults()
     {
+        // v3: bare hostname in remarks was shown as callsign in some Portal/Server UIs.
+        if (Version < 3)
+        {
+            Reporting.IncludeComputerNameInRemarks = false;
+            Version = CurrentVersion;
+        }
+
         if (Identity is not null)
         {
             var legacy = Identity.Callsign?.Trim() ?? "";
@@ -178,7 +185,11 @@ public sealed class ReportingSettings
     /// machine name in CoT <c>detail/remarks</c> so peers can see which device reported.
     /// Default on.
     /// </summary>
-    public bool IncludeComputerNameInRemarks { get; set; } = true;
+    /// <summary>
+    /// When true, add <c>Computer: {MachineName}</c> to CoT remarks (not a bare hostname —
+    /// some Portal UIs mis-read bare remarks as the callsign).
+    /// </summary>
+    public bool IncludeComputerNameInRemarks { get; set; }
 }
 
 public sealed class MeshSaSettings

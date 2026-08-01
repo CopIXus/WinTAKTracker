@@ -31,7 +31,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- **TAK Server managed-device presence** — announce PLI immediately on connect; ATAK-shaped self-SA (`endpoint`, `uid@Droid`, `precisionlocation`); reply to `t-x-c-t` pings; new installs use `WINDOWS-WinTAKTracker-*` device UIDs ([docs/managed-devices.md](docs/managed-devices.md))
+- **Callsign vs computer name on Portal/Server** — delay first PLI until user session can bind; re-announce when callsign changes; stop bare hostname in CoT remarks (optional `Computer: …`, default off)
+- **TAK Server managed-device presence** — announce PLI on connect; ATAK-shaped self-SA (`endpoint`, `uid@Droid`, `precisionlocation`); reply to `t-x-c-t` pings; new installs use `WINDOWS-WinTAKTracker-*` device UIDs ([docs/managed-devices.md](docs/managed-devices.md))
 - **Schannel mTLS after enroll** — load client `.p12` with `MachineKeySet`/`UserKeySet` (not `EphemeralKeySet`); Windows Schannel cannot use ephemeral private keys for `SslStream`, which looked like “client certificate rejected” after a successful Portal enroll
 - **Private-CA TLS after enroll** — persist/load the full Marti CA chain in the trust store (not only `ca0`); clearer errors when the *server* cert is untrusted vs client cert rejected; tray can write `certs`/`secrets` again for enroll; soft-accept toggle reloads connections
 - **No double tracker** — when the Windows Service is installed, tray retries IPC attach (backoff) and never falls back to in-process `Core.StartAsync` if the service is unreachable (companion-only)

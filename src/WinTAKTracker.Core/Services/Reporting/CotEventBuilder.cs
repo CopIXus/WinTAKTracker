@@ -123,7 +123,8 @@ public static class CotEventBuilder
     }
 
     /// <summary>
-    /// When enabled and the PLI callsign is not the machine name, put the computer name in remarks.
+    /// When enabled and the PLI callsign is not the machine name, note the host in remarks.
+    /// Prefixed so TAK Portal / Server do not treat the hostname as the callsign.
     /// </summary>
     internal static string? BuildComputerNameRemarks(AppConfig config, string callsign)
     {
@@ -132,7 +133,7 @@ public static class CotEventBuilder
         if (machine.Length == 0) return null;
         if (string.Equals(callsign.Trim(), machine, StringComparison.OrdinalIgnoreCase))
             return null;
-        return machine;
+        return "Computer: " + machine;
     }
 
     private static XElement BuildContact(CotIdentity identity)

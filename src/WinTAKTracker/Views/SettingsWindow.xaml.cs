@@ -1261,7 +1261,7 @@ public partial class SettingsWindow : Window
         };
         panel.Children.Add(remarks);
         panel.Children.Add(Blurb(
-            "When your PLI callsign is not this PC’s Windows name, peers see the computer name in ATAK remarks. Off skips that remarks line. Default on."));
+            "Optional. Adds “Computer: {Windows name}” to CoT remarks when your callsign differs. Leave off if TAK Portal shows the PC name instead of your callsign (default off)."));
 
         void SaveReporting()
         {

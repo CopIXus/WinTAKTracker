@@ -92,9 +92,9 @@ public sealed class TrackingHost : IDisposable
         };
         Tak.ServerConnected += (_, profile) =>
         {
-            // First PLI identifies the TLS session in TAK Server (callsign/UID vs bare tls:N).
-            _ = Reporting.AnnouncePresenceAsync();
-            _ = ProfileSync.TrySyncAsync(profile, Config, _activeUserSid, _activeUserName);
+            // Delay briefly so tray SetActiveSession can win the race — otherwise the first PLI
+            // uses computer callsign (machine name) and Portal/TAK Server keep that label.
+            _ = AnnouncePresenceAfterConnectAsync(profile);
         };
 
         if (!serviceMode)
@@ -245,6 +245,7 @@ public sealed class TrackingHost : IDisposable
     public void SetActiveSession(string? userSid, string? userName)
     {
         var previous = _activeUserSid;
+        var previousCallsign = GetActiveIdentity().Callsign;
         _activeUserSid = userSid;
         _activeUserName = userName;
         ActiveCompanionSid = string.IsNullOrWhiteSpace(userSid) ? null : userSid;
@@ -252,11 +253,31 @@ public sealed class TrackingHost : IDisposable
         if (string.IsNullOrWhiteSpace(userSid) && !string.IsNullOrWhiteSpace(previous))
             Gps.ClearExternalFix();
 
+        var next = GetActiveIdentity();
         Reporting.NotifyIdentityChanged();
+        // Re-bind TAK Server / Portal connection label when user callsign replaces machine name.
+        if (!string.Equals(previousCallsign, next.Callsign, StringComparison.Ordinal))
+            _ = Reporting.AnnouncePresenceAsync();
+
         Log.Info("Identity", string.IsNullOrWhiteSpace(userSid)
             ? "Active identity → computer callsign (logged off / no session)."
-            : $"Active session user SID set; identity source={GetActiveIdentity().Source}.");
+            : $"Active session user SID set; identity source={next.Source} callsign={next.Callsign}.");
         StatusChanged?.Invoke(this, EventArgs.Empty);
+    }
+
+    private async Task AnnouncePresenceAfterConnectAsync(ServerProfile profile)
+    {
+        try
+        {
+            await Task.Delay(TimeSpan.FromMilliseconds(1500)).ConfigureAwait(false);
+            await Reporting.AnnouncePresenceAsync().ConfigureAwait(false);
+            await ProfileSync.TrySyncAsync(profile, Config, _activeUserSid, _activeUserName)
+                .ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            Log.Warn("Identity", $"Post-connect announce/sync failed: {ex.GetType().Name}");
+        }
     }
 
     /// <summary>
@@ -344,6 +365,7 @@ public sealed class TrackingHost : IDisposable
         {
             _activeUserSid ??= userSid;
             Reporting.NotifyIdentityChanged();
+            _ = Reporting.AnnouncePresenceAsync();
         }
 
         StatusChanged?.Invoke(this, EventArgs.Empty);

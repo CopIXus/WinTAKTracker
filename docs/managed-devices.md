@@ -16,10 +16,13 @@ CloudTAK using UID `ANDROID-CloudTAK-{user}` and ATAK using `ANDROID-…` does *
 
 On each TAK connect:
 
-1. Immediate presence PLI (even before a fresh GPS fix, with a held/unknown point if needed)
-2. Self-SA shaped like ATAK: `contact@callsign` + `endpoint=*:-1:stcp`, `uid@Droid`, `__group`, `takv platform=WinTAKTracker`, `precisionlocation`
-3. Ping reply: server `t-x-c-t` → client `t-x-c-t-r`
-4. Device UID: `WINDOWS-WinTAKTracker-{machineGuid}` (existing `WIN-*` UIDs are left unchanged)
+1. Presence PLI shortly after connect (waits briefly for tray user session so the first label is **your callsign**, not the Windows computer name)
+2. Re-announce when the interactive user session binds a different callsign
+3. Self-SA shaped like ATAK: `contact@callsign` + `endpoint=*:-1:stcp`, `uid@Droid`, `__group`, `takv platform=WinTAKTracker`, `precisionlocation`
+4. Ping reply: server `t-x-c-t` → client `t-x-c-t-r`
+5. Device UID: `WINDOWS-WinTAKTracker-{machineGuid}` (existing `WIN-*` UIDs are left unchanged)
+
+**Do not** put a bare hostname in `remarks` — some Portal UIs have treated that text as the callsign. Optional “Computer: {name}” remarks are off by default (Reporting settings).
 
 ## Portal gap
 

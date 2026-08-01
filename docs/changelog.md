@@ -24,6 +24,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Callsign vs computer name on Portal/Server** — wait for user session before first PLI; re-announce on callsign change; bare hostname remarks removed (optional `Computer: …`, default off)
 - **TAK Server managed-device presence** — PLI on connect, ATAK-shaped self-SA, `t-x-c-t` ping reply, `WINDOWS-WinTAKTracker-*` UIDs ([managed-devices.md](managed-devices.md))
 - **Schannel mTLS after enroll** — client `.p12` loaded with `MachineKeySet`/`UserKeySet` (not `EphemeralKeySet`); fixes false “client certificate rejected” after Portal enroll on Windows
 - **Private-CA TLS after enroll** — persist/load the full Marti CA chain in the trust store; clearer server-trust vs client-cert errors; tray can write `certs`/`secrets` for enroll; soft-accept toggle reloads connections

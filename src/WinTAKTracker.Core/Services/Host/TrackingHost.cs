@@ -83,12 +83,22 @@ public sealed class TrackingHost : IDisposable
             LastErrorCode = s.LastErrorCode,
             LastSendUtc = s.LastSendUtc,
         }).ToList();
+        var fix = Gps.CurrentFix;
         return new TrackerStatusDto
         {
             ServiceMode = ServiceMode,
             Paused = Pause.IsPaused,
             HasGpsFix = hasFix,
-            GpsSource = Gps.CurrentFix?.Source.ToString(),
+            GpsSource = fix?.Source.ToString(),
+            GpsSourceDisplay = fix?.SourceDisplayName,
+            GpsIsHeld = fix?.IsHeld == true,
+            Latitude = fix?.Latitude,
+            Longitude = fix?.Longitude,
+            AltitudeMeters = fix?.AltitudeMeters,
+            SpeedMetersPerSecond = fix?.SpeedMetersPerSecond,
+            CourseDegrees = fix?.CourseDegrees,
+            AccuracyMeters = fix?.AccuracyMeters,
+            GpsTimestampUtc = fix?.Timestamp,
             AnyTakConnected = Tak.AnyConnected,
             AnyTakReconnecting = Tak.AnyReconnecting,
             MeshReady = Config.MeshSa.Enabled && Mesh.IsReady && Mesh.LastErrorCode is null,

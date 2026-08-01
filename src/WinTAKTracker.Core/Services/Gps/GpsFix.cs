@@ -5,6 +5,10 @@ public enum GpsSourceKind
     None,
     NmeaSerial,
     WindowsLocation,
+    /// <summary>
+    /// WinRT / Wi‑Fi fix acquired in the interactive tray session and pushed to the service over IPC.
+    /// </summary>
+    Companion,
     /// <summary>Approximate IP-based geolocation (large CE; not precision GPS).</summary>
     NetworkIp,
     Held,
@@ -41,6 +45,7 @@ public sealed class GpsFix
     {
         GpsSourceKind.NmeaSerial => "NMEA",
         GpsSourceKind.WindowsLocation => "Windows Location (Wi‑Fi/network)",
+        GpsSourceKind.Companion => "Windows Location (tray)",
         GpsSourceKind.NetworkIp => "Network IP (approximate)",
         GpsSourceKind.Held => "Held (last fix)",
         _ => Source.ToString(),

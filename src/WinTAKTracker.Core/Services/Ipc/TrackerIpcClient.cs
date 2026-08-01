@@ -93,6 +93,12 @@ public sealed class TrackerIpcClient : IAsyncDisposable
     public Task<IpcResponse> DismissUserSetupPromptAsync(IdentityUpdateDto dto, CancellationToken ct = default) =>
         CallAsync(IpcMethod.DismissUserSetupPrompt, dto, ct);
 
+    public Task<IpcResponse> PushGpsFixAsync(GpsFixDto dto, CancellationToken ct = default) =>
+        CallAsync(IpcMethod.PushGpsFix, dto, ct);
+
+    public Task<IpcResponse> ClearGpsFixAsync(CancellationToken ct = default) =>
+        CallAsync(IpcMethod.ClearGpsFix, null, ct);
+
     public async Task NotifyCurrentUserSessionAsync(CancellationToken ct = default)
     {
         await SetActiveSessionAsync(new SessionUpdateDto

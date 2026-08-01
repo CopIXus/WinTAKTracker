@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Reflection;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using System.Windows.Threading;
@@ -201,28 +202,47 @@ public partial class SettingsWindow : Window
     }
 
     private StackPanel? _statusPanel;
-    private readonly Dictionary<string, TextBlock> _statusValues = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, TextBlock> _statusTileValues = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, TextBlock> _statusTileDetails = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, Border> _statusTiles = new(StringComparer.Ordinal);
 
     private UIElement BuildStatus()
     {
         _statusPanel = new StackPanel();
-        _statusValues.Clear();
+        _statusTileValues.Clear();
+        _statusTileDetails.Clear();
+        _statusTiles.Clear();
 
         _statusPanel.Children.Add(BuildModeBadge());
 
-        var telemetry = new StackPanel { Margin = new Thickness(0, 0, 0, 8) };
-        foreach (var key in new[] { "Mode", "Tray", "Tracking", "GPS", "Position", "Motion", "Servers", "Mesh SA", "Last PLI", "Active callsign" })
+        var grid = new UniformGrid
         {
-            var row = StatusRow(key, "—");
-            telemetry.Children.Add(row);
-        }
-        _statusPanel.Children.Add(telemetry);
+            Columns = 2,
+            Margin = new Thickness(0, 0, -8, 4),
+        };
+        foreach (var key in new[]
+                 {
+                     "Tracking", "GPS", "Position", "Motion",
+                     "Servers", "Mesh", "Last PLI", "Callsign",
+                 })
+            grid.Children.Add(CreateStatusTile(key));
+        _statusPanel.Children.Add(grid);
 
-        if (_host.Gps.WindowsPermission is GpsPermissionState.Denied or GpsPermissionState.NotAvailable)
+        _statusPanel.Children.Add(new TextBlock
+        {
+            Text = "Many laptops have no GNSS chip — browsers use Wi‑Fi/IP location. WinTAKTracker needs Location services ON, “Let desktop apps access your location”, and a permission grant from this tray app. When the Windows Service owns tracking, the tray acquires the fix and feeds it over IPC. USB NMEA is best for always-on GPS after logoff.",
+            Style = TryStyle("HelperText"),
+            Margin = new Thickness(0, 0, 0, 12),
+        });
+
+        var perm = _host.WindowsLocationPermission;
+        if (perm is GpsPermissionState.Denied or GpsPermissionState.NotAvailable or GpsPermissionState.Unknown)
         {
             var locWarnText = new TextBlock
             {
-                Text = "Windows Location is not available. Enable Settings → Privacy & security → Location (Location services + desktop apps), then request permission under GPS. Until then, only USB NMEA or approximate Network IP can be used.",
+                Text = perm == GpsPermissionState.Unknown
+                    ? "Windows Location permission has not been requested yet. Use the button below (or GPS → Request permission). Also enable Settings → Privacy & security → Location → Location services and “Let desktop apps access your location”."
+                    : "Windows Location is not available to this app. Enable Settings → Privacy & security → Location (Location services + desktop apps), then request permission. Until then, only USB NMEA or approximate Network IP can be used.",
                 TextWrapping = TextWrapping.Wrap,
             };
             SetTheme(locWarnText, TextBlock.ForegroundProperty, "DangerBrush");
@@ -231,26 +251,39 @@ public partial class SettingsWindow : Window
                 BorderThickness = new Thickness(1),
                 CornerRadius = new CornerRadius(6),
                 Padding = new Thickness(12, 10, 12, 10),
-                Margin = new Thickness(0, 0, 0, 12),
+                Margin = new Thickness(0, 0, 0, 8),
                 Child = locWarnText,
             };
             SetTheme(locWarn, Border.BackgroundProperty, "DangerBgBrush");
             SetTheme(locWarn, Border.BorderBrushProperty, "AppBorderBrush");
             _statusPanel.Children.Add(locWarn);
-            _statusPanel.Children.Add(Btn("Open Windows Location privacy settings", () =>
-                WindowsLocationGps.OpenWindowsLocationPrivacySettings()));
         }
+
+        var actionRow = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 0, 0, 8) };
+        actionRow.Children.Add(Btn("Request location permission", async () =>
+        {
+            var state = await _host.RequestWindowsLocationAccessAsync();
+            Msg(state == GpsPermissionState.Allowed
+                ? "Windows Location allowed. Wait a few seconds for a Wi‑Fi/network fix; Status tiles and the map will update when a position arrives."
+                : $"Permission: {state}. Open Windows Location privacy settings and enable Location services + “Let desktop apps access your location”.");
+            if (SectionList.SelectedItem is ListBoxItem { Tag: string tag } && tag == "Status")
+                ShowSection("Status");
+        }));
+        actionRow.Children.Add(Spacer(8));
+        actionRow.Children.Add(Btn("Open Windows Location settings", () =>
+            WindowsLocationGps.OpenWindowsLocationPrivacySettings()));
+        _statusPanel.Children.Add(actionRow);
 
         var copyRow = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 0, 0, 4) };
         copyRow.Children.Add(Btn("Copy lat", () =>
         {
-            var f = _host.Gps.CurrentFix;
+            var f = GetEffectiveFix();
             if (f is not null) Copy(f.Latitude.ToString("F6"));
         }));
         copyRow.Children.Add(Spacer(8));
         copyRow.Children.Add(Btn("Copy lon", () =>
         {
-            var f = _host.Gps.CurrentFix;
+            var f = GetEffectiveFix();
             if (f is not null) Copy(f.Longitude.ToString("F6"));
         }));
         _statusPanel.Children.Add(copyRow);
@@ -270,6 +303,86 @@ public partial class SettingsWindow : Window
         _statusPanel.Children.Add(mapChrome);
         RefreshStatusLive();
         return _statusPanel;
+    }
+
+    private Border CreateStatusTile(string key)
+    {
+        var stack = new StackPanel();
+        var label = new TextBlock { Text = key, Style = TryStyle("StatusTileLabel") };
+        var value = new TextBlock { Text = "—", Style = TryStyle("StatusTileValue") };
+        var detail = new TextBlock { Text = "", Style = TryStyle("StatusTileDetail"), Visibility = Visibility.Collapsed };
+        stack.Children.Add(label);
+        stack.Children.Add(value);
+        stack.Children.Add(detail);
+
+        var tile = new Border
+        {
+            Style = TryStyle("StatusTile"),
+            Child = stack,
+            Tag = key,
+        };
+        _statusTiles[key] = tile;
+        _statusTileValues[key] = value;
+        _statusTileDetails[key] = detail;
+        return tile;
+    }
+
+    private void SetStatusTile(string key, string value, string? detail = null, string tone = "neutral")
+    {
+        if (_statusTileValues.TryGetValue(key, out var valueTb))
+            valueTb.Text = value;
+        if (_statusTileDetails.TryGetValue(key, out var detailTb))
+        {
+            if (string.IsNullOrWhiteSpace(detail))
+            {
+                detailTb.Text = "";
+                detailTb.Visibility = Visibility.Collapsed;
+            }
+            else
+            {
+                detailTb.Text = detail;
+                detailTb.Visibility = Visibility.Visible;
+            }
+        }
+
+        if (!_statusTiles.TryGetValue(key, out var tile)) return;
+        var (bg, fg) = tone switch
+        {
+            "ok" => ("StatusOkBgBrush", "StatusOkFgBrush"),
+            "warn" => ("StatusWarnBgBrush", "StatusWarnFgBrush"),
+            "info" => ("StatusInfoBgBrush", "StatusInfoFgBrush"),
+            _ => ("StatusNeutralBgBrush", "StatusNeutralFgBrush"),
+        };
+        SetTheme(tile, Border.BackgroundProperty, bg);
+        if (valueTb is not null)
+            SetTheme(valueTb, TextBlock.ForegroundProperty, fg);
+    }
+
+    private GpsFix? GetEffectiveFix()
+    {
+        if (!_host.AttachedToService)
+            return _host.Gps.CurrentFix;
+
+        var st = _host.LastServiceStatus;
+        if (st?.Latitude is not double lat || st.Longitude is not double lon)
+            return null;
+
+        var source = GpsSourceKind.None;
+        if (!string.IsNullOrWhiteSpace(st.GpsSource))
+            Enum.TryParse(st.GpsSource, true, out source);
+
+        return new GpsFix
+        {
+            Latitude = lat,
+            Longitude = lon,
+            AltitudeMeters = st.AltitudeMeters,
+            SpeedMetersPerSecond = st.SpeedMetersPerSecond,
+            CourseDegrees = st.CourseDegrees,
+            AccuracyMeters = st.AccuracyMeters,
+            Timestamp = st.GpsTimestampUtc ?? DateTimeOffset.UtcNow,
+            Source = source,
+            IsHeld = st.GpsIsHeld,
+        };
     }
 
     /// <summary>
@@ -295,37 +408,14 @@ public partial class SettingsWindow : Window
         }
     }
 
-    private UIElement StatusRow(string key, string value)
-    {
-        var grid = new Grid { Margin = new Thickness(0, 0, 0, 10) };
-        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(120) });
-        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-
-        var keyTb = new TextBlock { Text = key, Style = TryStyle("StatusKeyText") };
-        var valueTb = new TextBlock { Text = value, Style = TryStyle("StatusValueText") };
-        _statusValues[key] = valueTb;
-
-        Grid.SetColumn(keyTb, 0);
-        Grid.SetColumn(valueTb, 1);
-        grid.Children.Add(keyTb);
-        grid.Children.Add(valueTb);
-        return grid;
-    }
-
-    private void SetStatus(string key, string value)
-    {
-        if (_statusValues.TryGetValue(key, out var tb))
-            tb.Text = value;
-    }
-
     private UIElement BuildModeBadge()
     {
         var service = _host.AttachedToService;
         var title = service ? "Mode: Windows Service" : "Mode: Standalone";
         var sub = service
             ? (ConfigPaths.IsServiceInstalled()
-                ? "Tray attached via IPC · tracking owned by the Windows Service"
-                : "IPC pipe connected")
+                ? "Tray attached via IPC · tracking owned by the Windows Service · location bridged from this session"
+                : "IPC pipe connected · location bridged from this session")
             : (ConfigPaths.IsServiceInstalled()
                 ? "In-process tracking · service installed but not attached"
                 : "In-process tracking · Windows Service not installed");
@@ -359,51 +449,90 @@ public partial class SettingsWindow : Window
 
     private void RefreshStatusLive()
     {
-        if (_statusValues.Count == 0) return;
+        if (_statusTileValues.Count == 0) return;
 
         if (_host.AttachedToService)
-        {
             _host.RefreshTray();
-            var st = _host.LastServiceStatus;
-            var serverLine = FormatServerStatusSummary(_host.GetServerStatuses());
-            SetStatus("Mode", "Windows Service (IPC attached)");
-            SetStatus("Tray", _host.Tray.CurrentState.ToTooltip());
-            SetStatus("Tracking", st?.Paused == true ? "Paused" : "Active");
-            SetStatus("GPS", st?.HasGpsFix == true
-                ? $"Fix via {st.GpsSource ?? "unknown"}"
-                : "No fix");
-            SetStatus("Position", "— (see service / map companions)");
-            SetStatus("Motion", "—");
-            SetStatus("Servers", serverLine);
-            SetStatus("Mesh SA", st?.MeshReady == true ? "Ready" : (st?.MeshLastError ?? "—"));
-            SetStatus("Last PLI", st?.LastPliSentUtc?.ToLocalTime().ToString("G") ?? "—");
-            SetStatus("Active callsign", st?.ActiveIdentity is null
-                ? "—"
-                : $"{st.ActiveIdentity.Callsign} ({st.ActiveIdentity.Source})");
-            return;
+
+        var fix = GetEffectiveFix();
+        var servers = FormatServerStatusSummary(_host.GetServerStatuses());
+        var paused = _host.AttachedToService
+            ? _host.LastServiceStatus?.Paused == true
+            : _host.Pause.IsPaused;
+        var meshReady = _host.AttachedToService
+            ? _host.LastServiceStatus?.MeshReady == true
+            : (_host.Config.MeshSa.Enabled && _host.Mesh.IsReady && _host.Mesh.LastErrorCode is null);
+        var meshDetail = _host.AttachedToService
+            ? (_host.LastServiceStatus?.MeshLastError ?? (_host.Config.MeshSa.Enabled ? null : "Disabled"))
+            : FormatMeshStatusLine();
+        var lastPli = _host.AttachedToService
+            ? _host.LastServiceStatus?.LastPliSentUtc
+            : _host.Reporting.LastPliSentUtc;
+        string callsign;
+        string team;
+        if (_host.AttachedToService && _host.LastServiceStatus?.ActiveIdentity is { } id)
+        {
+            callsign = $"{id.Callsign} ({id.Source})";
+            team = id.Team;
+        }
+        else
+        {
+            var active = _host.Core.GetActiveIdentity();
+            callsign = $"{active.Callsign} ({active.Source})";
+            team = active.Team;
         }
 
-        var fix = _host.Gps.CurrentFix;
-        var servers = FormatServerStatusSummary(_host.GetServerStatuses());
+        SetStatusTile("Tracking", paused ? "Paused" : "Active",
+            _host.Tray.CurrentState.ToTooltip(),
+            paused ? "warn" : "ok");
 
-        SetStatus("Mode", "Standalone (in-process)");
-        SetStatus("Tray", _host.Tray.CurrentState.ToTooltip());
-        SetStatus("Tracking", _host.Pause.IsPaused ? "Paused" : "Active");
-        SetStatus("GPS", fix is null ? "No fix" : $"{(fix.IsHeld ? "Held" : "Live")} via {fix.SourceDisplayName}");
-        SetStatus("Position", fix is null
-            ? "—"
-            : $"{fix.Latitude:F6}, {fix.Longitude:F6}");
-        SetStatus("Motion", fix is null
-            ? "—"
-            : $"Speed {fix.SpeedMph:F1} mph · Course {(fix.CourseDegrees is double c ? $"{c:F0}°" : "—")} · Alt {(fix.AltitudeMeters is double a ? $"{a:F1} m" : "—")} · Acc {(fix.AccuracyMeters is double ac ? $"{ac:F0} m" : "—")}" +
-              (fix.Source == GpsSourceKind.NetworkIp ? " · city/region scale" : ""));
-        SetStatus("Servers", string.IsNullOrEmpty(servers) ? "None" : servers);
-        SetStatus("Mesh SA", FormatMeshStatusLine());
-        SetStatus("Last PLI", _host.Reporting.LastPliSentUtc?.ToLocalTime().ToString("G") ?? "—");
-        var active = _host.Core.GetActiveIdentity();
-        SetStatus("Active callsign", $"{active.Callsign} ({active.Source})");
+        if (fix is null)
+        {
+            SetStatusTile("GPS", "No fix",
+                _host.AttachedToService
+                    ? "Waiting for tray Windows Location, NMEA, or Network IP"
+                    : "Waiting for NMEA, Windows Location, or Network IP",
+                "warn");
+            SetStatusTile("Position", "—", "No coordinates yet", "neutral");
+            SetStatusTile("Motion", "—", null, "neutral");
+        }
+        else
+        {
+            var liveLabel = fix.IsHeld ? "Held" : "Live";
+            var sourceName = !string.IsNullOrWhiteSpace(_host.LastServiceStatus?.GpsSourceDisplay) && _host.AttachedToService
+                ? _host.LastServiceStatus!.GpsSourceDisplay!
+                : fix.SourceDisplayName;
+            SetStatusTile("GPS", $"{liveLabel}", sourceName, fix.IsHeld ? "info" : "ok");
+            SetStatusTile("Position", $"{fix.Latitude:F5}, {fix.Longitude:F5}",
+                fix.AccuracyMeters is double acc ? $"±{acc:F0} m" : null,
+                "ok");
+            var course = fix.CourseDegrees is double c ? $"{c:F0}°" : "—";
+            var alt = fix.AltitudeMeters is double a ? $"{a:F0} m" : "—";
+            SetStatusTile("Motion", $"{fix.SpeedMph:F1} mph",
+                $"Course {course} · Alt {alt}" +
+                (fix.Source == GpsSourceKind.NetworkIp ? " · city/region scale" : ""),
+                fix.Source == GpsSourceKind.NetworkIp ? "info" : "ok");
+        }
 
-        _mapPreview?.UpdateFix(fix, active.Team);
+        var anyConnected = _host.GetServerStatuses().Any(s => s.State == TakConnectionState.Connected);
+        SetStatusTile("Servers",
+            string.IsNullOrEmpty(servers) || servers == "None" ? "None" : (anyConnected ? "Connected" : "Not connected"),
+            string.IsNullOrEmpty(servers) ? null : servers,
+            anyConnected ? "ok" : "neutral");
+
+        SetStatusTile("Mesh",
+            meshReady ? "Ready" : (_host.Config.MeshSa.Enabled ? "Not ready" : "Off"),
+            meshReady ? null : meshDetail,
+            meshReady ? "ok" : (_host.Config.MeshSa.Enabled ? "warn" : "neutral"));
+
+        SetStatusTile("Last PLI",
+            lastPli?.ToLocalTime().ToString("g") ?? "—",
+            null,
+            lastPli.HasValue ? "ok" : "neutral");
+
+        SetStatusTile("Callsign", callsign, null, "info");
+
+        _mapPreview?.UpdateFix(fix, team);
     }
 
     private static string FormatServerStatusSummary(IReadOnlyList<ServerConnectionStatus> statuses)
@@ -920,7 +1049,10 @@ public partial class SettingsWindow : Window
         var edit = CanEdit;
         panel.Children.Add(Blurb(
             "Preferred order: USB NMEA (if you select a COM port) → Windows Location (Wi‑Fi/OS, same stack browsers use) → network/IP geolocation last (approximate, large CE via ipwho.is).\n\n" +
-            "For accurate location without a GPS dongle: turn on Windows Location — Settings → Privacy & security → Location → Location services ON, and allow desktop apps to use your location. Then use Request Windows Location permission below."));
+            "Laptops often have no GNSS chip — Chrome/Edge use Wi‑Fi/IP via the same Windows Location stack. Enable Settings → Privacy & security → Location → Location services ON, and “Let desktop apps access your location”. Then Request permission below (must run from this tray app, not the Windows Service).\n\n" +
+            (_host.AttachedToService
+                ? "Service mode: the tray acquires Windows Location and feeds the service over IPC while you are logged on. USB NMEA is best for always-on GPS after logoff."
+                : "Standalone mode: this process owns GPS directly. USB NMEA is still best when you need a fix after the user session ends.")));
         var ports = _host.Gps.GetComPorts().ToList();
         ports.Insert(0, "(none — use Windows Location)");
         var selectedPort = string.IsNullOrWhiteSpace(_host.Config.Gps.ComPort)
@@ -955,16 +1087,22 @@ public partial class SettingsWindow : Window
         var permRow = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 4, 0, 8) };
         permRow.Children.Add(Btn("Request Windows Location permission", async () =>
         {
-            if (!EnsureEditable()) return;
-            var state = await _host.Gps.RequestWindowsLocationAccessAsync();
+            // Permission must be requested from the interactive tray process (not LocalSystem).
+            var state = await _host.RequestWindowsLocationAccessAsync();
             Msg(state == GpsPermissionState.Allowed
-                ? "Windows Location allowed. If Status still shows Network IP, wait a few seconds for a Wi‑Fi fix or confirm Location services are on."
+                ? "Windows Location allowed. If Status still shows Network IP, wait a few seconds for a Wi‑Fi fix or confirm Location services and desktop-apps access are on."
                 : $"Permission: {state}. Open Windows Location privacy settings and enable Location + desktop apps.");
-        }, edit));
+        }));
         permRow.Children.Add(new Border { Width = 8 });
         permRow.Children.Add(Btn("Open Windows Location settings", () =>
             WindowsLocationGps.OpenWindowsLocationPrivacySettings()));
         panel.Children.Add(permRow);
+        panel.Children.Add(new TextBlock
+        {
+            Text = $"Current permission: {_host.WindowsLocationPermission}",
+            Style = TryStyle("HelperText"),
+            Margin = new Thickness(0, 0, 0, 8),
+        });
 
         async Task SaveGpsAsync()
         {
@@ -975,7 +1113,10 @@ public partial class SettingsWindow : Window
             _host.Config.Gps.LastFixHoldSeconds = int.TryParse(hold.Text, out var h) ? h : 30;
             _host.Config.Gps.EnableNetworkFallback = network.IsChecked == true;
             Persist();
-            await _host.Gps.ApplySettingsAsync(_host.Config.Gps);
+            if (_host.AttachedToService)
+                await _host.ReloadConnectionsAsync();
+            else
+                await _host.Gps.ApplySettingsAsync(_host.Config.Gps);
         }
 
         BindPersistText(port, () => _ = SaveGpsAsync());

@@ -4,6 +4,7 @@ using System.Security.Principal;
 using System.Text;
 using System.Text.Json;
 using WinTAKTracker.Services.Config;
+using WinTAKTracker.Services.Gps;
 using WinTAKTracker.Services.Host;
 
 namespace WinTAKTracker.Services.Ipc;
@@ -133,6 +134,8 @@ public sealed class TrackerIpcServer : IAsyncDisposable
                 nameof(IpcMethod.SetUserIdentity) => SetUserIdentity(request.Payload),
                 nameof(IpcMethod.SetActiveSession) => SetActiveSession(request.Payload),
                 nameof(IpcMethod.DismissUserSetupPrompt) => DismissSetup(request.Payload),
+                nameof(IpcMethod.PushGpsFix) => PushGpsFix(request.Payload),
+                nameof(IpcMethod.ClearGpsFix) => ClearGpsFix(),
                 _ => throw new InvalidOperationException($"Unknown method '{method}'."),
             };
 
@@ -199,6 +202,38 @@ public sealed class TrackerIpcServer : IAsyncDisposable
         var dto = DeserializePayload<IdentityUpdateDto>(payload);
         var sid = dto.UserSid ?? throw new InvalidOperationException("UserSid is required.");
         _host.DismissUserSetupPrompt(sid, dto.UserName);
+        return _host.GetStatus();
+    }
+
+    private object PushGpsFix(JsonElement? payload)
+    {
+        var dto = DeserializePayload<GpsFixDto>(payload);
+        if (double.IsNaN(dto.Latitude) || double.IsNaN(dto.Longitude))
+            throw new InvalidOperationException("Invalid fix coordinates.");
+
+        var source = GpsSourceKind.Companion;
+        if (!string.IsNullOrWhiteSpace(dto.Source) &&
+            Enum.TryParse<GpsSourceKind>(dto.Source, true, out var parsed) &&
+            parsed is not GpsSourceKind.None and not GpsSourceKind.Held)
+            source = parsed == GpsSourceKind.WindowsLocation ? GpsSourceKind.Companion : parsed;
+
+        _host.Gps.AcceptExternalFix(new GpsFix
+        {
+            Latitude = dto.Latitude,
+            Longitude = dto.Longitude,
+            AltitudeMeters = dto.AltitudeMeters,
+            SpeedMetersPerSecond = dto.SpeedMetersPerSecond,
+            CourseDegrees = dto.CourseDegrees,
+            AccuracyMeters = dto.AccuracyMeters,
+            Timestamp = dto.TimestampUtc == default ? DateTimeOffset.UtcNow : dto.TimestampUtc,
+            Source = source,
+        });
+        return _host.GetStatus();
+    }
+
+    private object ClearGpsFix()
+    {
+        _host.Gps.ClearExternalFix();
         return _host.GetStatus();
     }
 

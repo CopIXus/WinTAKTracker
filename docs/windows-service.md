@@ -132,13 +132,15 @@ dotnet run --project src/WinTAKTracker
 |--------|-------------------|
 | NMEA serial | Expected to work (COM ACLs for service account) |
 | IP geolocation | Expected to work (coarse) |
-| Windows Location (WinRT) | Best-effort / often unavailable as LocalSystem — do not rely on it after logoff |
+| Windows Location (WinRT) | Not reliable as LocalSystem — tray companion bridges Wi‑Fi/network fixes over IPC while logged on |
+
+**Companion location bridge:** While the tray is attached, it runs `Geolocator` in the interactive user session (can show the consent UI and use “Let desktop apps access your location”), then pushes fixes to the service via `PushGpsFix`. On tray exit it sends `ClearGpsFix`. After logoff, prefer USB NMEA (or coarse Network IP).
 
 ---
 
 ## IPC control plane
 
-Named pipe **`WinTAKTracker.Control`** (ACL: Users read/write, Administrators + SYSTEM full). JSON line protocol methods include: `Ping`, `GetStatus`, `GetConfig`, `SetConfig`, `Pause`, `Resume`, `ReloadConnections`, `SetComputerIdentity`, `SetUserIdentity`, `SetActiveSession`, `DismissUserSetupPrompt`.
+Named pipe **`WinTAKTracker.Control`** (ACL: Users read/write, Administrators + SYSTEM full). JSON line protocol methods include: `Ping`, `GetStatus`, `GetConfig`, `SetConfig`, `Pause`, `Resume`, `ReloadConnections`, `SetComputerIdentity`, `SetUserIdentity`, `SetActiveSession`, `DismissUserSetupPrompt`, `PushGpsFix`, `ClearGpsFix`.
 
 ---
 
@@ -147,7 +149,6 @@ Named pipe **`WinTAKTracker.Control`** (ACL: Users read/write, Administrators + 
 - Service-aware updater (stop service → replace binaries → start)
 - Dedicated service account (least privilege) instead of LocalSystem
 - MSIX / Store packaging (Inno Setup one-click installer ships today)
-- Optional companion bridge for Windows Location fixes over IPC while logged on
 - Refined Settings chrome beyond computer vs my callsign fields
 
 ---

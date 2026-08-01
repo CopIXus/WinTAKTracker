@@ -41,6 +41,9 @@ public sealed class AppHost : IDisposable
 
     public TrackerStatusDto? LastServiceStatus { get; private set; }
 
+    /// <summary>Tray-side WinRT location when attached to the Windows Service (null in portable mode).</summary>
+    public CompanionLocationBridge? CompanionLocation { get; private set; }
+
     private System.Threading.Timer? _updateTimer;
     private System.Threading.Timer? _trayTimer;
 
@@ -101,8 +104,18 @@ public sealed class AppHost : IDisposable
         else
         {
             // Companion mode: tray autostart only; tracking owned by service.
+            // WinRT location must run in this interactive session and feed the service over IPC.
             StartupRegistration.SetEnabled(Config.Startup.StartWithWindows);
             Pause.PauseChanged += OnPauseChangedService;
+            CompanionLocation = new CompanionLocationBridge(Log);
+            try
+            {
+                await CompanionLocation.StartAsync(ServiceClient).ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                Log.Warn("GPS/Companion", $"Failed to start tray location bridge: {ex.Message}");
+            }
         }
 
         _trayTimer = new System.Threading.Timer(_ => RefreshTray(), null, 1000, 2000);
@@ -361,12 +374,32 @@ public sealed class AppHost : IDisposable
         }
     }
 
+    /// <summary>
+    /// Request Windows Location from the interactive process (tray Geolocator, or in-process GPS).
+    /// </summary>
+    public Task<GpsPermissionState> RequestWindowsLocationAccessAsync()
+    {
+        if (CompanionLocation is not null)
+            return CompanionLocation.RequestAccessAsync();
+        return Gps.RequestWindowsLocationAccessAsync();
+    }
+
+    public GpsPermissionState WindowsLocationPermission =>
+        CompanionLocation?.PermissionState ?? Gps.WindowsPermission;
+
     public void Dispose()
     {
         _updateTimer?.Dispose();
         _trayTimer?.Dispose();
         Pause.PauseChanged -= OnPauseChanged;
         Pause.PauseChanged -= OnPauseChangedService;
+        if (CompanionLocation is not null)
+        {
+            try { CompanionLocation.StopAsync().GetAwaiter().GetResult(); }
+            catch { /* ignore */ }
+            CompanionLocation.Dispose();
+            CompanionLocation = null;
+        }
         if (ServiceClient is not null)
             ServiceClient.DisposeAsync().AsTask().GetAwaiter().GetResult();
         Tray.Dispose();

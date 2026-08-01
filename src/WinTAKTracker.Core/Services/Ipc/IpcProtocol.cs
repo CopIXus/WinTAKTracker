@@ -25,6 +25,10 @@ public enum IpcMethod
     SetUserIdentity,
     SetActiveSession,
     DismissUserSetupPrompt,
+    /// <summary>Tray pushes a WinRT/Wi‑Fi fix into the service-owned GpsService.</summary>
+    PushGpsFix,
+    /// <summary>Tray cleared its companion provider (logoff / detach).</summary>
+    ClearGpsFix,
 }
 
 public sealed class IpcRequest
@@ -48,6 +52,15 @@ public sealed class TrackerStatusDto
     public bool Paused { get; set; }
     public bool HasGpsFix { get; set; }
     public string? GpsSource { get; set; }
+    public string? GpsSourceDisplay { get; set; }
+    public bool GpsIsHeld { get; set; }
+    public double? Latitude { get; set; }
+    public double? Longitude { get; set; }
+    public double? AltitudeMeters { get; set; }
+    public double? SpeedMetersPerSecond { get; set; }
+    public double? CourseDegrees { get; set; }
+    public double? AccuracyMeters { get; set; }
+    public DateTimeOffset? GpsTimestampUtc { get; set; }
     public bool AnyTakConnected { get; set; }
     public bool AnyTakReconnecting { get; set; }
     public bool MeshReady { get; set; }
@@ -58,6 +71,20 @@ public sealed class TrackerStatusDto
     public string ConfigRoot { get; set; } = "";
     /// <summary>Per-server live stream state (Connected means CotStreamClient is up).</summary>
     public List<ServerStatusDto> Servers { get; set; } = [];
+}
+
+/// <summary>GPS fix payload from the interactive tray companion into the Windows Service.</summary>
+public sealed class GpsFixDto
+{
+    public double Latitude { get; set; }
+    public double Longitude { get; set; }
+    public double? AltitudeMeters { get; set; }
+    public double? SpeedMetersPerSecond { get; set; }
+    public double? CourseDegrees { get; set; }
+    public double? AccuracyMeters { get; set; }
+    public DateTimeOffset TimestampUtc { get; set; } = DateTimeOffset.UtcNow;
+    /// <summary>Optional source name; service maps unknown values to Companion.</summary>
+    public string? Source { get; set; }
 }
 
 public sealed class ServerStatusDto

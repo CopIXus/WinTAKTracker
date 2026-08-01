@@ -10,12 +10,14 @@ public sealed class ThemeManager : IDisposable
     private readonly UISettings _uiSettings = new();
     private bool _isLight = true;
     private bool _disposed;
+    private bool _windowHooked;
 
     public bool IsLightTheme => _isLight;
 
     public void Start()
     {
         ApplySystemTheme();
+        HookWindowLoaded();
         _uiSettings.ColorValuesChanged += OnColorValuesChanged;
         SystemEvents.UserPreferenceChanged += OnUserPreferenceChanged;
     }
@@ -37,13 +39,33 @@ public sealed class ThemeManager : IDisposable
             Application.Current?.Dispatcher.BeginInvoke(ApplySystemTheme);
     }
 
+    private void HookWindowLoaded()
+    {
+        if (_windowHooked) return;
+        _windowHooked = true;
+        EventManager.RegisterClassHandler(
+            typeof(Window),
+            FrameworkElement.LoadedEvent,
+            new RoutedEventHandler(OnWindowLoaded));
+    }
+
+    private void OnWindowLoaded(object sender, RoutedEventArgs e)
+    {
+        if (sender is Window window)
+            WindowChromeHelper.ApplyToWindow(window, dark: !_isLight);
+    }
+
     public void ApplySystemTheme()
     {
         var light = ReadAppsUseLightTheme();
         if (light == _isLight && Application.Current?.Resources.MergedDictionaries.Count > 0)
         {
             // Still ensure colors dict is present on first call.
-            if (FindColorsDictionary() is not null) return;
+            if (FindColorsDictionary() is not null)
+            {
+                WindowChromeHelper.ApplyToAllWindows(dark: !light);
+                return;
+            }
         }
 
         _isLight = light;
@@ -63,6 +85,7 @@ public sealed class ThemeManager : IDisposable
 
         // Keep colors before AppTheme so DynamicResource resolves.
         app.Resources.MergedDictionaries.Insert(0, colors);
+        WindowChromeHelper.ApplyToAllWindows(dark: !light);
     }
 
     private static ResourceDictionary? FindColorsDictionary()

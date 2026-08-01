@@ -14,6 +14,10 @@ public interface IGpsService
     void Stop();
     string[] GetComPorts();
     Task<GpsPermissionState> RequestWindowsLocationAccessAsync();
+    /// <summary>Accept a fix from the interactive tray (WinRT) over IPC while the service owns tracking.</summary>
+    void AcceptExternalFix(GpsFix fix);
+    /// <summary>Clear tray-bridged fixes when the companion disconnects.</summary>
+    void ClearExternalFix();
 }
 
 /// <summary>
@@ -38,6 +42,7 @@ public sealed class GpsService : IGpsService, IDisposable
     private System.Threading.Timer? _holdTimer;
     private CancellationTokenSource? _networkDelayCts;
     private bool _started;
+    private bool _companionFixActive;
 
     public GpsService(IRedactedLogger log)
     {
@@ -82,6 +87,64 @@ public sealed class GpsService : IGpsService, IDisposable
 
     public Task<GpsPermissionState> RequestWindowsLocationAccessAsync() =>
         _windows.RequestAccessAsync();
+
+    public void AcceptExternalFix(GpsFix fix)
+    {
+        if (!_started || !fix.HasFix) return;
+
+        // Prefer recent NMEA over tray Wi‑Fi when both are live.
+        lock (_gate)
+        {
+            if (_nmea.IsOpen && _liveFix?.Source == GpsSourceKind.NmeaSerial &&
+                _lastLiveUtc.HasValue &&
+                (DateTimeOffset.UtcNow - _lastLiveUtc.Value).TotalSeconds < 3)
+                return;
+        }
+
+        var bridged = new GpsFix
+        {
+            Latitude = fix.Latitude,
+            Longitude = fix.Longitude,
+            AltitudeMeters = fix.AltitudeMeters,
+            SpeedMetersPerSecond = fix.SpeedMetersPerSecond,
+            CourseDegrees = fix.CourseDegrees,
+            AccuracyMeters = fix.AccuracyMeters,
+            Hdop = fix.Hdop,
+            Timestamp = fix.Timestamp,
+            Source = fix.Source is GpsSourceKind.None or GpsSourceKind.Held
+                ? GpsSourceKind.Companion
+                : fix.Source is GpsSourceKind.WindowsLocation
+                    ? GpsSourceKind.Companion
+                    : fix.Source,
+            IsHeld = false,
+        };
+
+        lock (_gate) _companionFixActive = true;
+        AcceptPrecisionLive(bridged);
+        CancelNetworkDelay();
+        if (_network.IsRunning)
+            _network.Stop();
+        lock (_gate) _networkFix = null;
+    }
+
+    public void ClearExternalFix()
+    {
+        lock (_gate)
+        {
+            if (!_companionFixActive && _liveFix?.Source != GpsSourceKind.Companion)
+                return;
+
+            _companionFixActive = false;
+            if (_liveFix?.Source == GpsSourceKind.Companion)
+                _liveFix = null;
+            // Held loses original source via AsHeld(); drop it when companion was the supplier
+            // and NMEA is not open (NMEA will republish on its own).
+            if (!_nmea.IsOpen)
+                _heldFix = null;
+        }
+
+        FixChanged?.Invoke(this, CurrentFix);
+    }
 
     public async Task StartAsync(GpsSettings settings)
     {
@@ -234,7 +297,11 @@ public sealed class GpsService : IGpsService, IDisposable
         }
     }
 
-    private void OnNmeaFix(object? sender, GpsFix fix) => AcceptPrecisionLive(fix);
+    private void OnNmeaFix(object? sender, GpsFix fix)
+    {
+        lock (_gate) _companionFixActive = false;
+        AcceptPrecisionLive(fix);
+    }
 
     private void OnWindowsFix(object? sender, GpsFix fix)
     {
@@ -247,6 +314,7 @@ public sealed class GpsService : IGpsService, IDisposable
                 return;
         }
 
+        lock (_gate) _companionFixActive = false;
         AcceptPrecisionLive(fix);
         // Precision fix available — cancel pending IP fallback and clear any IP fix in use.
         CancelNetworkDelay();
@@ -290,8 +358,10 @@ public sealed class GpsService : IGpsService, IDisposable
             if (_liveFix is not null && IsPrecisionSource(_liveFix.Source) && _lastLiveUtc.HasValue)
             {
                 var age = (DateTimeOffset.UtcNow - _lastLiveUtc.Value).TotalSeconds;
-                // Windows Location reports on an interval; allow a slightly longer live window.
-                var liveGrace = _liveFix.Source == GpsSourceKind.WindowsLocation ? 5.0 : 2.5;
+                // Windows Location / tray companion report on an interval; allow a slightly longer live window.
+                var liveGrace = _liveFix.Source is GpsSourceKind.WindowsLocation or GpsSourceKind.Companion
+                    ? 5.0
+                    : 2.5;
                 if (age > liveGrace)
                 {
                     _liveFix = null;
@@ -329,7 +399,8 @@ public sealed class GpsService : IGpsService, IDisposable
     }
 
     private static bool IsPrecisionSource(GpsSourceKind source) =>
-        source is GpsSourceKind.NmeaSerial or GpsSourceKind.WindowsLocation or GpsSourceKind.Held;
+        source is GpsSourceKind.NmeaSerial or GpsSourceKind.WindowsLocation
+            or GpsSourceKind.Companion or GpsSourceKind.Held;
 
     public void Dispose()
     {

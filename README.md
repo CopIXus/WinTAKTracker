@@ -4,16 +4,52 @@ Lightweight **Windows TAK PLI tracker** that reports your position (self-SA CoT)
 
 Optionally install as a **Windows Service** for always-on tracking after logoff; the tray app then acts as a controller (see [docs/windows-service.md](docs/windows-service.md)).
 
+![WinTAKTracker Status dashboard (illustrative)](docs/images/status-dashboard.png)
+
+*Illustrative Status dashboard with sample location at Plymouth Rock (`41.9580775, -70.6621063`) and callsign `DEMO.wtt`. Screenshots may be refreshed as the UI evolves — not a live operational capture.*
+
 WinTAKTracker is **tracking-only**. It does not host a common operating picture. Use a companion map client to see yourself and others:
 
 | Companion | Platform |
 |-----------|----------|
-| [CloudTAK](https://github.com/snstac/cloudtak) (or your org’s CloudTAK URL) | Browser |
-| [ATAK-CIV](https://play.google.com/store/apps/details?id=com.atakmap.app.civ) / [TAK.gov](https://tak.gov) | Android |
-| [TAK Aware](https://apps.apple.com/us/app/tak-aware/id6738631659) | iOS |
+| [ATAK-CIV](https://play.google.com/store/apps/details?id=com.atakmap.app.civ) | Android |
+| [TAK Aware](https://apps.apple.com/us/app/tak-aware/id6738631659) (iTAK family) | iOS |
 | [WinTAK](https://tak.gov) | Windows |
+| [TAK.gov](https://tak.gov) | Official TAK Product Center |
 
-Not an official TAK Product Center application. TAK / ATAK / WinTAK / CloudTAK / TAK Aware are trademarks of their respective owners.
+Not an official TAK Product Center application. TAK / ATAK / iTAK / WinTAK / CloudTAK / TAK Aware are trademarks of their respective owners.
+
+## How it works
+
+```mermaid
+flowchart LR
+  subgraph sources [GPS sources]
+    NMEA[USB NMEA serial]
+    WinLoc[Windows Location bridge]
+    NetIP[Network IP approximate]
+  end
+
+  Tray[Tray app]
+  Svc[Windows Service]
+  Gps[GpsService]
+  Cot[CoT PLI builder]
+  Tak[TAK Server TLS/TCP]
+  Mesh[Mesh SA UDP multicast]
+
+  Tray <-->|named-pipe IPC| Svc
+  Tray -->|companion fix when Service owns tracking| Gps
+  NMEA --> Gps
+  WinLoc --> Gps
+  NetIP --> Gps
+  Gps --> Cot
+  Svc --> Gps
+  Svc --> Cot
+  Tray -->|portable / standalone| Cot
+  Cot --> Tak
+  Cot --> Mesh
+```
+
+In **Setup** installs, the service owns tracking after logoff; the tray attaches over IPC and can bridge Windows Location from the interactive session. In portable mode, the tray runs tracking in-process.
 
 ## Features
 
@@ -21,6 +57,7 @@ Not an official TAK Product Center application. TAK / ATAK / WinTAK / CloudTAK /
 - **Mesh SA** — ATAK-default UDP multicast (`239.2.3.1:6969`), always-on or only when disconnected
 - **GPS** — USB NMEA serial, Windows Location, last-fix hold, and **network/IP geolocation** fallback (approximate)
 - **Identity** — **computer callsign** (default: Windows computer name; used when logged off) and **per-user callsign**/team/role when logged in
+- **Remote config** — Portal / OpenTAK device-profile prefs and preference URLs apply callsign (with **`.wtt`** suffix) and team color ([docs/remote-config.md](docs/remote-config.md))
 - **Windows Service** (optional) — always-on PLI from Session 0; tray attaches via named-pipe IPC
 - **Enrollment** — paste Portal / OpenTAK Tracker–style URLs, SoftCert ZIP, manual `.p12`, webcam QR scan
 - **Reporting** — ATAK-style Dynamic or Constant rates (reliable servers vs unreliable mesh)
@@ -64,9 +101,9 @@ Every push to `main` publishes a Release with version `0.1.<run_number>` (git ta
      `tak://com.atakmap.app/enroll?host=tak.example.com&username=USER&token=TOKEN`
    - Enroll tokens are short-lived (~15 minutes) — paste and apply promptly.
    - Or **Scan QR…**, **Import SoftCert ZIP…**, or **Manual .p12 import…**
-2. Confirm **Identity** — computer callsign (defaults to this PC’s Windows name) and your per-user callsign (prompted on first login if unset).
+2. Confirm **Identity** — computer callsign (defaults to this PC’s Windows name) and your per-user callsign (prompted on first login if unset). Remote Portal prefs append **`.wtt`** to callsigns.
 3. Configure **GPS** (COM port / baud, Windows Location permission, optional network fallback).
-4. Optionally set a **CloudTAK URL** under **View the map**, then open CloudTAK or a companion app to see the COP.
+4. Open a companion map app from **Settings → Companion apps** (ATAK / iTAK / WinTAK / [TAK.gov](https://tak.gov)) to see the COP.
 5. Leave the app running in the tray; use **Pause tracking** to mute outbound CoT without quitting.
 
 Fictional samples for docs/tests (no real hosts/tokens):
@@ -106,7 +143,7 @@ Portable mode persists under `%LocalAppData%\WinTAKTracker\config.json`. With th
 
 - Startup (Start with Windows, Prevent sleep)
 - Identity, GPS, Reporting, Mesh SA
-- CloudTAK URL, Updates auto-install, Diagnostics log level
+- Updates auto-install, Diagnostics log level
 - Per-server Enabled toggles
 
 ## Privacy
@@ -141,6 +178,7 @@ CI (`.github/workflows/release.yml`) publishes **`WinTAKTracker-Setup.exe`** (pr
 |----------|------|
 | Feature matrix | [FEATURES.md](FEATURES.md) · [docs site](https://copixus.github.io/WinTAKTracker/features) |
 | Changelog | [CHANGELOG.md](CHANGELOG.md) · [docs site](https://copixus.github.io/WinTAKTracker/changelog) |
+| Remote config / Portal prefs | [docs/remote-config.md](docs/remote-config.md) |
 | Code signing / SmartScreen | [docs/code-signing.md](docs/code-signing.md) · [docs site](https://copixus.github.io/WinTAKTracker/code-signing) |
 | Windows Service / identity | [docs/windows-service.md](docs/windows-service.md) |
 | Contributing | [CONTRIBUTING.md](CONTRIBUTING.md) |

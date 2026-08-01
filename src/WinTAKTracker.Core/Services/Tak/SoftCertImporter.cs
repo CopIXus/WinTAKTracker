@@ -246,7 +246,13 @@ public sealed class SoftCertImporter
                     port = p;
                 else if (key.Contains("callsign", StringComparison.OrdinalIgnoreCase))
                     callsign = value;
-                else if (key.Contains("team", StringComparison.OrdinalIgnoreCase) && !key.Contains("color", StringComparison.OrdinalIgnoreCase))
+                else if (key.Equals("locationTeam", StringComparison.OrdinalIgnoreCase) ||
+                         key.Equals("team", StringComparison.OrdinalIgnoreCase) ||
+                         key.Equals("teamColor", StringComparison.OrdinalIgnoreCase) ||
+                         key.Equals("locationTeamColor", StringComparison.OrdinalIgnoreCase) ||
+                         (key.Contains("team", StringComparison.OrdinalIgnoreCase) &&
+                          !key.Contains("steam", StringComparison.OrdinalIgnoreCase) &&
+                          !key.Contains("connect", StringComparison.OrdinalIgnoreCase)))
                     team = value;
                 else if (key.Contains("role", StringComparison.OrdinalIgnoreCase))
                     role = value;

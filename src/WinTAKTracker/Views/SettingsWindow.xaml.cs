@@ -3,12 +3,14 @@ using System.Reflection;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
+using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using System.Windows.Threading;
 using WinTAKTracker.Services;
 using WinTAKTracker.Services.Config;
 using WinTAKTracker.Services.Gps;
+using WinTAKTracker.Services.Identity;
 using WinTAKTracker.Services.Reporting;
 using WinTAKTracker.Services.Tak;
 using WinTAKTracker.Services.Tray;
@@ -176,7 +178,7 @@ public partial class SettingsWindow : Window
             "Gps" => "GPS",
             "Reporting" => "Reporting",
             "MeshSa" => "Mesh SA",
-            "ViewMap" => "View the map",
+            "Companions" => "Companion apps",
             "Startup" => "Startup",
             "Diagnostics" => "Diagnostics",
             "Updates" => "Updates",
@@ -192,7 +194,7 @@ public partial class SettingsWindow : Window
             "Gps" => BuildGps(),
             "Reporting" => BuildReporting(),
             "MeshSa" => BuildMeshSa(),
-            "ViewMap" => BuildViewMap(),
+            "Companions" or "ViewMap" => BuildCompanions(),
             "Startup" => BuildStartup(),
             "Diagnostics" => BuildDiagnostics(),
             "Updates" => BuildUpdates(),
@@ -595,7 +597,10 @@ public partial class SettingsWindow : Window
             enrollStatus.Text = "Enrolling certificate…";
             SetTheme(enrollStatus, TextBlock.ForegroundProperty, "AccentBrush");
             var progress = new Progress<string>(msg => { enrollStatus.Text = msg; });
-            var result = await _host.Enrollment.ApplyAsync(input, _host.Config, progress, CancellationToken.None);
+            var sid = IdentityResolver.CurrentUserSid();
+            var userName = Environment.UserName;
+            var result = await _host.Enrollment.ApplyAsync(
+                input, _host.Config, progress, CancellationToken.None, sid, userName);
             if (!result.Success)
             {
                 enrollStatus.Text = result.Error ?? "Enrollment failed.";
@@ -630,7 +635,9 @@ public partial class SettingsWindow : Window
             if (!EnsureEditable()) return;
             var ofd = new OpenFileDialog { Filter = "SoftCert ZIP (*.zip)|*.zip" };
             if (ofd.ShowDialog() != true) return;
-            var result = _host.Enrollment.ImportSoftCertZip(ofd.FileName, _host.Config);
+            var result = _host.Enrollment.ImportSoftCertZip(
+                ofd.FileName, _host.Config, displayName: null,
+                IdentityResolver.CurrentUserSid(), Environment.UserName);
             if (!result.Success) { Msg(result.Error ?? "Failed"); return; }
             _ = _host.ReloadConnectionsAsync();
             Msg(result.Message ?? "Imported.");
@@ -1169,6 +1176,17 @@ public partial class SettingsWindow : Window
         panel.Children.Add(Label("Unreliable stationary (s)")); panel.Children.Add(unrelStat);
         panel.Children.Add(Label("Constant interval (s)")); panel.Children.Add(constant);
 
+        var remarks = new CheckBox
+        {
+            Content = "Include computer name in CoT remarks when callsign differs",
+            IsChecked = _host.Config.Reporting.IncludeComputerNameInRemarks,
+            IsEnabled = edit,
+            Margin = new Thickness(0, 8, 0, 0),
+        };
+        panel.Children.Add(remarks);
+        panel.Children.Add(Blurb(
+            "When your PLI callsign is not this PC’s Windows name, peers see the computer name in ATAK remarks. Off skips that remarks line. Default on."));
+
         void SaveReporting()
         {
             if (!CanEdit) return;
@@ -1176,6 +1194,7 @@ public partial class SettingsWindow : Window
             if (int.TryParse(relStat.Text, out var rs)) _host.Config.Reporting.ReliableStationarySeconds = rs;
             if (int.TryParse(unrelStat.Text, out var us)) _host.Config.Reporting.UnreliableStationarySeconds = us;
             if (int.TryParse(constant.Text, out var c)) _host.Config.Reporting.ConstantIntervalSeconds = c;
+            _host.Config.Reporting.IncludeComputerNameInRemarks = remarks.IsChecked == true;
             Persist();
         }
 
@@ -1183,6 +1202,8 @@ public partial class SettingsWindow : Window
         BindPersistText(relStat, SaveReporting);
         BindPersistText(unrelStat, SaveReporting);
         BindPersistText(constant, SaveReporting);
+        remarks.Checked += (_, _) => SaveReporting();
+        remarks.Unchecked += (_, _) => SaveReporting();
         return panel;
     }
 
@@ -1278,37 +1299,102 @@ public partial class SettingsWindow : Window
             (_host.Mesh.LastErrorCode is not null ? $" ({_host.Mesh.LastErrorCode})" : "");
     }
 
-    private UIElement BuildViewMap()
+    private UIElement BuildCompanions()
     {
         var panel = new StackPanel();
-        var edit = CanEdit;
         panel.Children.Add(Blurb(
-            "This app reports your location to TAK. To see yourself and others on a map, use CloudTAK in a browser, ATAK on Android, TAK Aware on iOS, or WinTAK on Windows."));
-        var url = new TextBox { Text = _host.Config.CloudTakUrl ?? "", IsEnabled = edit };
-        panel.Children.Add(Label("CloudTAK URL"));
-        panel.Children.Add(url);
-        BindPersistText(url, () =>
+            "WinTAKTracker is tracking-only. Use a companion TAK map client to see yourself and others on the COP."));
+
+        panel.Children.Add(CompanionLink(
+            "Assets/companions/atak.png",
+            "ATAK (Android)",
+            "Google Play — ATAK-CIV",
+            "https://play.google.com/store/apps/details?id=com.atakmap.app.civ"));
+        panel.Children.Add(CompanionLink(
+            "Assets/companions/itak.png",
+            "iTAK / TAK Aware (iOS)",
+            "App Store",
+            "https://apps.apple.com/us/app/tak-aware/id6738631659"));
+        panel.Children.Add(CompanionLink(
+            "Assets/companions/wintak.png",
+            "WinTAK (Windows)",
+            "TAK.gov platform downloads",
+            "https://tak.gov"));
+        panel.Children.Add(CompanionLink(
+            "Assets/companions/takgov.png",
+            "TAK.gov",
+            "Official TAK Product Center site",
+            "https://tak.gov"));
+
+        panel.Children.Add(new TextBlock
         {
-            if (!CanEdit) return;
-            _host.Config.CloudTakUrl = string.IsNullOrWhiteSpace(url.Text) ? null : url.Text.Trim();
-            Persist();
+            Text = "TAK / ATAK / iTAK / WinTAK are trademarks of their respective owners. Icons are simple platform marks, not official badges.",
+            Style = TryStyle("HelperText"),
+            Margin = new Thickness(0, 8, 0, 0),
         });
-        panel.Children.Add(Chip("Persisted", "CloudTAK URL saves when the field loses focus."));
-        panel.Children.Add(Btn("Open CloudTAK", () =>
-        {
-            if (string.IsNullOrWhiteSpace(_host.Config.CloudTakUrl))
-            {
-                Msg("Configure a CloudTAK URL first.");
-                return;
-            }
-            OpenUrl(_host.Config.CloudTakUrl!);
-        }));
-        panel.Children.Add(SectionHeader("Companion apps", topMargin: 8));
-        panel.Children.Add(Btn("ATAK-CIV (Google Play)", () => OpenUrl("https://play.google.com/store/apps/details?id=com.atakmap.app.civ")));
-        panel.Children.Add(Btn("ATAK / TAK.gov", () => OpenUrl("https://tak.gov")));
-        panel.Children.Add(Btn("TAK Aware (App Store)", () => OpenUrl("https://apps.apple.com/us/app/tak-aware/id6738631659")));
-        panel.Children.Add(Btn("WinTAK (tak.gov)", () => OpenUrl("https://tak.gov")));
         return panel;
+    }
+
+    private UIElement CompanionLink(string packRelativePath, string title, string subtitle, string url)
+    {
+        var icon = new Image
+        {
+            Width = 28,
+            Height = 28,
+            Stretch = Stretch.Uniform,
+            Margin = new Thickness(0, 0, 12, 0),
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+        try
+        {
+            var bmp = new BitmapImage();
+            bmp.BeginInit();
+            bmp.UriSource = new Uri($"pack://application:,,,/{packRelativePath}");
+            bmp.CacheOption = BitmapCacheOption.OnLoad;
+            bmp.EndInit();
+            icon.Source = bmp;
+        }
+        catch
+        {
+            // icon optional
+        }
+
+        var text = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
+        var titleTb = new TextBlock
+        {
+            Text = title,
+            FontWeight = FontWeights.SemiBold,
+            FontSize = 13,
+        };
+        SetTheme(titleTb, TextBlock.ForegroundProperty, "TextPrimaryBrush");
+        var subTb = new TextBlock
+        {
+            Text = subtitle,
+            FontSize = 12,
+            Margin = new Thickness(0, 2, 0, 0),
+        };
+        SetTheme(subTb, TextBlock.ForegroundProperty, "TextSecondaryBrush");
+        text.Children.Add(titleTb);
+        text.Children.Add(subTb);
+
+        var row = new DockPanel { LastChildFill = true };
+        DockPanel.SetDock(icon, Dock.Left);
+        row.Children.Add(icon);
+        row.Children.Add(text);
+
+        var border = new Border
+        {
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(8),
+            Padding = new Thickness(12, 10, 12, 10),
+            Margin = new Thickness(0, 0, 0, 8),
+            Cursor = System.Windows.Input.Cursors.Hand,
+            Child = row,
+        };
+        SetTheme(border, Border.BackgroundProperty, "SurfaceBrush");
+        SetTheme(border, Border.BorderBrushProperty, "AppBorderBrush");
+        border.MouseLeftButtonUp += (_, _) => OpenUrl(url);
+        return border;
     }
 
     private UIElement BuildStartup()
@@ -1339,7 +1425,10 @@ public partial class SettingsWindow : Window
             IsChecked = _host.Config.Startup.PreventSleepWhileTracking,
             IsEnabled = edit,
         };
-        panel.Children.Add(Blurb("PLI continues while the screen is locked. Prevent-sleep is optional and off by default. Changes auto-save."));
+        panel.Children.Add(Blurb(
+            _host.AttachedToService || ConfigPaths.IsServiceInstalled()
+                ? "Start with Windows launches this tray at login (control UI, callsign prompt, Windows Location bridge). The Windows Service should already be set to Automatic for always-on PLI after logoff. Prevent-sleep is optional and off by default."
+                : "Start with Windows launches the tray at login so tracking and the UI run for this user. Prevent-sleep is optional and off by default. Changes auto-save."));
         panel.Children.Add(start);
         panel.Children.Add(sleep);
 

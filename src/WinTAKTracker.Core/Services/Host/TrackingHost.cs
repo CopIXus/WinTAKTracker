@@ -25,6 +25,7 @@ public sealed class TrackingHost : IDisposable
     public ITakConnectionManager Tak { get; }
     public EnrollmentService Enrollment { get; }
     public SoftCertImporter SoftCert { get; }
+    public DeviceProfileSync ProfileSync { get; }
     public ReportingEngine Reporting { get; }
     public StatusExporter StatusExporter { get; }
     public IUpdateService Updates { get; }
@@ -55,11 +56,21 @@ public sealed class TrackingHost : IDisposable
         Mesh = new MeshSaBroadcaster(Log);
         SoftCert = new SoftCertImporter(ConfigStore, Log);
         Enrollment = new EnrollmentService(ConfigStore, SoftCert, Log);
+        ProfileSync = new DeviceProfileSync(ConfigStore, Log);
         Tak = new TakConnectionManager(ConfigStore, Log);
         Reporting = new ReportingEngine(Gps, Tak, Mesh, Pause, ConfigStore, Log, GetActiveIdentity);
         StatusExporter = new StatusExporter();
         Updates = new UpdateService(ConfigStore, Log, () => Config.Updates);
         Power = new PowerService();
+
+        ProfileSync.IdentityApplied += (_, _) =>
+        {
+            // Config already mutated + saved by ProfileSync.
+            Reporting.NotifyIdentityChanged();
+            StatusChanged?.Invoke(this, EventArgs.Empty);
+        };
+        Tak.ServerConnected += (_, profile) =>
+            _ = ProfileSync.TrySyncAsync(profile, Config, _activeUserSid, _activeUserName);
 
         if (!serviceMode)
             _activeUserSid = IdentityResolver.CurrentUserSid();
@@ -220,6 +231,23 @@ public sealed class TrackingHost : IDisposable
         SaveConfig();
         Reporting.NotifyIdentityChanged();
         StatusChanged?.Invoke(this, EventArgs.Empty);
+    }
+
+    /// <summary>
+    /// Apply Portal / remote identity prefs. Appends <c>.wtt</c> to callsign when missing.
+    /// </summary>
+    public RemoteIdentityApply.Result ApplyRemoteIdentity(string? callsign, string? team, string? role = null)
+    {
+        var result = RemoteIdentityApply.Apply(
+            Config, callsign, team, role, _activeUserSid, _activeUserName);
+        if (result.Applied)
+        {
+            SaveConfig();
+            Reporting.NotifyIdentityChanged();
+            StatusChanged?.Invoke(this, EventArgs.Empty);
+        }
+
+        return result;
     }
 
     public void SetUserIdentity(

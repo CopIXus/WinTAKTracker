@@ -18,6 +18,8 @@ public sealed class ServerConnectionStatus
 public interface ITakConnectionManager
 {
     event EventHandler? StatusChanged;
+    /// <summary>Raised when a server stream reaches <see cref="TakConnectionState.Connected"/>.</summary>
+    event EventHandler<ServerProfile>? ServerConnected;
     IReadOnlyList<ServerConnectionStatus> GetStatuses();
     bool AnyConnected { get; }
     bool AnyReconnecting { get; }
@@ -49,6 +51,7 @@ public sealed class TakConnectionManager : ITakConnectionManager, IDisposable
     }
 
     public event EventHandler? StatusChanged;
+    public event EventHandler<ServerProfile>? ServerConnected;
 
     public bool AnyConnected => GetStatuses().Any(s => s.State == TakConnectionState.Connected);
     public bool AnyReconnecting => GetStatuses().Any(s => s.State == TakConnectionState.Reconnecting);
@@ -121,6 +124,8 @@ public sealed class TakConnectionManager : ITakConnectionManager, IDisposable
                     client.StateChanged += (_, _) =>
                     {
                         StatusChanged?.Invoke(this, EventArgs.Empty);
+                        if (client.State == TakConnectionState.Connected)
+                            ServerConnected?.Invoke(this, client.Profile);
                         if (client.State is TakConnectionState.Disconnected or TakConnectionState.Error)
                             _ = EnsureReconnectAsync(profile.Id);
                     };

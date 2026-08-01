@@ -60,7 +60,8 @@ Status legend: **Shipping** (in the current public build), **In progress**, **Pl
 | Start with Windows | Planned |
 | Stay reporting while screen locked; optional prevent-sleep while tracking | Planned |
 | Small OSM self-location preview (settings only; not a COP) | Planned |
-| CloudTAK open + companion links (ATAK-CIV, TAK Aware, WinTAK) | Planned |
+| Companion app links (ATAK / iTAK / WinTAK / TAK.gov) with platform icons | Shipping |
+| Portal / device-profile remote callsign (`.wtt`) + team color | Shipping (best-effort) |
 | Redacted diagnostics log and status export | Planned |
 | In-app updates from GitHub Releases | Planned |
 

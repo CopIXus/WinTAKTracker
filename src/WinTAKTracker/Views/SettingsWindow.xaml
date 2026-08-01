@@ -38,7 +38,7 @@
                     <ListBoxItem Content="GPS" Tag="Gps"/>
                     <ListBoxItem Content="Reporting" Tag="Reporting"/>
                     <ListBoxItem Content="Mesh SA" Tag="MeshSa"/>
-                    <ListBoxItem Content="View the map" Tag="ViewMap"/>
+                    <ListBoxItem Content="Companion apps" Tag="Companions"/>
                     <ListBoxItem Content="Startup" Tag="Startup"/>
                     <ListBoxItem Content="Diagnostics" Tag="Diagnostics"/>
                     <ListBoxItem Content="Updates" Tag="Updates"/>

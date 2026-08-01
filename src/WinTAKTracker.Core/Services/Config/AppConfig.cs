@@ -38,7 +38,9 @@ public sealed class AppConfig
     /// <summary>Server profiles (hosts/ports only in cleartext; credentials DPAPI-protected).</summary>
     public List<ServerProfile> Servers { get; set; } = [];
 
-    /// <summary>Optional CloudTAK URL (user-configured; never commit real URLs).</summary>
+    /// <summary>
+    /// Legacy CloudTAK URL (no longer shown in Settings). Kept for JSON round-trip of older configs.
+    /// </summary>
     public string? CloudTakUrl { get; set; }
 
     /// <summary>Stable CoT UID for this machine (generated once).</summary>
@@ -161,6 +163,13 @@ public sealed class ReportingSettings
     public int UnreliableMinSeconds { get; set; } = 2;
     public int UnreliableMaxMoveSeconds { get; set; } = 20;
     public int ConstantIntervalSeconds { get; set; } = 10;
+
+    /// <summary>
+    /// When the active callsign differs from the Windows computer name, emit the
+    /// machine name in CoT <c>detail/remarks</c> so peers can see which device reported.
+    /// Default on.
+    /// </summary>
+    public bool IncludeComputerNameInRemarks { get; set; } = true;
 }
 
 public sealed class MeshSaSettings

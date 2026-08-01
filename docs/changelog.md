@@ -15,6 +15,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- README Status screenshot + architecture diagram; companion app icons / TAK.gov links
+- Portal remote identity (`.wtt` callsign + team) via device-profile sync ([Remote config](remote-config.md))
 - One-click **`WinTAKTracker-Setup.exe`** (Inno Setup) — service + tray, single UAC prompt ([Windows Service](windows-service.md))
 - Windows Service + Core library + named-pipe IPC; computer vs per-user callsign ([Windows Service](windows-service.md))
 - Optional Authenticode signing in release CI when secrets are set; [Code signing](code-signing.md) for SmartScreen / Smart App Control
@@ -22,6 +24,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Removed CloudTAK URL settings / tray action; Companion apps section replaces “View the map”
 - Tray attaches to service when present; portable in-process mode when absent
 - Prefer Windows Location (Wi‑Fi/OS) over IP geolocation; delayed IP fallback; Status labels distinguish Wi‑Fi vs Network IP
 - Full light/dark UI (ComboBox/scrollbars/dialogs); compact server rows; Startup service status; log default Error + 30 MB cap; inline Updates; About CopIX LLC

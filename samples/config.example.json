@@ -36,7 +36,8 @@
     "strategy": "Dynamic",
     "reliableStationarySeconds": 180,
     "unreliableStationarySeconds": 30,
-    "constantIntervalSeconds": 10
+    "constantIntervalSeconds": 10,
+    "includeComputerNameInRemarks": true
   },
   "meshSa": {
     "enabled": true,

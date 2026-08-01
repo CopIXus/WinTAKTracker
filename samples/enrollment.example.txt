@@ -10,8 +10,8 @@ tak://com.atakmap.app/enroll?host=tak.example.com&username=USER&token=TOKEN
 # Optional connect-string host (stream port + protocol; enrollment still uses 8446)
 tak://com.atakmap.app/enroll?host=tak.example.com:8089:ssl&username=USER&token=TOKEN
 
-# ATAK preference-style (configure-only)
-tak://com.atakmap.app/preference?callsign=CALLSIGN&team=Cyan&role=Team%20Member
+# ATAK preference-style (configure-only). WinTAKTracker appends .wtt to callsign if missing.
+tak://com.atakmap.app/preference?locationCallsign=CALLSIGN&locationTeam=Cyan&role=Team%20Member
 
 # iTAK CSV-style
 ExampleServer,tak.example.com,8089,ssl

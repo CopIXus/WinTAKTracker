@@ -7,6 +7,7 @@ using System.Text.Json;
 using System.Xml.Linq;
 using WinTAKTracker.Services.Config;
 using WinTAKTracker.Services.Diagnostics;
+using WinTAKTracker.Services.Identity;
 
 namespace WinTAKTracker.Services.Tak;
 
@@ -43,11 +44,20 @@ public sealed class EnrollmentService
     public Task<EnrollmentApplyResult> ApplyAsync(string input, AppConfig config) =>
         ApplyAsync(input, config, progress: null, CancellationToken.None);
 
+    public Task<EnrollmentApplyResult> ApplyAsync(
+        string input,
+        AppConfig config,
+        IProgress<string>? progress,
+        CancellationToken ct) =>
+        ApplyAsync(input, config, progress, ct, activeUserSid: null, activeUserName: null);
+
     public async Task<EnrollmentApplyResult> ApplyAsync(
         string input,
         AppConfig config,
         IProgress<string>? progress,
-        CancellationToken ct)
+        CancellationToken ct,
+        string? activeUserSid,
+        string? activeUserName)
     {
         var parsed = EnrollmentUriParser.Parse(input);
         if (!parsed.Success)
@@ -56,43 +66,46 @@ public sealed class EnrollmentService
         switch (parsed.Kind)
         {
             case EnrollmentKind.TakPreference:
-                ApplyIdentity(config, parsed);
+                ApplyIdentity(config, parsed, activeUserSid, activeUserName);
                 _store.Save(config);
                 return new EnrollmentApplyResult
                 {
                     Success = true,
                     IdentityUpdated = true,
-                    Message = "Preferences applied (callsign/team/role).",
+                    Message = "Preferences applied (callsign/team/role; .wtt suffix).",
                 };
 
             case EnrollmentKind.TakImportUrl:
                 if (string.IsNullOrWhiteSpace(parsed.ImportUrl))
                     return Fail("import URL missing.");
                 progress?.Report("Downloading SoftCert package…");
-                return await ImportFromUrlAsync(parsed.ImportUrl!, config, ct);
+                return await ImportFromUrlAsync(parsed.ImportUrl!, config, ct, activeUserSid, activeUserName);
 
             case EnrollmentKind.ItakCsv:
                 return ApplyItakCsv(parsed, config);
 
             case EnrollmentKind.OpenTakTrackerEnroll:
             case EnrollmentKind.TakEnroll:
-                return await EnrollWithCredentialsAsync(parsed, config, progress, ct);
+                return await EnrollWithCredentialsAsync(parsed, config, progress, ct, activeUserSid, activeUserName);
 
             default:
                 return Fail("Unsupported enrollment kind.");
         }
     }
 
-    public EnrollmentApplyResult ImportSoftCertZip(string zipPath, AppConfig config, string? displayName = null)
+    public EnrollmentApplyResult ImportSoftCertZip(
+        string zipPath,
+        AppConfig config,
+        string? displayName = null,
+        string? activeUserSid = null,
+        string? activeUserName = null)
     {
         var result = _softCert.ImportZip(zipPath, displayName);
         if (!result.Success || result.Profile is null)
             return Fail(result.Error ?? "Import failed.");
 
-        if (!string.IsNullOrWhiteSpace(result.Callsign)) config.ComputerIdentity.Callsign = result.Callsign!;
-        if (!string.IsNullOrWhiteSpace(result.Team)) config.ComputerIdentity.Team = result.Team!;
-        if (!string.IsNullOrWhiteSpace(result.Role)) config.ComputerIdentity.Role = result.Role!;
-        config.EnsureIdentityDefaults();
+        var identity = RemoteIdentityApply.Apply(
+            config, result.Callsign, result.Team, result.Role, activeUserSid, activeUserName);
 
         config.Servers.Add(result.Profile);
         _store.Save(config);
@@ -100,8 +113,10 @@ public sealed class EnrollmentService
         {
             Success = true,
             Profile = result.Profile,
-            IdentityUpdated = true,
-            Message = "SoftCert imported.",
+            IdentityUpdated = identity.Applied,
+            Message = identity.Applied
+                ? "SoftCert imported; identity applied (.wtt)."
+                : "SoftCert imported.",
         };
     }
 
@@ -152,7 +167,9 @@ public sealed class EnrollmentService
         EnrollmentParseResult parsed,
         AppConfig config,
         IProgress<string>? progress,
-        CancellationToken ct)
+        CancellationToken ct,
+        string? activeUserSid = null,
+        string? activeUserName = null)
     {
         if (string.IsNullOrWhiteSpace(parsed.Host))
             return Fail("Host missing from enrollment URL.");
@@ -161,9 +178,12 @@ public sealed class EnrollmentService
         if (string.IsNullOrWhiteSpace(parsed.Token))
             return Fail("Token/password missing from enrollment URL. Portal enroll links include a short-lived token.");
 
-        ApplyIdentity(config, parsed);
+        ApplyIdentity(config, parsed, activeUserSid, activeUserName);
 
         var profileId = Guid.NewGuid().ToString("N");
+        var wttCallsign = string.IsNullOrWhiteSpace(parsed.Callsign)
+            ? null
+            : RemoteIdentityApply.EnsureWttSuffix(parsed.Callsign!);
         var profile = new ServerProfile
         {
             Id = profileId,
@@ -172,8 +192,8 @@ public sealed class EnrollmentService
             Port = parsed.Port ?? 8089,
             Protocol = string.IsNullOrWhiteSpace(parsed.Protocol) ? "ssl" : parsed.Protocol,
             Username = parsed.Username,
-            CallsignOverride = parsed.Callsign,
-            TeamOverride = parsed.Team,
+            CallsignOverride = wttCallsign,
+            TeamOverride = RemoteIdentityApply.NormalizeTeam(parsed.Team) ?? parsed.Team,
             RoleOverride = parsed.Role,
             Enabled = true,
         };
@@ -561,7 +581,12 @@ public sealed class EnrollmentService
         }
     }
 
-    private async Task<EnrollmentApplyResult> ImportFromUrlAsync(string url, AppConfig config, CancellationToken ct)
+    private async Task<EnrollmentApplyResult> ImportFromUrlAsync(
+        string url,
+        AppConfig config,
+        CancellationToken ct,
+        string? activeUserSid = null,
+        string? activeUserName = null)
     {
         try
         {
@@ -571,7 +596,7 @@ public sealed class EnrollmentService
             await using (var fs = File.Create(tmp))
                 await resp.Content.CopyToAsync(fs, ct);
 
-            var result = ImportSoftCertZip(tmp, config);
+            var result = ImportSoftCertZip(tmp, config, displayName: null, activeUserSid, activeUserName);
             try { File.Delete(tmp); } catch { /* ignore */ }
             return result;
         }
@@ -581,12 +606,19 @@ public sealed class EnrollmentService
         }
     }
 
-    private static void ApplyIdentity(AppConfig config, EnrollmentParseResult parsed)
+    private static void ApplyIdentity(
+        AppConfig config,
+        EnrollmentParseResult parsed,
+        string? activeUserSid = null,
+        string? activeUserName = null)
     {
-        if (!string.IsNullOrWhiteSpace(parsed.Callsign)) config.ComputerIdentity.Callsign = parsed.Callsign!;
-        if (!string.IsNullOrWhiteSpace(parsed.Team)) config.ComputerIdentity.Team = parsed.Team!;
-        if (!string.IsNullOrWhiteSpace(parsed.Role)) config.ComputerIdentity.Role = parsed.Role!;
-        config.EnsureIdentityDefaults();
+        RemoteIdentityApply.Apply(
+            config,
+            parsed.Callsign,
+            parsed.Team,
+            parsed.Role,
+            activeUserSid,
+            activeUserName);
     }
 
     private static string EnsurePem(string raw, string label)

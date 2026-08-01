@@ -67,6 +67,9 @@ public sealed class AppHost : IDisposable
         // CurrentUser DPAPI secrets into ProgramData (LocalMachine) so the service can connect.
         TryCompleteMachineMigrationFromUser();
 
+        // Service mode: best-effort start so tray can attach; HKCU Run still launches this tray.
+        TryEnsureServiceRunning();
+
         ServiceClient = await TrackerIpcClient.TryConnectAsync(TimeSpan.FromSeconds(2)).ConfigureAwait(false);
         if (ServiceClient is not null)
         {
@@ -93,19 +96,25 @@ public sealed class AppHost : IDisposable
             }
         }
 
+        // Always honor Start with Windows for the tray (portable tracking UI, or service companion + GPS bridge).
+        StartupRegistration.SetEnabled(Config.Startup.StartWithWindows);
+
+        // Bind this interactive session so CoT uses per-user identity when set.
+        var sid = IdentityResolver.CurrentUserSid();
+        var userName = IdentityResolver.CurrentUserName();
+        if (!string.IsNullOrWhiteSpace(sid))
+            Core.SetActiveSession(sid, userName);
+
         if (ServiceClient is null)
         {
             // Portable / no-service: own the tracker in this process.
-            StartupRegistration.SetEnabled(Config.Startup.StartWithWindows);
             await Core.StartAsync().ConfigureAwait(false);
             Core.StatusChanged += (_, _) => RefreshTray();
             Pause.PauseChanged += OnPauseChanged;
         }
         else
         {
-            // Companion mode: tray autostart only; tracking owned by service.
-            // WinRT location must run in this interactive session and feed the service over IPC.
-            StartupRegistration.SetEnabled(Config.Startup.StartWithWindows);
+            // Companion mode: tracking owned by service; tray feeds Windows Location over IPC.
             Pause.PauseChanged += OnPauseChangedService;
             CompanionLocation = new CompanionLocationBridge(Log);
             try
@@ -159,6 +168,8 @@ public sealed class AppHost : IDisposable
     public void SaveConfig()
     {
         Core.SaveConfig();
+        // Tray Run-key applies in both portable and service-companion modes.
+        StartupRegistration.SetEnabled(Config.Startup.StartWithWindows);
         if (ServiceClient is not null)
         {
             try
@@ -170,10 +181,21 @@ public sealed class AppHost : IDisposable
                 Log.Warn("IPC", $"SetConfig failed: {ex.Message}");
             }
         }
-        else
-        {
-            StartupRegistration.SetEnabled(Config.Startup.StartWithWindows);
-        }
+    }
+
+    /// <summary>
+    /// If the Windows Service is installed but stopped, try to start it (may require elevation).
+    /// </summary>
+    private void TryEnsureServiceRunning()
+    {
+        if (!ConfigPaths.IsServiceInstalled()) return;
+        if (ConfigPaths.TryEnsureServiceRunning())
+            Log.Info("App", "WinTAKTracker Windows Service is running.");
+        else if (!string.Equals(
+                     ConfigPaths.GetWindowsServiceStatusLabel(),
+                     "Running",
+                     StringComparison.OrdinalIgnoreCase))
+            Log.Warn("App", "Could not start Windows Service (may need elevation or SCM access).");
     }
 
     public async Task ReloadConnectionsAsync()

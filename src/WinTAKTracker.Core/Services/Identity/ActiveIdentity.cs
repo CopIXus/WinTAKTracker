@@ -86,12 +86,17 @@ public static class IdentityResolver
         };
     }
 
+    /// <summary>
+    /// True when this Windows user has no per-user callsign yet and has not dismissed the setup prompt.
+    /// Call on each tray start / interactive login so new users get prompted once.
+    /// </summary>
     public static bool CurrentUserNeedsSetup(AppConfig config, string? userSid = null)
     {
         userSid ??= CurrentUserSid();
         if (string.IsNullOrWhiteSpace(userSid)) return false;
         if (!config.UserIdentities.TryGetValue(userSid, out var user))
-            return true;
-        return !user.HasCallsign && !user.SetupPromptDismissed;
+            return true; // brand-new Windows user — prompt callsign (+ optional phone)
+        if (user.HasCallsign) return false;
+        return !user.SetupPromptDismissed;
     }
 }

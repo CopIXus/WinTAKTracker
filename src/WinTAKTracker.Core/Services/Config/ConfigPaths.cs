@@ -64,4 +64,28 @@ public static class ConfigPaths
 
     public static string GetTrackingModeLabel(bool attachedToService) =>
         attachedToService ? "Service" : "Standalone";
+
+    /// <summary>
+    /// Best-effort start when installed but stopped. Returns true if running (or already was).
+    /// May fail without elevation — callers should treat false as non-fatal.
+    /// </summary>
+    public static bool TryEnsureServiceRunning(TimeSpan? wait = null)
+    {
+        if (!IsServiceInstalled()) return false;
+        try
+        {
+            using var sc = new ServiceController(ServiceName);
+            if (sc.Status is ServiceControllerStatus.Running or ServiceControllerStatus.StartPending)
+                return true;
+            if (sc.Status != ServiceControllerStatus.Stopped)
+                return false;
+            sc.Start();
+            sc.WaitForStatus(ServiceControllerStatus.Running, wait ?? TimeSpan.FromSeconds(15));
+            return sc.Status == ServiceControllerStatus.Running;
+        }
+        catch
+        {
+            return false;
+        }
+    }
 }

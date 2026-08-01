@@ -15,6 +15,8 @@
     <Color x:Key="ContentBgColor">#121816</Color>
     <Color x:Key="SurfaceColor">#1C2420</Color>
     <Color x:Key="SurfaceSubtleColor">#252E2A</Color>
+    <!-- Elevated field fill — distinct from ContentSurface so TextBox/ComboBox read as inputs -->
+    <Color x:Key="InputBgColor">#2A3530</Color>
     <Color x:Key="BorderColor">#2E3A34</Color>
     <Color x:Key="BorderStrongColor">#44554C</Color>
     <Color x:Key="FocusBorderColor">#3D8F68</Color>
@@ -50,6 +52,7 @@
     <SolidColorBrush x:Key="ContentBgBrush" Color="{StaticResource ContentBgColor}"/>
     <SolidColorBrush x:Key="SurfaceBrush" Color="{StaticResource SurfaceColor}"/>
     <SolidColorBrush x:Key="SurfaceSubtleBrush" Color="{StaticResource SurfaceSubtleColor}"/>
+    <SolidColorBrush x:Key="InputBgBrush" Color="{StaticResource InputBgColor}"/>
     <SolidColorBrush x:Key="AppBorderBrush" Color="{StaticResource BorderColor}"/>
     <SolidColorBrush x:Key="BorderStrongBrush" Color="{StaticResource BorderStrongColor}"/>
     <SolidColorBrush x:Key="FocusBorderBrush" Color="{StaticResource FocusBorderColor}"/>

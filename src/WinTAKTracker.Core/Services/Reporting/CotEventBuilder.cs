@@ -16,6 +16,8 @@ public sealed class CotIdentity
     public required string CotType { get; init; }
     /// <summary>Optional; emitted as contact@phone only when non-whitespace.</summary>
     public string? Phone { get; init; }
+    /// <summary>Optional remarks text (e.g. computer name when callsign differs).</summary>
+    public string? Remarks { get; init; }
     public string Platform { get; init; } = "WinTAKTracker";
     public string Version { get; init; } = "0.1.0";
     public int? BatteryPercent { get; init; }
@@ -68,10 +70,12 @@ public static class CotEventBuilder
                     new XAttribute("device", Environment.MachineName),
                     new XAttribute("os", Environment.OSVersion.VersionString))));
 
+        var detail = evt.Element("detail")!;
+        if (!string.IsNullOrWhiteSpace(identity.Remarks))
+            detail.Add(new XElement("remarks", identity.Remarks.Trim()));
+
         if (identity.BatteryPercent is int bat)
-        {
-            evt.Element("detail")!.Add(new XElement("status", new XAttribute("battery", bat.ToString(CultureInfo.InvariantCulture))));
-        }
+            detail.Add(new XElement("status", new XAttribute("battery", bat.ToString(CultureInfo.InvariantCulture))));
 
         var sb = new StringBuilder();
         sb.Append(evt.ToString(SaveOptions.DisableFormatting));
@@ -98,17 +102,32 @@ public static class CotEventBuilder
             uid = "WIN-" + Environment.MachineName.Replace(" ", "");
         }
 
+        var callsign = server?.CallsignOverride is { Length: > 0 } c ? c : active.Callsign;
         return new CotIdentity
         {
             Uid = uid!,
-            Callsign = server?.CallsignOverride is { Length: > 0 } c ? c : active.Callsign,
+            Callsign = callsign,
             Team = server?.TeamOverride is { Length: > 0 } t ? t : active.Team,
             Role = server?.RoleOverride is { Length: > 0 } r ? r : active.Role,
             CotType = string.IsNullOrWhiteSpace(active.CotType) ? GroundUnitType : active.CotType,
             Phone = string.IsNullOrWhiteSpace(active.Phone) ? null : active.Phone.Trim(),
+            Remarks = BuildComputerNameRemarks(config, callsign),
             Version = typeof(CotEventBuilder).Assembly.GetName().Version?.ToString(3) ?? "0.1.0",
             BatteryPercent = battery,
         };
+    }
+
+    /// <summary>
+    /// When enabled and the PLI callsign is not the machine name, put the computer name in remarks.
+    /// </summary>
+    internal static string? BuildComputerNameRemarks(AppConfig config, string callsign)
+    {
+        if (!config.Reporting.IncludeComputerNameInRemarks) return null;
+        var machine = Environment.MachineName?.Trim() ?? "";
+        if (machine.Length == 0) return null;
+        if (string.Equals(callsign.Trim(), machine, StringComparison.OrdinalIgnoreCase))
+            return null;
+        return machine;
     }
 
     private static XElement BuildContact(CotIdentity identity)

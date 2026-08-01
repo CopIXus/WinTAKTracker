@@ -46,10 +46,14 @@
     <ProjectReference Include="..\WinTAKTracker.Core\WinTAKTracker.Core.csproj" />
   </ItemGroup>
 
-  <ItemGroup>
+    <ItemGroup>
     <!-- WPF pack URI + tray stream; ApplicationIcon above embeds native EXE icon. -->
     <Resource Include="Assets\WinTAKTrackerLogo.png" />
     <Resource Include="Assets\WinTAKTrackerLogo.ico" />
+    <Resource Include="Assets\companions\atak.png" />
+    <Resource Include="Assets\companions\itak.png" />
+    <Resource Include="Assets\companions\wintak.png" />
+    <Resource Include="Assets\companions\takgov.png" />
   </ItemGroup>
 
 </Project>

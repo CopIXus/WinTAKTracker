@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- README Status dashboard screenshot (illustrative Plymouth Rock sample) and architecture mermaid diagram
+- Companion apps section with platform icons; **TAK.gov** link to https://tak.gov
+- Portal / OpenTAK remote identity: device-profile sync + preference/SoftCert apply with **`.wtt`** callsign suffix and team color ([docs/remote-config.md](docs/remote-config.md))
+- Optional CoT `remarks` with Windows computer name when callsign differs (Reporting setting, default on)
+- Distinct input field backgrounds (TextBox/ComboBox) in light and dark themes
 - **One-click Setup** — Inno Setup `WinTAKTracker-Setup.exe` installs service + tray under Program Files with a single UAC prompt; Start Menu / optional Desktop shortcuts; optional LocalAppData→ProgramData migrate; clean service uninstall ([docs/windows-service.md](docs/windows-service.md))
 - **Windows Service** vertical slice: `WinTAKTracker.Core` + `WinTAKTracker.Service`, named-pipe IPC, `%ProgramData%` machine store with LocalMachine DPAPI, `scripts/install-service.ps1` ([docs/windows-service.md](docs/windows-service.md))
 - **Computer vs per-user callsign** — computer identity when logged off; per-user identity when logged in; first-login callsign prompt
@@ -22,6 +27,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Removed CloudTAK URL field and tray “Open CloudTAK” (use Companion apps for map clients)
+- Start with Windows always registers the tray Run key (portable + service companion); best-effort service start on tray launch; per-user callsign prompt on each tray start when unset
 - Tray attaches to the service when present (no second in-process tracker); portable in-process mode remains when the service is absent
 - Prefer Windows Location (Wi‑Fi/OS) over IP geolocation: high-accuracy Geolocator, retries, continuous updates while stationary, delayed IP fallback, and no auto-open of unrelated COM ports
 - Status labels: **Windows Location (Wi‑Fi/network)** vs **Network IP (approximate)**; GPS settings document enabling Windows Location privacy toggles

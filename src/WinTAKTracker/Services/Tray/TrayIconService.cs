@@ -35,7 +35,6 @@ public sealed class TrayIconService : IDisposable
         var pauseItem = new Forms.ToolStripMenuItem("Pause tracking");
         pauseItem.Click += (_, _) => _host.Pause.Toggle();
         menu.Items.Add(pauseItem);
-        menu.Items.Add("Open CloudTAK", null, (_, _) => OpenCloudTak());
         menu.Items.Add("Open log folder", null, (_, _) => OpenLogFolder());
         menu.Items.Add(new Forms.ToolStripSeparator());
         menu.Items.Add("Quit", null, (_, _) => Quit());
@@ -170,31 +169,6 @@ public sealed class TrayIconService : IDisposable
 
             _host.SettingsLock.Lock();
         });
-    }
-
-    private void OpenCloudTak()
-    {
-        var url = _host.Config.CloudTakUrl
-                  ?? _host.Config.Servers.Select(s => s.CloudTakUrl).FirstOrDefault(u => !string.IsNullOrWhiteSpace(u));
-        if (string.IsNullOrWhiteSpace(url))
-        {
-            MessageBox.Show(
-                "CloudTAK URL is not configured. Set it under Settings → View the map.",
-                "WinTAKTracker",
-                MessageBoxButton.OK,
-                MessageBoxImage.Information);
-            return;
-        }
-
-        try
-        {
-            Process.Start(new ProcessStartInfo { FileName = url, UseShellExecute = true });
-        }
-        catch (Exception ex)
-        {
-            MessageBox.Show($"Could not open CloudTAK: {ex.Message}", "WinTAKTracker",
-                MessageBoxButton.OK, MessageBoxImage.Warning);
-        }
     }
 
     private void OpenLogFolder()

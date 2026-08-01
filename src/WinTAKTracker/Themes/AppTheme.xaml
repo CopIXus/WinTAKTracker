@@ -205,8 +205,8 @@
         <Setter Property="FontSize" Value="13"/>
         <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}"/>
         <Setter Property="CaretBrush" Value="{DynamicResource TextPrimaryBrush}"/>
-        <Setter Property="Background" Value="{DynamicResource SurfaceBrush}"/>
-        <Setter Property="BorderBrush" Value="{DynamicResource AppBorderBrush}"/>
+        <Setter Property="Background" Value="{DynamicResource InputBgBrush}"/>
+        <Setter Property="BorderBrush" Value="{DynamicResource BorderStrongBrush}"/>
         <Setter Property="BorderThickness" Value="1"/>
         <Setter Property="Padding" Value="0"/>
         <Setter Property="MinHeight" Value="32"/>
@@ -248,8 +248,8 @@
         <Setter Property="FontSize" Value="13"/>
         <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}"/>
         <Setter Property="CaretBrush" Value="{DynamicResource TextPrimaryBrush}"/>
-        <Setter Property="Background" Value="{DynamicResource SurfaceBrush}"/>
-        <Setter Property="BorderBrush" Value="{DynamicResource AppBorderBrush}"/>
+        <Setter Property="Background" Value="{DynamicResource InputBgBrush}"/>
+        <Setter Property="BorderBrush" Value="{DynamicResource BorderStrongBrush}"/>
         <Setter Property="BorderThickness" Value="1"/>
         <Setter Property="Padding" Value="0"/>
         <Setter Property="MinHeight" Value="32"/>
@@ -435,8 +435,8 @@
         <Setter Property="FontFamily" Value="{StaticResource AppFont}"/>
         <Setter Property="FontSize" Value="13"/>
         <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}"/>
-        <Setter Property="Background" Value="{DynamicResource SurfaceBrush}"/>
-        <Setter Property="BorderBrush" Value="{DynamicResource AppBorderBrush}"/>
+        <Setter Property="Background" Value="{DynamicResource InputBgBrush}"/>
+        <Setter Property="BorderBrush" Value="{DynamicResource BorderStrongBrush}"/>
         <Setter Property="BorderThickness" Value="1"/>
         <Setter Property="Padding" Value="0"/>
         <Setter Property="MinHeight" Value="32"/>
@@ -460,7 +460,7 @@
                         <Border x:Name="Box"
                                 Width="18" Height="18"
                                 CornerRadius="4"
-                                Background="{DynamicResource SurfaceBrush}"
+                                Background="{DynamicResource InputBgBrush}"
                                 BorderBrush="{DynamicResource BorderStrongBrush}"
                                 BorderThickness="1.5"
                                 Margin="0,0,10,0"

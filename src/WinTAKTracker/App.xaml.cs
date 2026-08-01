@@ -80,6 +80,11 @@ public partial class App : Application
         }
     }
 
+    /// <summary>
+    /// On each tray start for this Windows session: if the logged-in user has no callsign
+    /// and has not dismissed setup, prompt once (callsign + optional phone). Skip forever
+    /// after dismiss until they set a callsign in Settings.
+    /// </summary>
     private static void MaybePromptCallsignSetup(AppHost host)
     {
         if (!host.CurrentUserNeedsCallsignSetup()) return;

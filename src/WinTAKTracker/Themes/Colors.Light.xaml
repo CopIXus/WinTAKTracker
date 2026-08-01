@@ -15,6 +15,8 @@
     <Color x:Key="ContentBgColor">#F4F5F4</Color>
     <Color x:Key="SurfaceColor">#FFFFFF</Color>
     <Color x:Key="SurfaceSubtleColor">#F0F3F1</Color>
+    <!-- Soft field fill — reads as data-entry against white ContentSurface -->
+    <Color x:Key="InputBgColor">#EEF2EF</Color>
     <Color x:Key="BorderColor">#D5DBD7</Color>
     <Color x:Key="BorderStrongColor">#B8C2BB</Color>
     <Color x:Key="FocusBorderColor">#2F6B4F</Color>
@@ -50,6 +52,7 @@
     <SolidColorBrush x:Key="ContentBgBrush" Color="{StaticResource ContentBgColor}"/>
     <SolidColorBrush x:Key="SurfaceBrush" Color="{StaticResource SurfaceColor}"/>
     <SolidColorBrush x:Key="SurfaceSubtleBrush" Color="{StaticResource SurfaceSubtleColor}"/>
+    <SolidColorBrush x:Key="InputBgBrush" Color="{StaticResource InputBgColor}"/>
     <SolidColorBrush x:Key="AppBorderBrush" Color="{StaticResource BorderColor}"/>
     <SolidColorBrush x:Key="BorderStrongBrush" Color="{StaticResource BorderStrongColor}"/>
     <SolidColorBrush x:Key="FocusBorderBrush" Color="{StaticResource FocusBorderColor}"/>

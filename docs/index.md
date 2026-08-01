@@ -18,6 +18,7 @@ Windows TAK PLI tracker: tray UI plus optional always-on **Windows Service**. Re
 - [Changelog](changelog.md) — release history (Keep a Changelog)
 - [Code signing](code-signing.md) — SmartScreen / SAC, workarounds, Azure Trusted Signing & CI secrets
 - [Always-on / Windows Service](windows-service.md) — service install, IPC, computer vs per-user callsign
+- [Managed devices (TAK Server / Portal)](managed-devices.md) — how PLI identifies WinTAKTracker vs ATAK/CloudTAK
 - [fail2ban](fail2ban.md) — infra-TAK TLS probe bans and WinTAKTracker reconnect limits
 
 ## Privacy

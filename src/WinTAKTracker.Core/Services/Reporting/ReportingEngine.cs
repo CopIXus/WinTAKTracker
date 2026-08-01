@@ -87,6 +87,12 @@ public sealed class ReportingEngine : IDisposable
         lock (_gate) _asap = true;
     }
 
+    /// <summary>
+    /// TAK Server moves a TLS socket from <c>tls:N</c> → identified client on the first PLI.
+    /// Call as soon as a server connects so callsign/UID/takv show in the connections UI.
+    /// </summary>
+    public Task AnnouncePresenceAsync() => AnnouncePresenceCoreAsync();
+
     private void MaybeAsapFromFix()
     {
         var fix = _gps.CurrentFix;
@@ -119,6 +125,66 @@ public sealed class ReportingEngine : IDisposable
         finally
         {
             Interlocked.Exchange(ref _tickBusy, 0);
+        }
+    }
+
+    private async Task AnnouncePresenceCoreAsync()
+    {
+        if (_pause.IsPaused) return;
+        if (!_tak.AnyConnected) return;
+
+        var fix = _gps.CurrentFix;
+        if (fix is null)
+        {
+            // No GPS yet — still announce identity so TAK Server can bind callsign/UID to the TLS session.
+            fix = new GpsFix
+            {
+                Latitude = 0,
+                Longitude = 0,
+                AltitudeMeters = 0,
+                AccuracyMeters = 9999999,
+                Timestamp = DateTimeOffset.UtcNow,
+                Source = GpsSourceKind.NetworkIp,
+                IsHeld = true,
+            };
+        }
+
+        AppConfig config;
+        IReportingRate rate;
+        lock (_gate)
+        {
+            config = _config;
+            rate = _rate;
+            _asap = true;
+        }
+
+        var battery = TryGetBatteryPercent();
+        var active = _identityProvider?.Invoke();
+        var identity = active is not null
+            ? CotEventBuilder.FromActiveIdentity(config, active, battery: battery)
+            : CotEventBuilder.FromConfig(config, battery: battery);
+        var stale = rate.GetStale(TimeSpan.FromSeconds(Math.Max(config.Reporting.ReliableMinSeconds, 30)));
+        var cot = CotEventBuilder.Build(fix, identity, stale);
+
+        try
+        {
+            using var timeout = new CancellationTokenSource(CotSendTimeout);
+            await _tak.SendToAllAsync(cot, timeout.Token).ConfigureAwait(false);
+            _lastReliable = DateTimeOffset.UtcNow;
+            LastPliSentUtc = _lastReliable;
+            lock (_gate)
+            {
+                _asap = false;
+                _identityDirty = false;
+            }
+
+            _log.Info("Report", $"Presence announced callsign={identity.Callsign} uid={identity.Uid}.");
+            Reported?.Invoke(this, EventArgs.Empty);
+        }
+        catch (Exception ex)
+        {
+            _log.Warn("Report", $"Presence announce failed: {ex.GetType().Name}");
+            RequestAsap();
         }
     }
 

@@ -24,6 +24,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **TAK Server managed-device presence** — PLI on connect, ATAK-shaped self-SA, `t-x-c-t` ping reply, `WINDOWS-WinTAKTracker-*` UIDs ([managed-devices.md](managed-devices.md))
 - **Schannel mTLS after enroll** — client `.p12` loaded with `MachineKeySet`/`UserKeySet` (not `EphemeralKeySet`); fixes false “client certificate rejected” after Portal enroll on Windows
 - **Private-CA TLS after enroll** — persist/load the full Marti CA chain in the trust store; clearer server-trust vs client-cert errors; tray can write `certs`/`secrets` for enroll; soft-accept toggle reloads connections
 - **Update now** for Setup/service installs uses elevated `WinTAKTracker-Setup.exe` (UAC); only quits after apply is armed; errors stay on screen ([Windows Service](windows-service.md#in-app-updates-setup--service-installs))

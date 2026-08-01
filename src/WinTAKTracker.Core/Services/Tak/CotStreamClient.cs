@@ -4,6 +4,7 @@ using System.Security.Authentication;
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
 using System.Text;
+using System.Xml.Linq;
 using WinTAKTracker.Services.Config;
 using WinTAKTracker.Services.Diagnostics;
 
@@ -347,7 +348,8 @@ public sealed class CotStreamClient : IDisposable
 
     private async Task ReadLoopAsync(CancellationToken ct)
     {
-        var buf = new byte[4096];
+        var buf = new byte[8192];
+        var pending = new StringBuilder();
         try
         {
             while (!ct.IsCancellationRequested)
@@ -357,7 +359,13 @@ public sealed class CotStreamClient : IDisposable
                 if (stream is null) break;
                 var n = await stream.ReadAsync(buf.AsMemory(0, buf.Length), ct).ConfigureAwait(false);
                 if (n == 0) break;
-                // v1: ignore inbound SA
+
+                pending.Append(Encoding.UTF8.GetString(buf, 0, n));
+                // Cap backlog so a noisy peer cannot grow memory unbounded.
+                if (pending.Length > 256_000)
+                    pending.Remove(0, pending.Length - 64_000);
+
+                await ProcessInboundAsync(pending, ct).ConfigureAwait(false);
             }
         }
         catch (OperationCanceledException) { }
@@ -370,6 +378,92 @@ public sealed class CotStreamClient : IDisposable
         if (State == TakConnectionState.Connected)
             SetState(TakConnectionState.Disconnected);
     }
+
+    /// <summary>
+    /// Reply to TAK Server connection tests (<c>t-x-c-t</c> → <c>t-x-c-t-r</c>).
+    /// Other inbound CoT is ignored (tracking-only client).
+    /// </summary>
+    private async Task ProcessInboundAsync(StringBuilder pending, CancellationToken ct)
+    {
+        while (true)
+        {
+            var text = pending.ToString();
+            var start = text.IndexOf("<event", StringComparison.OrdinalIgnoreCase);
+            if (start < 0)
+            {
+                pending.Clear();
+                return;
+            }
+
+            if (start > 0)
+                pending.Remove(0, start);
+
+            text = pending.ToString();
+            var end = text.IndexOf("</event>", StringComparison.OrdinalIgnoreCase);
+            if (end < 0) return;
+
+            end += "</event>".Length;
+            var xml = text[..end];
+            pending.Remove(0, end);
+
+            if (!xml.Contains("t-x-c-t", StringComparison.OrdinalIgnoreCase))
+                continue;
+            // Avoid treating our own pong as a new ping.
+            if (xml.Contains("t-x-c-t-r", StringComparison.OrdinalIgnoreCase))
+                continue;
+
+            try
+            {
+                var pong = BuildPingResponse(xml);
+                if (pong is not null)
+                    await SendAsync(pong, ct).ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                if (ShouldLog($"{Profile.Id}|ping|{ex.GetType().Name}"))
+                    _log.Warn("TAK", $"Ping response failed: {ex.GetType().Name}");
+            }
+        }
+    }
+
+    private static string? BuildPingResponse(string pingXml)
+    {
+        try
+        {
+            var doc = XDocument.Parse(pingXml);
+            var evt = doc.Root;
+            if (evt is null) return null;
+            var type = (string?)evt.Attribute("type") ?? "";
+            if (!type.Equals("t-x-c-t", StringComparison.OrdinalIgnoreCase))
+                return null;
+
+            var uid = (string?)evt.Attribute("uid") ?? "pong";
+            var now = DateTimeOffset.UtcNow;
+            var pong = new XElement("event",
+                new XAttribute("version", "2.0"),
+                new XAttribute("uid", uid),
+                new XAttribute("type", "t-x-c-t-r"),
+                new XAttribute("how", "h-g-i-g-o"),
+                new XAttribute("time", FormatTakTime(now)),
+                new XAttribute("start", FormatTakTime(now)),
+                new XAttribute("stale", FormatTakTime(now.AddSeconds(20))),
+                new XElement("point",
+                    new XAttribute("lat", "0.0"),
+                    new XAttribute("lon", "0.0"),
+                    new XAttribute("hae", "0.0"),
+                    new XAttribute("ce", "9999999.0"),
+                    new XAttribute("le", "9999999.0")),
+                new XElement("detail"));
+            return pong.ToString(SaveOptions.DisableFormatting) + "\n";
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static string FormatTakTime(DateTimeOffset dto) =>
+        dto.UtcDateTime.ToString("yyyy-MM-ddTHH:mm:ss.fffZ", System.Globalization.CultureInfo.InvariantCulture);
 
     private (X509Certificate2Collection Certs, string? Error) LoadClientCerts(ServerProfile profile)
     {

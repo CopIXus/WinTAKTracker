@@ -91,7 +91,11 @@ public sealed class TrackingHost : IDisposable
             StatusChanged?.Invoke(this, EventArgs.Empty);
         };
         Tak.ServerConnected += (_, profile) =>
+        {
+            // First PLI identifies the TLS session in TAK Server (callsign/UID vs bare tls:N).
+            _ = Reporting.AnnouncePresenceAsync();
             _ = ProfileSync.TrySyncAsync(profile, Config, _activeUserSid, _activeUserName);
+        };
 
         if (!serviceMode)
             _activeUserSid = IdentityResolver.CurrentUserSid();
@@ -368,13 +372,15 @@ public sealed class TrackingHost : IDisposable
             var guid = Microsoft.Win32.Registry.GetValue(
                 @"HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Cryptography",
                 "MachineGuid", null) as string;
-            Config.DeviceUid = string.IsNullOrWhiteSpace(guid)
-                ? "WIN-" + Guid.NewGuid().ToString("N")[..12].ToUpperInvariant()
-                : "WIN-" + guid.Replace("-", "")[..Math.Min(16, guid.Replace("-", "").Length)].ToUpperInvariant();
+            // Stable Windows UID (not ANDROID-*). TAK Server shows this after the first PLI.
+            var suffix = string.IsNullOrWhiteSpace(guid)
+                ? Guid.NewGuid().ToString("N")[..12].ToUpperInvariant()
+                : guid.Replace("-", "")[..Math.Min(16, guid.Replace("-", "").Length)].ToUpperInvariant();
+            Config.DeviceUid = "WINDOWS-WinTAKTracker-" + suffix;
         }
         catch
         {
-            Config.DeviceUid = "WIN-" + Guid.NewGuid().ToString("N")[..12].ToUpperInvariant();
+            Config.DeviceUid = "WINDOWS-WinTAKTracker-" + Guid.NewGuid().ToString("N")[..12].ToUpperInvariant();
         }
 
         if (allowSave)

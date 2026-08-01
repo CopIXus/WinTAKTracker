@@ -58,6 +58,11 @@ public static class CotEventBuilder
                 new XAttribute("le", F(le))),
             new XElement("detail",
                 BuildContact(identity),
+                // ATAK-compatible self-SA fields — TAK Server binds callsign/UID from first PLI.
+                new XElement("uid", new XAttribute("Droid", identity.Callsign)),
+                new XElement("precisionlocation",
+                    new XAttribute("altsrc", fix.IsHeld || fix.Source == GpsSourceKind.NetworkIp ? "DTED0" : "GPS"),
+                    new XAttribute("geopointsrc", fix.IsHeld || fix.Source == GpsSourceKind.NetworkIp ? "USER" : "GPS")),
                 new XElement("__group",
                     new XAttribute("name", identity.Team),
                     new XAttribute("role", identity.Role)),
@@ -132,7 +137,10 @@ public static class CotEventBuilder
 
     private static XElement BuildContact(CotIdentity identity)
     {
-        var contact = new XElement("contact", new XAttribute("callsign", identity.Callsign));
+        // endpoint=*:-1:stcp matches ATAK self-SA; servers use it when indexing contacts.
+        var contact = new XElement("contact",
+            new XAttribute("callsign", identity.Callsign),
+            new XAttribute("endpoint", "*:-1:stcp"));
         if (!string.IsNullOrWhiteSpace(identity.Phone))
             contact.Add(new XAttribute("phone", identity.Phone.Trim()));
         return contact;

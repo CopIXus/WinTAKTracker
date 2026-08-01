@@ -120,12 +120,23 @@ public sealed class CotStreamClient : IDisposable
                     }
 
                     _clientCerts = certs;
+                    // Schannel needs a persisted key container (Machine/UserKeySet) — not EphemeralKeySet.
                     await ssl.AuthenticateAsClientAsync(new SslClientAuthenticationOptions
                     {
                         TargetHost = profile.Host,
                         ClientCertificates = certs,
                         EnabledSslProtocols = SslProtocols.Tls12 | SslProtocols.Tls13,
                         CertificateRevocationCheckMode = X509RevocationMode.NoCheck,
+                        LocalCertificateSelectionCallback = static (_, _, localCertificates, _, _) =>
+                        {
+                            foreach (var c in localCertificates)
+                            {
+                                if (c is X509Certificate2 c2 && c2.HasPrivateKey)
+                                    return c2;
+                            }
+
+                            return localCertificates.Count > 0 ? localCertificates[0] : null!;
+                        },
                     }, linked.Token).ConfigureAwait(false);
                     stream = ssl;
                 }
@@ -211,16 +222,34 @@ public sealed class CotStreamClient : IDisposable
         InvalidOperationException ioe => ioe.Message,
         TimeoutException te => te.Message,
         OperationCanceledException => "Connection timed out or was canceled",
+        AuthenticationException ae when SchannelCertificateLoader.IsSchannelNoCredentials(ae) =>
+            "TLS failed — Windows could not use the client certificate private key (Schannel). " +
+            "This is a local key-storage bug, not fail2ban. Update WinTAKTracker / re-test; " +
+            "re-enroll only if it still fails.",
         AuthenticationException =>
-            "TLS authentication failed — client certificate rejected or not trusted by the TAK Server " +
-            "(or server cert rejected — see Diagnostics soft-accept / re-enroll for private CA). " +
-            "Repeated retries can trigger fail2ban on infra-TAK hosts.",
+            DescribeAuthenticationFailure(ex),
         SocketException se => $"Network error ({se.SocketErrorCode})",
         IOException => "Stream closed during connect (often TLS handshake rejected)",
         CryptographicException =>
             "Client certificate could not be loaded (bad password or key store). Fix the .p12 before retrying.",
         _ => ex.GetType().Name,
     };
+
+    private static string DescribeAuthenticationFailure(Exception ex)
+    {
+        var detail = ex.InnerException?.Message;
+        if (!string.IsNullOrWhiteSpace(detail) &&
+            !detail.Contains("Authentication failed", StringComparison.OrdinalIgnoreCase))
+        {
+            return "TLS authentication failed — " + detail.Trim() +
+                   " Re-enroll or enable Diagnostics soft-accept if the server uses a private CA. " +
+                   "Repeated retries can trigger fail2ban.";
+        }
+
+        return "TLS authentication failed — client certificate rejected by the TAK Server, " +
+               "or the server certificate was not trusted. Re-enroll or enable Diagnostics soft-accept. " +
+               "Repeated retries can trigger fail2ban.";
+    }
 
     private static bool IsTlsOrCertFailure(Exception ex, string? human = null)
     {
@@ -369,25 +398,9 @@ public sealed class CotStreamClient : IDisposable
         }
     }
 
-    private X509Certificate2 LoadPfx(string path, string password)
-    {
-        // Prefer ephemeral keys so LocalSystem (Windows Service) and interactive users both work.
-        // UserKeySet alone fails under the service (no interactive user profile).
-        try
-        {
-            return new X509Certificate2(
-                path,
-                password,
-                X509KeyStorageFlags.EphemeralKeySet | X509KeyStorageFlags.Exportable);
-        }
-        catch (CryptographicException)
-        {
-            var fallback = _store.DpapiScope == DataProtectionScope.LocalMachine
-                ? X509KeyStorageFlags.MachineKeySet | X509KeyStorageFlags.Exportable
-                : X509KeyStorageFlags.UserKeySet | X509KeyStorageFlags.Exportable;
-            return new X509Certificate2(path, password, fallback);
-        }
-    }
+    private X509Certificate2 LoadPfx(string path, string password) =>
+        // Must use MachineKeySet (service) / UserKeySet (portable) — EphemeralKeySet breaks Schannel mTLS on Windows.
+        SchannelCertificateLoader.LoadPfx(path, password, _store.DpapiScope);
 
     private bool RemoteCertificateValidationCallback(
         object sender, X509Certificate? certificate, X509Chain? chain, SslPolicyErrors sslPolicyErrors)

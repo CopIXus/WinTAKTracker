@@ -158,20 +158,8 @@ public sealed class DeviceProfileSync
 
         try
         {
-            X509Certificate2 cert;
-            try
-            {
-                cert = new X509Certificate2(
-                    path, pwd, X509KeyStorageFlags.EphemeralKeySet | X509KeyStorageFlags.Exportable);
-            }
-            catch (CryptographicException)
-            {
-                var fallback = _store.DpapiScope == DataProtectionScope.LocalMachine
-                    ? X509KeyStorageFlags.MachineKeySet | X509KeyStorageFlags.Exportable
-                    : X509KeyStorageFlags.UserKeySet | X509KeyStorageFlags.Exportable;
-                cert = new X509Certificate2(path, pwd, fallback);
-            }
-
+            // Schannel/HttpClient mTLS cannot use EphemeralKeySet on Windows.
+            var cert = SchannelCertificateLoader.LoadPfx(path, pwd, _store.DpapiScope);
             loadedCert = cert;
             handler.ClientCertificates.Add(cert);
         }

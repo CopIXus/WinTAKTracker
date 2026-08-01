@@ -39,8 +39,11 @@ public sealed class TakConnectionManager : ITakConnectionManager, IDisposable
     private readonly IRedactedLogger _log;
     private readonly Dictionary<string, CotStreamClient> _clients = new();
     private readonly Dictionary<string, CancellationTokenSource> _reconnectCts = new();
+    private readonly Dictionary<string, SemaphoreSlim> _connectGates = new();
     private readonly object _gate = new();
     private AppConfig _config = new();
+    private CancellationTokenSource? _networkReloadCts;
+    private int _networkReloadVersion;
 
     public TakConnectionManager(AppConfigStore store, IRedactedLogger log)
     {
@@ -88,10 +91,15 @@ public sealed class TakConnectionManager : ITakConnectionManager, IDisposable
         }
     }
 
-    public async Task StartAsync(AppConfig config) => await ReloadAsync(config);
+    public async Task StartAsync(AppConfig config)
+    {
+        _store.EnsureDirectories();
+        await ReloadAsync(config).ConfigureAwait(false);
+    }
 
     public async Task ReloadAsync(AppConfig config)
     {
+        _store.EnsureDirectories();
         _config = config;
         var enabledIds = config.Servers.Where(s => s.Enabled && !string.IsNullOrWhiteSpace(s.Host))
             .Select(s => s.Id).ToHashSet();
@@ -104,12 +112,14 @@ public sealed class TakConnectionManager : ITakConnectionManager, IDisposable
             {
                 CancelReconnect(id);
                 _clients.Remove(id);
+                if (_connectGates.Remove(id, out var sem))
+                    sem.Dispose();
             }
         }
 
         foreach (var c in toDispose)
         {
-            await c.DisconnectAsync();
+            await c.DisconnectAsync().ConfigureAwait(false);
             c.Dispose();
         }
 
@@ -126,15 +136,31 @@ public sealed class TakConnectionManager : ITakConnectionManager, IDisposable
                         StatusChanged?.Invoke(this, EventArgs.Empty);
                         if (client.State == TakConnectionState.Connected)
                             ServerConnected?.Invoke(this, client.Profile);
-                        if (client.State is TakConnectionState.Disconnected or TakConnectionState.Error)
+                        // Unexpected stream drop only — failed ConnectAsync owns its own backoff.
+                        if (client.State == TakConnectionState.Disconnected)
                             _ = EnsureReconnectAsync(profile.Id);
                     };
                     _clients[profile.Id] = client;
+                    _connectGates[profile.Id] = new SemaphoreSlim(1, 1);
                 }
             }
 
-            if (client.State != TakConnectionState.Connected)
-                _ = ConnectOrReconnectAsync(profile);
+            if (client.State == TakConnectionState.Connected && !ProfileEndpointChanged(client.Profile, profile))
+            {
+                // Keep healthy sockets across reload/config save; refresh profile metadata only.
+                client.ApplyProfile(profile);
+                continue;
+            }
+
+            if (client.State is TakConnectionState.Connecting or TakConnectionState.Reconnecting
+                && !ProfileEndpointChanged(client.Profile, profile))
+            {
+                // Let the in-flight attempt finish instead of thrashing.
+                continue;
+            }
+
+            // Fire-and-forget so IPC ReloadConnections stays responsive; connect lock serializes attempts.
+            _ = ConnectOrReconnectAsync(profile);
         }
 
         StatusChanged?.Invoke(this, EventArgs.Empty);
@@ -147,7 +173,7 @@ public sealed class TakConnectionManager : ITakConnectionManager, IDisposable
 
         foreach (var client in clients)
         {
-            try { await client.SendAsync(cotXml, ct); }
+            try { await client.SendAsync(cotXml, ct).ConfigureAwait(false); }
             catch (Exception ex)
             {
                 _log.Warn("TAK", $"Send failed: {ex.GetType().Name}");
@@ -164,7 +190,7 @@ public sealed class TakConnectionManager : ITakConnectionManager, IDisposable
         using var client = new CotStreamClient(_store, _log);
         try
         {
-            return await client.TestAsync(profile);
+            return await client.TestAsync(profile).ConfigureAwait(false);
         }
         catch (Exception ex)
         {
@@ -188,6 +214,9 @@ public sealed class TakConnectionManager : ITakConnectionManager, IDisposable
                 _ = client.DisconnectAsync();
                 client.Dispose();
             }
+
+            if (_connectGates.Remove(profileId, out var sem))
+                sem.Dispose();
         }
 
         DeleteProfileFiles(profile, store);
@@ -210,11 +239,13 @@ public sealed class TakConnectionManager : ITakConnectionManager, IDisposable
             foreach (var id in _reconnectCts.Keys.ToList()) CancelReconnect(id);
             clients = _clients.Values.ToList();
             _clients.Clear();
+            foreach (var sem in _connectGates.Values) sem.Dispose();
+            _connectGates.Clear();
         }
 
         foreach (var c in clients)
         {
-            await c.DisconnectAsync();
+            await c.DisconnectAsync().ConfigureAwait(false);
             c.Dispose();
         }
     }
@@ -222,26 +253,51 @@ public sealed class TakConnectionManager : ITakConnectionManager, IDisposable
     private async Task ConnectOrReconnectAsync(ServerProfile profile)
     {
         CotStreamClient? client;
-        lock (_gate) _clients.TryGetValue(profile.Id, out client);
-        if (client is null) return;
-
-        if (SslMissingClientCert(profile))
+        SemaphoreSlim? connectGate;
+        lock (_gate)
         {
-            // Avoid endless reconnect when enroll never completed.
-            try { await client.ConnectAsync(profile); }
-            catch { /* LastErrorCode set by client */ }
-            StatusChanged?.Invoke(this, EventArgs.Empty);
-            return;
+            _clients.TryGetValue(profile.Id, out client);
+            _connectGates.TryGetValue(profile.Id, out connectGate);
         }
 
+        if (client is null || connectGate is null) return;
+
+        CancelReconnect(profile.Id);
+
+        var startBackoff = false;
+        await connectGate.WaitAsync().ConfigureAwait(false);
         try
         {
-            await client.ConnectAsync(profile);
+            // Re-check after waiting — another reload may have connected us.
+            if (client.State == TakConnectionState.Connected && !ProfileEndpointChanged(client.Profile, profile))
+                return;
+
+            if (SslMissingClientCert(profile))
+            {
+                // Avoid endless reconnect when enroll never completed / certs not migrated yet.
+                try { await client.ConnectAsync(profile).ConfigureAwait(false); }
+                catch { /* LastErrorCode + diagnostics set by client */ }
+                StatusChanged?.Invoke(this, EventArgs.Empty);
+                return;
+            }
+
+            try
+            {
+                await client.ConnectAsync(profile).ConfigureAwait(false);
+            }
+            catch
+            {
+                startBackoff = true;
+            }
         }
-        catch
+        finally
         {
-            await EnsureReconnectAsync(profile.Id);
+            connectGate.Release();
         }
+
+        // Start backoff only after releasing the gate so it cannot race the first attempt.
+        if (startBackoff)
+            _ = EnsureReconnectAsync(profile.Id);
     }
 
     private async Task EnsureReconnectAsync(string profileId)
@@ -250,15 +306,24 @@ public sealed class TakConnectionManager : ITakConnectionManager, IDisposable
         if (profile is null || !profile.Enabled) return;
         if (SslMissingClientCert(profile)) return;
 
+        CotStreamClient? client;
+        lock (_gate) _clients.TryGetValue(profileId, out client);
+        if (client is null) return;
+        if (client.State is TakConnectionState.Connected or TakConnectionState.Connecting)
+            return;
+
         CancelReconnect(profileId);
         var cts = new CancellationTokenSource();
         lock (_gate) _reconnectCts[profileId] = cts;
 
-        CotStreamClient? client;
-        lock (_gate) _clients.TryGetValue(profileId, out client);
-        if (client is null) return;
-
-        await client.ReconnectWithBackoffAsync(profile, cts.Token);
+        try
+        {
+            await client.ReconnectWithBackoffAsync(profile, cts.Token).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            // canceled by reload / stop
+        }
     }
 
     private bool SslMissingClientCert(ServerProfile profile)
@@ -269,6 +334,15 @@ public sealed class TakConnectionManager : ITakConnectionManager, IDisposable
             return true;
         return !File.Exists(Path.Combine(_store.CertsDirectory, profile.ClientCertFileName));
     }
+
+    private static bool ProfileEndpointChanged(ServerProfile current, ServerProfile next) =>
+        !string.Equals(current.Host, next.Host, StringComparison.OrdinalIgnoreCase)
+        || current.Port != next.Port
+        || !string.Equals(current.Protocol, next.Protocol, StringComparison.OrdinalIgnoreCase)
+        || !string.Equals(current.ClientCertFileName, next.ClientCertFileName, StringComparison.OrdinalIgnoreCase)
+        || !string.Equals(current.TrustStoreFileName, next.TrustStoreFileName, StringComparison.OrdinalIgnoreCase)
+        || !string.Equals(current.CertPasswordBlobName, next.CertPasswordBlobName, StringComparison.OrdinalIgnoreCase)
+        || !string.Equals(current.TrustPasswordBlobName, next.TrustPasswordBlobName, StringComparison.OrdinalIgnoreCase);
 
     private void CancelReconnect(string profileId)
     {
@@ -282,16 +356,46 @@ public sealed class TakConnectionManager : ITakConnectionManager, IDisposable
         }
     }
 
+    private void ScheduleDebouncedReload()
+    {
+        var version = Interlocked.Increment(ref _networkReloadVersion);
+        CancellationTokenSource cts;
+        lock (_gate)
+        {
+            try { _networkReloadCts?.Cancel(); } catch { /* ignore */ }
+            _networkReloadCts?.Dispose();
+            _networkReloadCts = new CancellationTokenSource();
+            cts = _networkReloadCts;
+        }
+
+        _ = DebouncedReloadAsync(version, cts.Token);
+    }
+
+    private async Task DebouncedReloadAsync(int version, CancellationToken ct)
+    {
+        try
+        {
+            await Task.Delay(TimeSpan.FromSeconds(2), ct).ConfigureAwait(false);
+            if (version != Volatile.Read(ref _networkReloadVersion)) return;
+            _log.Info("TAK", "Network change settled — refreshing connections.");
+            await ReloadAsync(_config).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            // coalesced
+        }
+    }
+
     private void OnNetworkChanged(object? sender, EventArgs e)
     {
-        _log.Info("TAK", "Network address changed — retrying connections.");
-        _ = ReloadAsync(_config);
+        _log.Info("TAK", "Network address changed — scheduling connection refresh.");
+        ScheduleDebouncedReload();
     }
 
     private void OnNetworkAvailabilityChanged(object? sender, NetworkAvailabilityEventArgs e)
     {
         _log.Info("TAK", $"Network availability: {e.IsAvailable}");
-        if (e.IsAvailable) _ = ReloadAsync(_config);
+        if (e.IsAvailable) ScheduleDebouncedReload();
     }
 
     private static void DeleteProfileFiles(ServerProfile profile, AppConfigStore store)
@@ -305,6 +409,12 @@ public sealed class TakConnectionManager : ITakConnectionManager, IDisposable
 
         Del(profile.ClientCertFileName);
         Del(profile.TrustStoreFileName);
+        if (!string.IsNullOrWhiteSpace(profile.Id))
+        {
+            var chain = Path.Combine(store.CertsDirectory, $"{profile.Id}-trust-chain.pem");
+            try { if (File.Exists(chain)) File.Delete(chain); } catch { /* ignore */ }
+        }
+
         if (profile.SecretBlobName is not null) store.DeleteSecret(profile.SecretBlobName);
         if (profile.CertPasswordBlobName is not null) store.DeleteSecret(profile.CertPasswordBlobName);
         if (profile.TrustPasswordBlobName is not null) store.DeleteSecret(profile.TrustPasswordBlobName);
@@ -314,6 +424,13 @@ public sealed class TakConnectionManager : ITakConnectionManager, IDisposable
     {
         NetworkChange.NetworkAddressChanged -= OnNetworkChanged;
         NetworkChange.NetworkAvailabilityChanged -= OnNetworkAvailabilityChanged;
+        lock (_gate)
+        {
+            try { _networkReloadCts?.Cancel(); } catch { /* ignore */ }
+            _networkReloadCts?.Dispose();
+            _networkReloadCts = null;
+        }
+
         StopAsync().GetAwaiter().GetResult();
     }
 }

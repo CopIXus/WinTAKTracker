@@ -724,6 +724,7 @@ public partial class SettingsWindow : Window
         actions.Children.Add(removeBtn);
         root.Children.Add(actions);
 
+        var body = new StackPanel();
         var primary = new DockPanel { LastChildFill = true, VerticalAlignment = VerticalAlignment.Center };
 
         var connectCheck = new CheckBox
@@ -756,7 +757,20 @@ public partial class SettingsWindow : Window
         primary.Children.Add(connectCheck);
         primary.Children.Add(statusBadge);
         primary.Children.Add(title);
-        root.Children.Add(primary);
+
+        var errorText = new TextBlock
+        {
+            FontSize = 11,
+            TextWrapping = TextWrapping.NoWrap,
+            TextTrimming = TextTrimming.CharacterEllipsis,
+            Margin = new Thickness(28, 4, 0, 0),
+            Visibility = Visibility.Collapsed,
+        };
+        SetTheme(errorText, TextBlock.ForegroundProperty, "DangerBrush");
+
+        body.Children.Add(primary);
+        body.Children.Add(errorText);
+        root.Children.Add(body);
         card.Child = root;
 
         var suppressing = false;
@@ -776,8 +790,28 @@ public partial class SettingsWindow : Window
             var status = _host.GetServerStatuses().FirstOrDefault(s => s.ProfileId == server.Id);
             var state = status?.State ?? TakConnectionState.Disconnected;
             var enabled = status?.Enabled ?? server.Enabled;
-            ApplyStatusBadge(statusBadge, state, enabled, status?.LastErrorCode);
-            title.ToolTip = BuildServerTooltip(server, status?.LastErrorCode);
+            var lastError = status?.LastErrorCode;
+            ApplyStatusBadge(statusBadge, state, enabled, lastError);
+            title.ToolTip = BuildServerTooltip(server, lastError);
+
+            var showError = !string.IsNullOrWhiteSpace(lastError)
+                            && state is not (TakConnectionState.Connected
+                                or TakConnectionState.Connecting
+                                or TakConnectionState.Reconnecting)
+                            && (state == TakConnectionState.Error || enabled);
+            if (showError)
+            {
+                var full = lastError!.Trim();
+                errorText.Text = TruncateUi(full, 140);
+                errorText.ToolTip = full.Length > 140 ? full : null;
+                errorText.Visibility = Visibility.Visible;
+            }
+            else
+            {
+                errorText.Text = "";
+                errorText.ToolTip = null;
+                errorText.Visibility = Visibility.Collapsed;
+            }
 
             if (connectCheck.IsChecked != enabled)
             {
@@ -790,6 +824,12 @@ public partial class SettingsWindow : Window
         Refresh();
         _serverCardRefreshers.Add(Refresh);
         return card;
+    }
+
+    private static string TruncateUi(string text, int maxChars)
+    {
+        if (string.IsNullOrEmpty(text) || text.Length <= maxChars) return text;
+        return text[..(maxChars - 1)] + "…";
     }
 
     private string BuildServerTooltip(ServerProfile server, string? error = null)
@@ -1472,7 +1512,7 @@ public partial class SettingsWindow : Window
             HorizontalAlignment = WpfHAlign.Left,
         };
 
-        panel.Children.Add(Blurb("Logs are redacted (tokens, enroll URLs, key material). Default level is Error; raise temporarily when diagnosing."));
+        panel.Children.Add(Blurb("Logs are redacted (tokens, enroll URLs, key material). Default level is Error (includes TAK connection failures). Raise to Warning/Information temporarily when diagnosing."));
         panel.Children.Add(Label("Log level")); panel.Children.Add(level);
         panel.Children.Add(Label("Max log size (MB)")); panel.Children.Add(maxSize);
         panel.Children.Add(new TextBlock

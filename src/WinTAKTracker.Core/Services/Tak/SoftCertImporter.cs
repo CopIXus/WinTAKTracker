@@ -81,6 +81,9 @@ public sealed class SoftCertImporter
                 clientP12Name = trustP12Name;
             }
 
+            if (clientP12 is null || clientP12.Length == 0)
+                return Fail("SoftCert ZIP did not contain a client certificate (.p12/.pfx).");
+
             var host = "";
             var port = 8089;
             var protocol = "ssl";
@@ -95,11 +98,13 @@ public sealed class SoftCertImporter
             if (string.IsNullOrWhiteSpace(host))
                 return Fail("Could not find server host in SoftCert preferences.");
 
+            _store.EnsureDirectories();
             var profileId = Guid.NewGuid().ToString("N");
             var clientFile = $"{profileId}-client.p12";
             var trustFile = trustP12 is not null ? $"{profileId}-trust.p12" : null;
 
-            File.WriteAllBytes(Path.Combine(_store.CertsDirectory, clientFile), clientP12 ?? Array.Empty<byte>());
+            // Persist under certs/ so reconnects reuse the files (never re-download SoftCert for reload).
+            File.WriteAllBytes(Path.Combine(_store.CertsDirectory, clientFile), clientP12);
             if (trustP12 is not null && trustFile is not null)
                 File.WriteAllBytes(Path.Combine(_store.CertsDirectory, trustFile), trustP12);
 
@@ -166,6 +171,7 @@ public sealed class SoftCertImporter
 
         try
         {
+            _store.EnsureDirectories();
             var profileId = Guid.NewGuid().ToString("N");
             var clientFile = $"{profileId}-client{Path.GetExtension(clientP12Path)}";
             File.Copy(clientP12Path, Path.Combine(_store.CertsDirectory, clientFile), overwrite: true);

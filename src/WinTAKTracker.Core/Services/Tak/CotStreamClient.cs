@@ -1,6 +1,7 @@
 using System.Net.Security;
 using System.Net.Sockets;
 using System.Security.Authentication;
+using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
 using System.Text;
 using WinTAKTracker.Services.Config;
@@ -20,14 +21,19 @@ public enum TakConnectionState
 /// <summary>TLS (ssl) or cleartext TCP CoT stream client for one server.</summary>
 public sealed class CotStreamClient : IDisposable
 {
+    private static readonly TimeSpan IdenticalErrorLogInterval = TimeSpan.FromMinutes(2);
+
     private readonly AppConfigStore _store;
     private readonly IRedactedLogger _log;
     private readonly object _gate = new();
+    private readonly SemaphoreSlim _connectLock = new(1, 1);
     private TcpClient? _tcp;
     private Stream? _stream;
     private CancellationTokenSource? _cts;
     private Task? _readLoop;
     private int _backoffSeconds = 2;
+    private string? _lastLoggedFailureKey;
+    private DateTimeOffset _lastLoggedFailureUtc = DateTimeOffset.MinValue;
 
     public CotStreamClient(AppConfigStore store, IRedactedLogger log)
     {
@@ -41,80 +47,92 @@ public sealed class CotStreamClient : IDisposable
     public DateTimeOffset? LastSendUtc { get; private set; }
     public event EventHandler? StateChanged;
 
+    /// <summary>Update profile metadata without tearing down a live socket.</summary>
+    public void ApplyProfile(ServerProfile profile) => Profile = profile;
+
     public async Task ConnectAsync(ServerProfile profile, CancellationToken ct = default)
     {
-        Profile = profile;
-        SetState(TakConnectionState.Connecting);
-        await DisconnectCoreAsync();
-
-        if (string.Equals(profile.Protocol, "ssl", StringComparison.OrdinalIgnoreCase))
-        {
-            var missing = DescribeMissingClientCert(profile);
-            if (missing is not null)
-            {
-                LastErrorCode = missing;
-                SetState(TakConnectionState.Error);
-                throw new InvalidOperationException(missing);
-            }
-        }
-
-        _cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        await _connectLock.WaitAsync(ct).ConfigureAwait(false);
         try
         {
-            var tcp = new TcpClient();
-            // Streaming mTLS can exceed short lab timeouts; keep separate from enroll (8446).
-            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(45));
-            using var linked = CancellationTokenSource.CreateLinkedTokenSource(_cts.Token, timeout.Token);
-            await tcp.ConnectAsync(profile.Host, profile.Port, linked.Token);
+            Profile = profile;
+            SetState(TakConnectionState.Connecting);
+            await DisconnectCoreAsync().ConfigureAwait(false);
 
-            Stream stream = tcp.GetStream();
             if (string.Equals(profile.Protocol, "ssl", StringComparison.OrdinalIgnoreCase))
             {
-                var ssl = new SslStream(stream, leaveInnerStreamOpen: false, RemoteCertificateValidationCallback);
-                var certs = LoadClientCerts(profile);
-                if (certs.Count == 0)
+                var missing = DescribeMissingClientCert(profile);
+                if (missing is not null)
                 {
-                    LastErrorCode = "No client certificate — enroll first";
-                    throw new InvalidOperationException(LastErrorCode);
+                    LastErrorCode = missing;
+                    LogConnectionFailure(profile, missing);
+                    SetState(TakConnectionState.Error);
+                    throw new InvalidOperationException(missing);
+                }
+            }
+
+            _cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            try
+            {
+                var tcp = new TcpClient();
+                // Streaming mTLS can exceed short lab timeouts; keep separate from enroll (8446).
+                using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(45));
+                using var linked = CancellationTokenSource.CreateLinkedTokenSource(_cts.Token, timeout.Token);
+                await tcp.ConnectAsync(profile.Host, profile.Port, linked.Token).ConfigureAwait(false);
+
+                Stream stream = tcp.GetStream();
+                if (string.Equals(profile.Protocol, "ssl", StringComparison.OrdinalIgnoreCase))
+                {
+                    var ssl = new SslStream(stream, leaveInnerStreamOpen: false, RemoteCertificateValidationCallback);
+                    var (certs, loadError) = LoadClientCerts(profile);
+                    if (certs.Count == 0)
+                    {
+                        LastErrorCode = loadError ?? "No client certificate — enroll first";
+                        throw new InvalidOperationException(LastErrorCode);
+                    }
+
+                    await ssl.AuthenticateAsClientAsync(new SslClientAuthenticationOptions
+                    {
+                        TargetHost = profile.Host,
+                        ClientCertificates = certs,
+                        EnabledSslProtocols = SslProtocols.Tls12 | SslProtocols.Tls13,
+                        CertificateRevocationCheckMode = X509RevocationMode.NoCheck,
+                    }, linked.Token).ConfigureAwait(false);
+                    stream = ssl;
                 }
 
-                await ssl.AuthenticateAsClientAsync(new SslClientAuthenticationOptions
+                lock (_gate)
                 {
-                    TargetHost = profile.Host,
-                    ClientCertificates = certs,
-                    EnabledSslProtocols = SslProtocols.Tls12 | SslProtocols.Tls13,
-                    CertificateRevocationCheckMode = X509RevocationMode.NoCheck,
-                }, linked.Token);
-                stream = ssl;
-            }
+                    _tcp = tcp;
+                    _stream = stream;
+                }
 
-            lock (_gate)
+                _backoffSeconds = 2;
+                LastErrorCode = null;
+                SetState(TakConnectionState.Connected);
+                _readLoop = Task.Run(() => ReadLoopAsync(_cts.Token));
+                _log.Info("TAK", $"Connected profile={ProfileLabel(profile)} via {profile.Protocol}.");
+            }
+            catch (OperationCanceledException) when (!ct.IsCancellationRequested)
             {
-                _tcp = tcp;
-                _stream = stream;
+                LastErrorCode = "Connection timed out (server unreachable or TLS handshake stalled)";
+                LogConnectionFailure(profile, LastErrorCode);
+                SetState(TakConnectionState.Error);
+                await DisconnectCoreAsync().ConfigureAwait(false);
+                throw new TimeoutException(LastErrorCode);
             }
-
-            _backoffSeconds = 2;
-            LastErrorCode = null;
-            SetState(TakConnectionState.Connected);
-            _readLoop = Task.Run(() => ReadLoopAsync(_cts.Token));
-            _log.Info("TAK", $"Connected via {profile.Protocol} (host redacted).");
+            catch (Exception ex)
+            {
+                LastErrorCode = HumanizeConnectError(ex);
+                LogConnectionFailure(profile, LastErrorCode);
+                SetState(TakConnectionState.Error);
+                await DisconnectCoreAsync().ConfigureAwait(false);
+                throw;
+            }
         }
-        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+        finally
         {
-            LastErrorCode = "Connection timed out (server unreachable or TLS handshake stalled)";
-            _log.Warn("TAK", "Connect timed out.");
-            SetState(TakConnectionState.Error);
-            await DisconnectCoreAsync();
-            throw new TimeoutException(LastErrorCode);
-        }
-        catch (Exception ex)
-        {
-            LastErrorCode = HumanizeConnectError(ex);
-            _log.Warn("TAK", $"Connect failed: {LastErrorCode}");
-            SetState(TakConnectionState.Error);
-            await DisconnectCoreAsync();
-            throw;
+            _connectLock.Release();
         }
     }
 
@@ -129,8 +147,8 @@ public sealed class CotStreamClient : IDisposable
 
         try
         {
-            await ConnectAsync(profile, ct);
-            await DisconnectAsync();
+            await ConnectAsync(profile, ct).ConfigureAwait(false);
+            await DisconnectAsync().ConfigureAwait(false);
             return (true, "Connection test passed.");
         }
         catch (Exception ex)
@@ -162,6 +180,7 @@ public sealed class CotStreamClient : IDisposable
         AuthenticationException => "TLS authentication failed (client cert or trust rejected)",
         SocketException se => $"Network error ({se.SocketErrorCode})",
         IOException => "Stream closed during connect",
+        CryptographicException => "Client certificate could not be loaded (bad password or key store)",
         _ => ex.GetType().Name,
     };
 
@@ -173,15 +192,15 @@ public sealed class CotStreamClient : IDisposable
             throw new InvalidOperationException("Not connected.");
 
         var bytes = Encoding.UTF8.GetBytes(cotXml);
-        await stream.WriteAsync(bytes, ct);
-        await stream.FlushAsync(ct);
+        await stream.WriteAsync(bytes, ct).ConfigureAwait(false);
+        await stream.FlushAsync(ct).ConfigureAwait(false);
         LastSendUtc = DateTimeOffset.UtcNow;
     }
 
     public async Task DisconnectAsync()
     {
         SetState(TakConnectionState.Disconnected);
-        await DisconnectCoreAsync();
+        await DisconnectCoreAsync().ConfigureAwait(false);
     }
 
     public async Task ReconnectWithBackoffAsync(ServerProfile profile, CancellationToken ct)
@@ -191,14 +210,14 @@ public sealed class CotStreamClient : IDisposable
             SetState(TakConnectionState.Reconnecting);
             try
             {
-                await ConnectAsync(profile, ct);
+                await ConnectAsync(profile, ct).ConfigureAwait(false);
                 return;
             }
             catch
             {
                 var delay = Math.Min(_backoffSeconds, 60);
                 _backoffSeconds = Math.Min(_backoffSeconds * 2, 60);
-                try { await Task.Delay(TimeSpan.FromSeconds(delay), ct); }
+                try { await Task.Delay(TimeSpan.FromSeconds(delay), ct).ConfigureAwait(false); }
                 catch (OperationCanceledException) { return; }
             }
         }
@@ -214,7 +233,7 @@ public sealed class CotStreamClient : IDisposable
                 Stream? stream;
                 lock (_gate) stream = _stream;
                 if (stream is null) break;
-                var n = await stream.ReadAsync(buf.AsMemory(0, buf.Length), ct);
+                var n = await stream.ReadAsync(buf.AsMemory(0, buf.Length), ct).ConfigureAwait(false);
                 if (n == 0) break;
                 // v1: ignore inbound SA
             }
@@ -222,20 +241,23 @@ public sealed class CotStreamClient : IDisposable
         catch (OperationCanceledException) { }
         catch (Exception ex)
         {
-            LastErrorCode = ex.GetType().Name;
-            _log.Warn("TAK", $"Stream ended: {ex.GetType().Name}");
+            LastErrorCode = $"Stream ended ({ex.GetType().Name})";
+            LogConnectionFailure(Profile, LastErrorCode);
         }
 
         if (State == TakConnectionState.Connected)
             SetState(TakConnectionState.Disconnected);
     }
 
-    private X509Certificate2Collection LoadClientCerts(ServerProfile profile)
+    private (X509Certificate2Collection Certs, string? Error) LoadClientCerts(ServerProfile profile)
     {
         var col = new X509Certificate2Collection();
-        if (string.IsNullOrWhiteSpace(profile.ClientCertFileName)) return col;
+        if (string.IsNullOrWhiteSpace(profile.ClientCertFileName))
+            return (col, "No client certificate — enroll first");
+
         var path = Path.Combine(_store.CertsDirectory, profile.ClientCertFileName);
-        if (!File.Exists(path)) return col;
+        if (!File.Exists(path))
+            return (col, "Client certificate file missing — re-enroll or re-import SoftCert/.p12.");
 
         var pwd = profile.CertPasswordBlobName is null
             ? ""
@@ -243,15 +265,35 @@ public sealed class CotStreamClient : IDisposable
 
         try
         {
-            var cert = new X509Certificate2(path, pwd, X509KeyStorageFlags.UserKeySet | X509KeyStorageFlags.Exportable);
-            col.Add(cert);
+            col.Add(LoadPfx(path, pwd));
+            return (col, null);
         }
         catch (Exception ex)
         {
-            _log.Warn("TAK", $"Client cert load failed: {ex.GetType().Name}");
+            var msg = $"Client certificate could not be loaded ({ex.GetType().Name})";
+            _log.Error("TAK", $"profile={ProfileLabel(profile)} {msg}");
+            return (col, msg);
         }
+    }
 
-        return col;
+    private X509Certificate2 LoadPfx(string path, string password)
+    {
+        // Prefer ephemeral keys so LocalSystem (Windows Service) and interactive users both work.
+        // UserKeySet alone fails under the service (no interactive user profile).
+        try
+        {
+            return new X509Certificate2(
+                path,
+                password,
+                X509KeyStorageFlags.EphemeralKeySet | X509KeyStorageFlags.Exportable);
+        }
+        catch (CryptographicException)
+        {
+            var fallback = _store.DpapiScope == DataProtectionScope.LocalMachine
+                ? X509KeyStorageFlags.MachineKeySet | X509KeyStorageFlags.Exportable
+                : X509KeyStorageFlags.UserKeySet | X509KeyStorageFlags.Exportable;
+            return new X509Certificate2(path, password, fallback);
+        }
     }
 
     private bool RemoteCertificateValidationCallback(
@@ -270,7 +312,7 @@ public sealed class CotStreamClient : IDisposable
                     var pwd = Profile.TrustPasswordBlobName is null
                         ? (Profile.CertPasswordBlobName is null ? "atakatak" : _store.ReadSecret(Profile.CertPasswordBlobName) ?? "atakatak")
                         : _store.ReadSecret(Profile.TrustPasswordBlobName) ?? "";
-                    var trust = new X509Certificate2(trustPath, pwd);
+                    using var trust = LoadPfx(trustPath, pwd);
                     if (chain is not null)
                     {
                         chain.ChainPolicy.TrustMode = X509ChainTrustMode.CustomRootTrust;
@@ -287,17 +329,50 @@ public sealed class CotStreamClient : IDisposable
             }
         }
 
-        // SoftCert / private CAs often fail default chain building — allow with warning.
-        _log.Warn("TAK", $"TLS cert validation soft-accept ({sslPolicyErrors}).");
+        // SoftCert / private CAs often fail default chain building — allow (rate-limited).
+        if (ShouldLog($"{Profile.Id}|soft-accept|{sslPolicyErrors}"))
+            _log.Warn("TAK", $"TLS soft-accept ({sslPolicyErrors}) profile={ProfileLabel(Profile)}.");
         return true;
     }
+
+    private void LogConnectionFailure(ServerProfile profile, string error)
+    {
+        if (!ShouldLog($"{profile.Id}|{error}"))
+            return;
+        // Error level so Diagnostics (default min=Error) surfaces connection problems.
+        _log.Error("TAK", $"Server '{ProfileLabel(profile)}' id={ShortId(profile.Id)} connection failed: {error}");
+    }
+
+    private bool ShouldLog(string key)
+    {
+        var now = DateTimeOffset.UtcNow;
+        if (string.Equals(key, _lastLoggedFailureKey, StringComparison.Ordinal)
+            && now - _lastLoggedFailureUtc < IdenticalErrorLogInterval)
+        {
+            return false;
+        }
+
+        _lastLoggedFailureKey = key;
+        _lastLoggedFailureUtc = now;
+        return true;
+    }
+
+    private static string ProfileLabel(ServerProfile profile)
+    {
+        if (!string.IsNullOrWhiteSpace(profile.DisplayName))
+            return profile.DisplayName.Trim();
+        return ShortId(profile.Id);
+    }
+
+    private static string ShortId(string id) =>
+        string.IsNullOrEmpty(id) ? "?" : id.Length <= 8 ? id : id[..8];
 
     private async Task DisconnectCoreAsync()
     {
         try { _cts?.Cancel(); } catch { /* ignore */ }
         if (_readLoop is not null)
         {
-            try { await Task.WhenAny(_readLoop, Task.Delay(500)); } catch { /* ignore */ }
+            try { await Task.WhenAny(_readLoop, Task.Delay(500)).ConfigureAwait(false); } catch { /* ignore */ }
         }
 
         lock (_gate)
@@ -322,5 +397,6 @@ public sealed class CotStreamClient : IDisposable
     public void Dispose()
     {
         DisconnectCoreAsync().GetAwaiter().GetResult();
+        _connectLock.Dispose();
     }
 }

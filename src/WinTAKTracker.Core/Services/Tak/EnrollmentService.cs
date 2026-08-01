@@ -514,8 +514,10 @@ public sealed class EnrollmentService
             DefaultP12Password,
             X509KeyStorageFlags.Exportable | X509KeyStorageFlags.EphemeralKeySet);
 
+        _store.EnsureDirectories();
         var clientFile = $"{profileId}-client.p12";
         var clientPath = Path.Combine(_store.CertsDirectory, clientFile);
+        // Persist PKCS#12 so service/tray reloads reuse the cert without re-enrolling.
         File.WriteAllBytes(clientPath, exportable.Export(X509ContentType.Pkcs12, DefaultP12Password));
 
         var certPwdBlob = $"{profileId}-certpwd";

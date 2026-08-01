@@ -1,4 +1,5 @@
 using System.Net.Http.Headers;
+using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
 using WinTAKTracker.Services.Config;
 using WinTAKTracker.Services.Diagnostics;
@@ -147,7 +148,20 @@ public sealed class DeviceProfileSync
 
         try
         {
-            var cert = new X509Certificate2(path, pwd, X509KeyStorageFlags.UserKeySet | X509KeyStorageFlags.Exportable);
+            X509Certificate2 cert;
+            try
+            {
+                cert = new X509Certificate2(
+                    path, pwd, X509KeyStorageFlags.EphemeralKeySet | X509KeyStorageFlags.Exportable);
+            }
+            catch (CryptographicException)
+            {
+                var fallback = _store.DpapiScope == DataProtectionScope.LocalMachine
+                    ? X509KeyStorageFlags.MachineKeySet | X509KeyStorageFlags.Exportable
+                    : X509KeyStorageFlags.UserKeySet | X509KeyStorageFlags.Exportable;
+                cert = new X509Certificate2(path, pwd, fallback);
+            }
+
             handler.ClientCertificates.Add(cert);
         }
         catch (Exception ex)

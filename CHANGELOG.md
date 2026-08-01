@@ -27,6 +27,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **fail2ban-safe reconnect** — stop auto-reconnect after a few TLS/cert (or limited network) failures so infra-TAK’s TAK Server jail (~20 TLS fails / 5 min) does not ban the client IP; show a detailed Error on the server card with fix steps ([docs/fail2ban.md](docs/fail2ban.md))
 - **Update now** for Setup/service installs: download elevated `WinTAKTracker-Setup.exe` (UAC) instead of a silent portable EXE replace that could not overwrite Program Files / the running service; only quit after the installer or replace helper is armed; show errors if apply fails
 
 ### Changed

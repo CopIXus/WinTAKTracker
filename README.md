@@ -179,6 +179,7 @@ CI (`.github/workflows/release.yml`) publishes **`WinTAKTracker-Setup.exe`** (pr
 | Feature matrix | [FEATURES.md](FEATURES.md) · [docs site](https://copixus.github.io/WinTAKTracker/features) |
 | Changelog | [CHANGELOG.md](CHANGELOG.md) · [docs site](https://copixus.github.io/WinTAKTracker/changelog) |
 | Remote config / Portal prefs | [docs/remote-config.md](docs/remote-config.md) |
+| fail2ban / reconnect safety | [docs/fail2ban.md](docs/fail2ban.md) |
 | Code signing / SmartScreen | [docs/code-signing.md](docs/code-signing.md) · [docs site](https://copixus.github.io/WinTAKTracker/code-signing) |
 | Windows Service / identity | [docs/windows-service.md](docs/windows-service.md) |
 | Contributing | [CONTRIBUTING.md](CONTRIBUTING.md) |

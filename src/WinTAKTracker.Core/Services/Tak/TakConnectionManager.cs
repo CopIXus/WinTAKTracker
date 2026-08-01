@@ -281,13 +281,27 @@ public sealed class TakConnectionManager : ITakConnectionManager, IDisposable
                 return;
             }
 
+            var endpointChanged = ProfileEndpointChanged(client.Profile, profile);
+            if (client.AutoReconnectSuspended && !endpointChanged)
+            {
+                // Stay quiet — circuit open to protect against infra-TAK fail2ban (TLS probe bans).
+                // User must toggle Connect off/on or change certs/host to retry.
+                client.ApplyProfile(profile);
+                StatusChanged?.Invoke(this, EventArgs.Empty);
+                return;
+            }
+
+            if (endpointChanged || client.AutoReconnectSuspended)
+                client.ClearAutoReconnectSuspend();
+
             try
             {
                 await client.ConnectAsync(profile).ConfigureAwait(false);
             }
             catch
             {
-                startBackoff = true;
+                // Do not start a reconnect storm if the circuit already opened (or opens on this fail).
+                startBackoff = !client.AutoReconnectSuspended;
             }
         }
         finally
@@ -309,6 +323,7 @@ public sealed class TakConnectionManager : ITakConnectionManager, IDisposable
         CotStreamClient? client;
         lock (_gate) _clients.TryGetValue(profileId, out client);
         if (client is null) return;
+        if (client.AutoReconnectSuspended) return;
         if (client.State is TakConnectionState.Connected or TakConnectionState.Connecting)
             return;
 

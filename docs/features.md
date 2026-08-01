@@ -63,7 +63,7 @@ Status legend: **Shipping** (in the current public build), **In progress**, **Pl
 | Companion app links (ATAK / iTAK / WinTAK / TAK.gov) with platform icons | Shipping |
 | Portal / device-profile remote callsign (`.wtt`) + team color | Shipping (best-effort) |
 | Redacted diagnostics log and status export | Planned |
-| In-app updates from GitHub Releases | Planned |
+| In-app updates from GitHub Releases (Setup + UAC for service installs; portable EXE swap) | Shipping |
 
 ## Distribution
 

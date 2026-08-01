@@ -25,6 +25,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Status **Mode** badge: Windows Service (IPC) vs Standalone
 - System light/dark theme from Windows `AppsUseLightTheme` (runtime swap)
 
+### Fixed
+
+- **Update now** for Setup/service installs: download elevated `WinTAKTracker-Setup.exe` (UAC) instead of a silent portable EXE replace that could not overwrite Program Files / the running service; only quit after the installer or replace helper is armed; show errors if apply fails
+
 ### Changed
 
 - Relicensed to **WinTAKTracker Free Application License 1.0** (source available, free to use; no selling the app; paid install/support OK). Not OSI Open Source. Prior Apache-2.0 releases remain under Apache

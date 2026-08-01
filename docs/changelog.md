@@ -22,6 +22,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Optional Authenticode signing in release CI when secrets are set; [Code signing](code-signing.md) for SmartScreen / Smart App Control
 - Status Mode badge (Windows Service vs Standalone); system light/dark theme
 
+### Fixed
+
+- **Update now** for Setup/service installs uses elevated `WinTAKTracker-Setup.exe` (UAC); only quits after apply is armed; errors stay on screen ([Windows Service](windows-service.md#in-app-updates-setup--service-installs))
+
 ### Changed
 
 - Relicensed to **WinTAKTracker Free Application License 1.0** (source available; no selling the app; paid services OK). Prior Apache releases unchanged

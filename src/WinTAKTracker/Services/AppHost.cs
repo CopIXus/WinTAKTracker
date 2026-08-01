@@ -392,9 +392,6 @@ public sealed class AppHost : IDisposable
 
     private async Task CheckUpdatesQuietAsync()
     {
-        // Service-aware updater (stop → replace → start) is Phase 3; tray-only update in portable mode.
-        if (AttachedToService) return;
-
         try
         {
             var result = await Updates.CheckAsync().ConfigureAwait(false);
@@ -404,6 +401,8 @@ public sealed class AppHost : IDisposable
 
             if (Config.Updates.AutomaticallyDownloadAndInstall)
             {
+                // Setup installs: downloads WinTAKTracker-Setup.exe and launches elevated (UAC).
+                // Portable: schedules EXE replace helper. Only Shutdown after apply is armed.
                 var (ok, msg) = await Updates.DownloadAndApplyAsync(result).ConfigureAwait(false);
                 if (ok)
                 {
@@ -411,16 +410,24 @@ public sealed class AppHost : IDisposable
                     System.Windows.Application.Current.Dispatcher.Invoke(() =>
                         System.Windows.Application.Current.Shutdown());
                 }
+                else
+                {
+                    Log.Warn("Update", $"Automatic update failed: {msg}");
+                    Tray.ShowBalloon("Update failed", msg);
+                }
             }
             else
             {
+                var package = result.AssetKind == UpdateAssetKind.SetupInstaller
+                    ? " (Setup — UAC may prompt)"
+                    : "";
                 Tray.ShowBalloon("Update available",
-                    $"Version {result.LatestVersion} is available. Open Settings → Updates.");
+                    $"Version {result.LatestVersion} is available{package}. Open Settings → Updates.");
             }
         }
         catch (Exception ex)
         {
-            Log.Debug("Update", ex.Message);
+            Log.Warn("Update", $"Quiet update check failed: {ex.GetType().Name}");
         }
     }
 

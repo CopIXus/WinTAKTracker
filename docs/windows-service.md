@@ -144,9 +144,22 @@ Named pipe **`WinTAKTracker.Control`** (ACL: Users read/write, Administrators + 
 
 ---
 
+## In-app updates (Setup / service installs)
+
+Settings → **Updates** → **Update now** downloads **`WinTAKTracker-Setup.exe`** from GitHub Releases (not the portable EXE) when the Windows Service is installed or the tray is running from Program Files.
+
+1. Confirm the update dialog.
+2. Approve the Windows **UAC** prompt when Setup launches (required — the tray is not elevated).
+3. The tray quits so Setup can replace service + tray binaries under Program Files.
+4. Config/certs under `%ProgramData%\WinTAKTracker` (and per-user LocalAppData) are left alone.
+
+If UAC is denied or Setup fails to start, the app stays open and shows an error. Portable single-file installs still use the in-place EXE replace helper.
+
+Apply failures for the portable path are logged under `%LocalAppData%\WinTAKTracker\updates\apply-update.log`.
+
 ## Deferred / Phase 3
 
-- Service-aware updater (stop service → replace binaries → start)
+- Silent / non-interactive Setup update flags (optional)
 - Dedicated service account (least privilege) instead of LocalSystem
 - MSIX / Store packaging (Inno Setup one-click installer ships today)
 - Refined Settings chrome beyond computer vs my callsign fields

@@ -27,6 +27,7 @@ public partial class SettingsWindow : Window
     private readonly DispatcherTimer _refreshTimer;
     private MapPreviewControl? _mapPreview;
     private UpdateCheckResult? _lastUpdateCheck;
+    private string? _updateProgress;
     private readonly List<Action> _serverCardRefreshers = [];
 
     private bool CanEdit => _host.SettingsLock.IsUnlocked;
@@ -1588,6 +1589,8 @@ public partial class SettingsWindow : Window
         panel.Children.Add(Chip("Latest", latest ?? "(not checked)"));
         panel.Children.Add(Chip("Status", statusText));
         panel.Children.Add(Chip("Last checked", lastChecked));
+        if (_lastUpdateCheck is { UpdateAvailable: true, AssetName: not null })
+            panel.Children.Add(Chip("Package", _lastUpdateCheck.AssetName));
 
         if (!string.IsNullOrWhiteSpace(_lastUpdateCheck?.ReleaseNotes) && _lastUpdateCheck.UpdateAvailable)
         {
@@ -1599,6 +1602,31 @@ public partial class SettingsWindow : Window
             };
             SetTheme(notes, TextBlock.ForegroundProperty, "TextSecondaryBrush");
             panel.Children.Add(notes);
+        }
+
+        if (UpdateService.IsManagedInstall())
+        {
+            var uacHint = new TextBlock
+            {
+                Text = "Setup / service installs update via WinTAKTracker-Setup.exe. Windows may ask for administrator approval (UAC).",
+                Style = TryStyle("HelperText"),
+                TextWrapping = TextWrapping.Wrap,
+                Margin = new Thickness(0, 0, 0, 8),
+            };
+            SetTheme(uacHint, TextBlock.ForegroundProperty, "TextSecondaryBrush");
+            panel.Children.Add(uacHint);
+        }
+
+        if (!string.IsNullOrWhiteSpace(_updateProgress))
+        {
+            var progress = new TextBlock
+            {
+                Text = _updateProgress,
+                Style = TryStyle("HelperText"),
+                Margin = new Thickness(0, 0, 0, 8),
+            };
+            SetTheme(progress, TextBlock.ForegroundProperty, "AccentBrush");
+            panel.Children.Add(progress);
         }
 
         panel.Children.Add(auto);
@@ -1622,7 +1650,7 @@ public partial class SettingsWindow : Window
             _host.NoteUpdateCheck(_lastUpdateCheck);
             // Inline only — no popup for up-to-date / available results.
             ShowSection("Updates");
-        }));
+        }, enabled: string.IsNullOrWhiteSpace(_updateProgress)));
 
         var updateAvailable = _lastUpdateCheck?.UpdateAvailable == true;
         if (updateAvailable)
@@ -1631,6 +1659,8 @@ public partial class SettingsWindow : Window
             updateRow.Children.Add(Btn("Update now", async () =>
             {
                 if (!EnsureEditable()) return;
+                if (!string.IsNullOrWhiteSpace(_updateProgress)) return;
+
                 _lastUpdateCheck = await _host.Updates.CheckAsync();
                 _host.NoteUpdateCheck(_lastUpdateCheck);
                 if (!_lastUpdateCheck.Success || !_lastUpdateCheck.UpdateAvailable)
@@ -1639,25 +1669,43 @@ public partial class SettingsWindow : Window
                     return;
                 }
 
+                var setup = _lastUpdateCheck.AssetKind == UpdateAssetKind.SetupInstaller
+                            || _lastUpdateCheck.RequiresElevation;
+                var confirmBody = setup
+                    ? $"Download and run WinTAKTracker-Setup for version {_lastUpdateCheck.LatestVersion}?\n\n" +
+                      "Windows may ask for administrator approval (UAC). " +
+                      "After you approve, WinTAKTracker will quit so Setup can replace the service and tray. " +
+                      "Your settings and certs are kept."
+                    : $"Download and install version {_lastUpdateCheck.LatestVersion}?\n\n" +
+                      "WinTAKTracker will quit, replace the portable EXE, and relaunch. Your settings and certs are kept.";
+
                 var confirm = AppDialog.Show(
                     this,
-                    $"Download and install version {_lastUpdateCheck.LatestVersion}?\n\n" +
-                    "WinTAKTracker will quit, replace the EXE, and relaunch. Your settings and certs are kept.",
+                    confirmBody,
                     "Apply update",
                     MessageBoxButton.OKCancel);
                 if (confirm != MessageBoxResult.OK)
                     return;
 
+                _updateProgress = setup
+                    ? "Downloading Setup installer…"
+                    : "Downloading update…";
+                ShowSection("Updates");
+
                 var (ok, message) = await _host.Updates.DownloadAndApplyAsync(_lastUpdateCheck);
+                _updateProgress = null;
                 if (!ok)
                 {
+                    _host.Log.Warn("Update", $"Update now failed: {message}");
                     Msg(message, MessageBoxImage.Warning);
                     ShowSection("Updates");
                     return;
                 }
 
+                // Only quit after a real apply path armed (Setup process or portable helper).
+                _host.Log.Info("Update", message);
                 Application.Current.Shutdown();
-            }, edit, primary: true));
+            }, edit && string.IsNullOrWhiteSpace(_updateProgress), primary: true));
         }
 
         panel.Children.Add(updateRow);

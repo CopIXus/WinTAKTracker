@@ -1,3 +1,4 @@
+using System.ComponentModel;
 using System.Diagnostics;
 using System.Net.Http.Headers;
 using System.Security.Cryptography;
@@ -9,6 +10,13 @@ using WinTAKTracker.Services.Diagnostics;
 
 namespace WinTAKTracker.Services.Update;
 
+public enum UpdateAssetKind
+{
+    None = 0,
+    PortableExe = 1,
+    SetupInstaller = 2,
+}
+
 public sealed class UpdateCheckResult
 {
     public bool Success { get; init; }
@@ -17,6 +25,9 @@ public sealed class UpdateCheckResult
     public string? LatestVersion { get; init; }
     public string? ReleaseNotes { get; init; }
     public string? DownloadUrl { get; init; }
+    public string? AssetName { get; init; }
+    public UpdateAssetKind AssetKind { get; init; }
+    public bool RequiresElevation { get; init; }
     public string? Sha256Url { get; init; }
     public string? Sha256Expected { get; init; }
     public bool UpdateAvailable { get; init; }
@@ -32,6 +43,9 @@ public interface IUpdateService
 /// <summary>GitHub Releases updater for CopIXus/WinTAKTracker.</summary>
 public sealed class UpdateService : IUpdateService
 {
+    private const string PortableAssetName = "WinTAKTracker.exe";
+    private const string SetupAssetName = "WinTAKTracker-Setup.exe";
+
     private static readonly Regex LeadingSemVer = new(
         @"^(?<ver>\d+(?:\.\d+){0,3})",
         RegexOptions.CultureInvariant | RegexOptions.Compiled);
@@ -57,6 +71,7 @@ public sealed class UpdateService : IUpdateService
     public async Task<UpdateCheckResult> CheckAsync(CancellationToken ct = default)
     {
         var current = CurrentVersion;
+        var preferSetup = IsManagedInstall();
         try
         {
             var configuredUrl = _settings().ReleasesApiUrl;
@@ -80,18 +95,19 @@ public sealed class UpdateService : IUpdateService
             if (releases.Count == 0)
                 return new UpdateCheckResult { Success = false, Error = "Empty release response.", CurrentVersion = current };
 
-            var selected = SelectBestRelease(releases);
+            var selected = SelectBestRelease(releases, preferSetup);
             if (selected is null)
             {
+                var missing = preferSetup ? SetupAssetName : PortableAssetName;
                 return new UpdateCheckResult
                 {
                     Success = false,
-                    Error = "No release with a WinTAKTracker.exe asset was found.",
+                    Error = $"No release with a {missing} asset was found.",
                     CurrentVersion = current,
                 };
             }
 
-            var (release, _, normalized, exeAsset, shaAsset) = selected.Value;
+            var (release, _, normalized, asset, shaAsset, kind) = selected.Value;
             string? expectedSha = null;
             if (shaAsset?.BrowserDownloadUrl is not null)
             {
@@ -100,14 +116,17 @@ public sealed class UpdateService : IUpdateService
                     var shaText = await _http.GetStringAsync(shaAsset.BrowserDownloadUrl, ct);
                     expectedSha = ExtractSha256(shaText);
                 }
-                catch { /* optional */ }
+                catch
+                {
+                    _log.Warn("Update", "Could not download SHA256 sidecar; integrity check will be skipped.");
+                }
             }
 
             var newer = IsNewer(normalized, current);
-            var downloadUrl = exeAsset.BrowserDownloadUrl;
+            var downloadUrl = asset.BrowserDownloadUrl;
             string? error = null;
             if (newer && string.IsNullOrWhiteSpace(downloadUrl))
-                error = $"Version {normalized} is available but WinTAKTracker.exe was not found on the release.";
+                error = $"Version {normalized} is available but {asset.Name} was not found on the release.";
 
             return new UpdateCheckResult
             {
@@ -116,6 +135,9 @@ public sealed class UpdateService : IUpdateService
                 LatestVersion = normalized,
                 ReleaseNotes = Truncate(release.Body, 800),
                 DownloadUrl = downloadUrl,
+                AssetName = asset.Name,
+                AssetKind = kind,
+                RequiresElevation = kind == UpdateAssetKind.SetupInstaller,
                 Sha256Url = shaAsset?.BrowserDownloadUrl,
                 Sha256Expected = expectedSha,
                 UpdateAvailable = newer && !string.IsNullOrWhiteSpace(downloadUrl),
@@ -139,93 +161,246 @@ public sealed class UpdateService : IUpdateService
         if (string.IsNullOrWhiteSpace(check.DownloadUrl))
             return (false, check.Error ?? "No download URL for the update asset.");
 
+        var kind = check.AssetKind != UpdateAssetKind.None
+            ? check.AssetKind
+            : InferAssetKind(check.AssetName, check.DownloadUrl);
+
         try
         {
-            Directory.CreateDirectory(_store.UpdatesDirectory);
-            var dest = Path.Combine(_store.UpdatesDirectory, "WinTAKTracker.exe");
-            await using (var fs = File.Create(dest))
-            await using (var stream = await _http.GetStreamAsync(check.DownloadUrl, ct))
-                await stream.CopyToAsync(fs, ct);
-
-            if (!string.IsNullOrWhiteSpace(check.Sha256Expected))
-            {
-                var actual = await ComputeSha256Async(dest);
-                if (!actual.Equals(check.Sha256Expected, StringComparison.OrdinalIgnoreCase))
-                {
-                    try { File.Delete(dest); } catch { /* ignore */ }
-                    return (false, "SHA256 verification failed. Update aborted.");
-                }
-            }
-
-            var currentExe = Environment.ProcessPath
-                             ?? Path.Combine(AppContext.BaseDirectory, "WinTAKTracker.exe");
-            if (string.IsNullOrWhiteSpace(currentExe) || !File.Exists(currentExe))
-                return (false, "Could not resolve the running EXE path for update replace.");
-
-            // Helper waits for this PID to exit, then retries copy (EXE lock / AV), relaunches, cleans up.
-            // Config/certs under %LocalAppData%\WinTAKTracker\ are untouched.
-            var bat = Path.Combine(_store.UpdatesDirectory, "apply-update.cmd");
-            const string script = """
-                @echo off
-                setlocal EnableExtensions
-                set "PID=%~1"
-                set "SRC=%~2"
-                set "DST=%~3"
-                if "%PID%"=="" exit /b 1
-                if not exist "%SRC%" exit /b 1
-                if "%DST%"=="" exit /b 1
-
-                set /a WAITED=0
-                :wait
-                tasklist /FI "PID eq %PID%" /NH 2>NUL | find /I ".exe" >NUL
-                if errorlevel 1 goto copyloop
-                set /a WAITED+=1
-                if %WAITED% GEQ 120 exit /b 1
-                timeout /t 1 /nobreak >NUL
-                goto wait
-
-                :copyloop
-                set /a TRIES=0
-                :retry
-                set /a TRIES+=1
-                copy /Y "%SRC%" "%DST%" >NUL 2>&1
-                if not errorlevel 1 goto launch
-                if %TRIES% GEQ 60 exit /b 1
-                timeout /t 1 /nobreak >NUL
-                goto retry
-
-                :launch
-                start "" "%DST%"
-                del "%SRC%" >NUL 2>&1
-                del "%~f0" >NUL 2>&1
-                exit /b 0
-                """;
-            await File.WriteAllTextAsync(bat, script, ct);
-
-            var pid = Environment.ProcessId;
-            _log.Info("Update", $"Update downloaded; scheduling restart swap (pid={pid}).");
-            var started = Process.Start(new ProcessStartInfo
-            {
-                FileName = bat,
-                Arguments = $"{pid} \"{dest}\" \"{currentExe}\"",
-                UseShellExecute = true,
-                WindowStyle = ProcessWindowStyle.Hidden,
-                WorkingDirectory = _store.UpdatesDirectory,
-            });
-            if (started is null)
-                return (false, "Failed to start the update helper script.");
-
-            return (true, "Update ready. The app will restart.");
+            return kind == UpdateAssetKind.SetupInstaller
+                ? await DownloadAndLaunchSetupAsync(check, ct).ConfigureAwait(false)
+                : await DownloadAndSchedulePortableReplaceAsync(check, ct).ConfigureAwait(false);
         }
         catch (Exception ex)
         {
             _log.Error("Update", "Apply failed", ex);
-            return (false, $"Update download/install failed ({ex.GetType().Name}).");
+            return (false, $"Update download/install failed ({ex.GetType().Name}): {ex.Message}");
+        }
+    }
+
+    private async Task<(bool Ok, string Message)> DownloadAndLaunchSetupAsync(UpdateCheckResult check, CancellationToken ct)
+    {
+        Directory.CreateDirectory(_store.UpdatesDirectory);
+        var dest = Path.Combine(_store.UpdatesDirectory, SetupAssetName);
+        _log.Info("Update", $"Downloading Setup installer to updates folder (v{check.LatestVersion}).");
+
+        await using (var fs = File.Create(dest))
+        await using (var stream = await _http.GetStreamAsync(check.DownloadUrl!, ct))
+            await stream.CopyToAsync(fs, ct);
+
+        if (!await VerifySha256Async(dest, check.Sha256Expected).ConfigureAwait(false))
+            return (false, "SHA256 verification failed. Update aborted.");
+
+        _log.Info("Update", "Launching elevated Setup installer (UAC may prompt).");
+        try
+        {
+            var started = Process.Start(new ProcessStartInfo
+            {
+                FileName = dest,
+                UseShellExecute = true,
+                Verb = "runas",
+                WorkingDirectory = _store.UpdatesDirectory,
+            });
+            if (started is null)
+            {
+                _log.Error("Update", "Failed to start Setup installer process.");
+                return (false, "Failed to start the Setup installer.");
+            }
+        }
+        catch (Win32Exception ex) when (ex.NativeErrorCode == 1223)
+        {
+            _log.Warn("Update", "Setup elevation cancelled by user (UAC).");
+            return (false, "Update cancelled — approve the Windows UAC prompt to install the Setup update.");
+        }
+        catch (Win32Exception ex)
+        {
+            _log.Error("Update", $"Setup launch failed (Win32 {ex.NativeErrorCode}).", ex);
+            return (false, $"Could not launch the Setup installer ({ex.Message}).");
+        }
+
+        return (true, "Setup installer started. Approve UAC if prompted; the app will quit so files can be replaced.");
+    }
+
+    private async Task<(bool Ok, string Message)> DownloadAndSchedulePortableReplaceAsync(
+        UpdateCheckResult check, CancellationToken ct)
+    {
+        if (IsManagedInstall())
+        {
+            _log.Warn("Update", "Refusing portable EXE replace under Program Files / service install.");
+            return (false,
+                "This install uses WinTAKTracker-Setup (Program Files / Windows Service). " +
+                "Open Settings → Updates again, or install the newer Setup from GitHub Releases.");
+        }
+
+        var currentExe = Environment.ProcessPath
+                         ?? Path.Combine(AppContext.BaseDirectory, PortableAssetName);
+        if (string.IsNullOrWhiteSpace(currentExe) || !File.Exists(currentExe))
+            return (false, "Could not resolve the running EXE path for update replace.");
+
+        if (!CanWriteBeside(currentExe))
+        {
+            _log.Warn("Update", "Running EXE directory is not writable; portable replace cannot proceed.");
+            return (false,
+                "Cannot replace the running EXE (folder not writable). " +
+                "Move the portable EXE to a user-writable folder, or install via WinTAKTracker-Setup.");
+        }
+
+        Directory.CreateDirectory(_store.UpdatesDirectory);
+        var dest = Path.Combine(_store.UpdatesDirectory, PortableAssetName);
+        _log.Info("Update", $"Downloading portable EXE to updates folder (v{check.LatestVersion}).");
+
+        await using (var fs = File.Create(dest))
+        await using (var stream = await _http.GetStreamAsync(check.DownloadUrl!, ct))
+            await stream.CopyToAsync(fs, ct);
+
+        if (!await VerifySha256Async(dest, check.Sha256Expected).ConfigureAwait(false))
+            return (false, "SHA256 verification failed. Update aborted.");
+
+        // Helper waits for this PID to exit, then retries copy (EXE lock / AV), relaunches, cleans up.
+        // Config/certs under %LocalAppData%\WinTAKTracker\ are untouched.
+        var bat = Path.Combine(_store.UpdatesDirectory, "apply-update.cmd");
+        var logFile = Path.Combine(_store.UpdatesDirectory, "apply-update.log");
+        const string script = """
+            @echo off
+            setlocal EnableExtensions
+            set "PID=%~1"
+            set "SRC=%~2"
+            set "DST=%~3"
+            set "LOG=%~dp0apply-update.log"
+            echo [%date% %time%] apply-update start pid=%PID%>>"%LOG%"
+            if "%PID%"=="" (echo missing PID>>"%LOG%" & exit /b 1)
+            if not exist "%SRC%" (echo missing SRC>>"%LOG%" & exit /b 1)
+            if "%DST%"=="" (echo missing DST>>"%LOG%" & exit /b 1)
+
+            set /a WAITED=0
+            :wait
+            tasklist /FI "PID eq %PID%" /NH 2>NUL | find /I ".exe" >NUL
+            if errorlevel 1 goto copyloop
+            set /a WAITED+=1
+            if %WAITED% GEQ 120 (
+              echo timed out waiting for pid %PID%>>"%LOG%"
+              exit /b 1
+            )
+            timeout /t 1 /nobreak >NUL
+            goto wait
+
+            :copyloop
+            set /a TRIES=0
+            :retry
+            set /a TRIES+=1
+            copy /Y "%SRC%" "%DST%" >NUL 2>&1
+            if not errorlevel 1 goto launch
+            if %TRIES% GEQ 60 (
+              echo copy failed after %TRIES% tries>>"%LOG%"
+              exit /b 1
+            )
+            timeout /t 1 /nobreak >NUL
+            goto retry
+
+            :launch
+            echo copy ok; relaunching>>"%LOG%"
+            start "" "%DST%"
+            del "%SRC%" >NUL 2>&1
+            del "%~f0" >NUL 2>&1
+            exit /b 0
+            """;
+        await File.WriteAllTextAsync(bat, script, ct);
+
+        var pid = Environment.ProcessId;
+        _log.Info("Update", $"Portable update downloaded; scheduling restart swap (pid={pid}). Log: {logFile}");
+        var started = Process.Start(new ProcessStartInfo
+        {
+            FileName = bat,
+            Arguments = $"{pid} \"{dest}\" \"{currentExe}\"",
+            UseShellExecute = true,
+            WindowStyle = ProcessWindowStyle.Hidden,
+            WorkingDirectory = _store.UpdatesDirectory,
+        });
+        if (started is null)
+        {
+            _log.Error("Update", "Failed to start portable update helper script.");
+            return (false, "Failed to start the update helper script.");
+        }
+
+        return (true, "Update ready. The app will restart.");
+    }
+
+    private async Task<bool> VerifySha256Async(string path, string? expected)
+    {
+        if (string.IsNullOrWhiteSpace(expected))
+            return true;
+
+        var actual = await ComputeSha256Async(path).ConfigureAwait(false);
+        if (actual.Equals(expected, StringComparison.OrdinalIgnoreCase))
+            return true;
+
+        _log.Error("Update", "SHA256 verification failed.");
+        try { File.Delete(path); } catch { /* ignore */ }
+        return false;
+    }
+
+    /// <summary>
+    /// True when the app is a Setup/service install under Program Files (or the Windows Service is registered).
+    /// Those installs must update via elevated WinTAKTracker-Setup.exe, not in-place EXE copy.
+    /// </summary>
+    public static bool IsManagedInstall()
+    {
+        if (ConfigPaths.IsServiceInstalled())
+            return true;
+
+        return IsUnderProgramFiles(Environment.ProcessPath)
+               || IsUnderProgramFiles(AppContext.BaseDirectory);
+    }
+
+    private static bool IsUnderProgramFiles(string? path)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+            return false;
+
+        try
+        {
+            var full = Path.GetFullPath(path);
+            foreach (var root in new[]
+                     {
+                         Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles),
+                         Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86),
+                     })
+            {
+                if (string.IsNullOrWhiteSpace(root)) continue;
+                var prefix = Path.GetFullPath(root)
+                    .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
+                    + Path.DirectorySeparatorChar;
+                if (full.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                    return true;
+            }
+        }
+        catch
+        {
+            /* ignore */
+        }
+
+        return false;
+    }
+
+    private static bool CanWriteBeside(string exePath)
+    {
+        try
+        {
+            var dir = Path.GetDirectoryName(exePath);
+            if (string.IsNullOrWhiteSpace(dir)) return false;
+            var probe = Path.Combine(dir, $".wtt-write-{Guid.NewGuid():N}.tmp");
+            File.WriteAllText(probe, "ok");
+            File.Delete(probe);
+            return true;
+        }
+        catch
+        {
+            return false;
         }
     }
 
     /// <summary>
-    /// Prefer a releases list so we can pick the newest tag that actually ships WinTAKTracker.exe.
+    /// Prefer a releases list so we can pick the newest tag that actually ships the needed asset.
     /// Configured <c>.../releases/latest</c> is rewritten to <c>.../releases?per_page=20</c>.
     /// </summary>
     internal static string ResolveReleasesListUrl(string configuredUrl)
@@ -260,10 +435,10 @@ public sealed class UpdateService : IUpdateService
         return list;
     }
 
-    private static (GitHubRelease Release, string Tag, string Normalized, GitHubAsset Exe, GitHubAsset? Sha)? SelectBestRelease(
-        IEnumerable<GitHubRelease> releases)
+    private static (GitHubRelease Release, string Tag, string Normalized, GitHubAsset Asset, GitHubAsset? Sha, UpdateAssetKind Kind)?
+        SelectBestRelease(IEnumerable<GitHubRelease> releases, bool preferSetup)
     {
-        (GitHubRelease Release, string Tag, string Normalized, GitHubAsset Exe, GitHubAsset? Sha, Version Ver)? best = null;
+        (GitHubRelease Release, string Tag, string Normalized, GitHubAsset Asset, GitHubAsset? Sha, UpdateAssetKind Kind, Version Ver)? best = null;
 
         foreach (var release in releases)
         {
@@ -275,36 +450,60 @@ public sealed class UpdateService : IUpdateService
             var normalized = Normalize(tag);
             if (!Version.TryParse(normalized, out var ver)) continue;
 
-            var exe = FindExeAsset(release.Assets);
-            if (exe?.BrowserDownloadUrl is null) continue;
+            GitHubAsset? asset;
+            UpdateAssetKind kind;
+            GitHubAsset? sha;
 
-            var sha = FindShaAsset(release.Assets);
+            if (preferSetup)
+            {
+                asset = FindNamedAsset(release.Assets, SetupAssetName);
+                if (asset?.BrowserDownloadUrl is null) continue;
+                kind = UpdateAssetKind.SetupInstaller;
+                sha = FindNamedAsset(release.Assets, SetupAssetName + ".sha256")
+                      ?? FindShaAsset(release.Assets, preferSetup: true);
+            }
+            else
+            {
+                asset = FindNamedAsset(release.Assets, PortableAssetName);
+                if (asset?.BrowserDownloadUrl is null) continue;
+                kind = UpdateAssetKind.PortableExe;
+                sha = FindNamedAsset(release.Assets, PortableAssetName + ".sha256")
+                      ?? FindShaAsset(release.Assets, preferSetup: false);
+            }
+
             if (best is null || ver > best.Value.Ver)
-                best = (release, tag, normalized, exe, sha, ver);
+                best = (release, tag, normalized, asset, sha, kind, ver);
         }
 
         if (best is null) return null;
         var b = best.Value;
-        return (b.Release, b.Tag, b.Normalized, b.Exe, b.Sha);
+        return (b.Release, b.Tag, b.Normalized, b.Asset, b.Sha, b.Kind);
     }
 
-    private static GitHubAsset? FindExeAsset(List<GitHubAsset>? assets)
+    private static UpdateAssetKind InferAssetKind(string? assetName, string? url)
+    {
+        var name = assetName ?? "";
+        if (name.Equals(SetupAssetName, StringComparison.OrdinalIgnoreCase) ||
+            (!string.IsNullOrEmpty(url) && url.Contains(SetupAssetName, StringComparison.OrdinalIgnoreCase)))
+            return UpdateAssetKind.SetupInstaller;
+        return UpdateAssetKind.PortableExe;
+    }
+
+    private static GitHubAsset? FindNamedAsset(List<GitHubAsset>? assets, string name)
     {
         if (assets is null) return null;
         return assets.FirstOrDefault(a =>
-                   a.Name is not null &&
-                   a.Name.Equals("WinTAKTracker.exe", StringComparison.OrdinalIgnoreCase))
-               ?? assets.FirstOrDefault(a =>
-                   a.Name is not null &&
-                   a.Name.EndsWith(".exe", StringComparison.OrdinalIgnoreCase));
+            a.Name is not null &&
+            a.Name.Equals(name, StringComparison.OrdinalIgnoreCase));
     }
 
-    private static GitHubAsset? FindShaAsset(List<GitHubAsset>? assets)
+    private static GitHubAsset? FindShaAsset(List<GitHubAsset>? assets, bool preferSetup)
     {
         if (assets is null) return null;
+        var preferred = preferSetup ? SetupAssetName + ".sha256" : PortableAssetName + ".sha256";
         return assets.FirstOrDefault(a =>
                    a.Name is not null &&
-                   a.Name.Equals("WinTAKTracker.exe.sha256", StringComparison.OrdinalIgnoreCase))
+                   a.Name.Equals(preferred, StringComparison.OrdinalIgnoreCase))
                ?? assets.FirstOrDefault(a =>
                    a.Name is not null &&
                    (a.Name.EndsWith(".sha256", StringComparison.OrdinalIgnoreCase) ||

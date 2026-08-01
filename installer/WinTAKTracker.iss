@@ -149,26 +149,50 @@ begin
   end;
 end;
 
-{ Grant Builtin\Users Modify on %ProgramData%\WinTAKTracker so the tray (asInvoker)
-  can read/write config after the LocalSystem service creates the folder. }
+{ Machine store ACL:
+  Root/logs/updates: SYSTEM+Admins Full; Authenticated Users Modify
+  secrets/certs: SYSTEM+Admins Full only (tray mutates secrets via service IPC when possible) }
 procedure EnsureMachineStoreAcl;
 var
-  MachineRoot: String;
+  MachineRoot, SecretsDir, CertsDir, LogsDir, UpdatesDir: String;
   ResultCode: Integer;
 begin
   MachineRoot := ExpandConstant('{commonappdata}\WinTAKTracker');
+  SecretsDir := MachineRoot + '\secrets';
+  CertsDir := MachineRoot + '\certs';
+  LogsDir := MachineRoot + '\logs';
+  UpdatesDir := MachineRoot + '\updates';
   ForceDirectories(MachineRoot);
-  Log('Setting ACL on ' + MachineRoot + ' for Builtin Users (Modify)');
-  { S-1-5-32-545 = BUILTIN\Users — locale-independent }
-  if not Exec(
-      ExpandConstant('{sys}\icacls.exe'),
-      '"' + MachineRoot + '" /grant "*S-1-5-32-545:(OI)(CI)M" /T',
-      '', SW_HIDE, ewWaitUntilTerminated, ResultCode) then
-    Log('icacls failed to launch')
-  else if ResultCode <> 0 then
+  ForceDirectories(SecretsDir);
+  ForceDirectories(CertsDir);
+  ForceDirectories(LogsDir);
+  ForceDirectories(UpdatesDir);
+
+  Log('Setting hardened ACL on ' + MachineRoot);
+  { Reset then grant: SYSTEM + Admins Full; Authenticated Users Modify }
+  { S-1-5-18 = SYSTEM; S-1-5-32-544 = Administrators; S-1-5-11 = Authenticated Users }
+  Exec(ExpandConstant('{sys}\icacls.exe'),
+    '"' + MachineRoot + '" /inheritance:r', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  Exec(ExpandConstant('{sys}\icacls.exe'),
+    '"' + MachineRoot + '" /grant "*S-1-5-18:(OI)(CI)F" "*S-1-5-32-544:(OI)(CI)F" "*S-1-5-11:(OI)(CI)M"',
+    '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  Exec(ExpandConstant('{sys}\icacls.exe'),
+    '"' + LogsDir + '" /grant "*S-1-5-18:(OI)(CI)F" "*S-1-5-32-544:(OI)(CI)F" "*S-1-5-11:(OI)(CI)M"',
+    '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  Exec(ExpandConstant('{sys}\icacls.exe'),
+    '"' + UpdatesDir + '" /grant "*S-1-5-18:(OI)(CI)F" "*S-1-5-32-544:(OI)(CI)F" "*S-1-5-11:(OI)(CI)M"',
+    '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  { secrets + certs: SYSTEM + Admins only }
+  Exec(ExpandConstant('{sys}\icacls.exe'),
+    '"' + SecretsDir + '" /inheritance:r /grant "*S-1-5-18:(OI)(CI)F" "*S-1-5-32-544:(OI)(CI)F"',
+    '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  Exec(ExpandConstant('{sys}\icacls.exe'),
+    '"' + CertsDir + '" /inheritance:r /grant "*S-1-5-18:(OI)(CI)F" "*S-1-5-32-544:(OI)(CI)F"',
+    '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  if ResultCode <> 0 then
     Log('icacls exit ' + IntToStr(ResultCode))
   else
-    Log('Machine store ACL OK');
+    Log('Machine store ACL OK (secrets/certs restricted)');
 end;
 
 procedure CreateAndStartService;
@@ -274,10 +298,49 @@ begin
   end;
 end;
 
+procedure RemoveHkcuRunValue;
+var
+  ResultCode: Integer;
+begin
+  { Start with Windows registers HKCU\...\Run\WinTAKTracker }
+  if not Exec(
+      ExpandConstant('{sys}\reg.exe'),
+      'delete "HKCU\Software\Microsoft\Windows\CurrentVersion\Run" /v WinTAKTracker /f',
+      '', SW_HIDE, ewWaitUntilTerminated, ResultCode) then
+    Log('reg delete Run value failed to launch')
+  else
+    Log('Removed HKCU Run\WinTAKTracker (exit ' + IntToStr(ResultCode) + ')');
+end;
+
+procedure RemoveMachineConfig;
+var
+  MachineRoot: String;
+  ResultCode: Integer;
+begin
+  MachineRoot := ExpandConstant('{commonappdata}\WinTAKTracker');
+  if DirExists(MachineRoot) then
+  begin
+    Log('Removing machine config ' + MachineRoot);
+    Exec(ExpandConstant('{sys}\cmd.exe'),
+      '/c rmdir /s /q "' + MachineRoot + '"',
+      '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  end;
+end;
+
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
 begin
   if CurUninstallStep = usUninstall then
   begin
     DeleteServiceIfPresent;
+    RemoveHkcuRunValue;
+    { Optional wipe — default No (do not remove config/certs). }
+    if not UninstallSilent then
+    begin
+      if MsgBox(
+           'Also remove configuration and certificates under %ProgramData%\WinTAKTracker?' + #13#10#13#10 +
+           'Choose No to keep servers, certs, and secrets for a reinstall.',
+           mbConfirmation, MB_YESNO or MB_DEFBUTTON2) = IDYES then
+        RemoveMachineConfig;
+    end;
   end;
 end;

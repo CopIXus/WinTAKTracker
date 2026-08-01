@@ -47,6 +47,12 @@ public sealed class AppConfig
     public string? DeviceUid { get; set; }
 
     /// <summary>
+    /// When true (default), apply callsign/team/role from Portal / device-profile sync.
+    /// Disable under Identity settings to keep local callsigns authoritative.
+    /// </summary>
+    public bool ApplyRemoteIdentityFromPortal { get; set; } = true;
+
+    /// <summary>
     /// Migrate v1 Identity → ComputerIdentity and ensure computer callsign default.
     /// </summary>
     public void EnsureIdentityDefaults()
@@ -148,8 +154,11 @@ public sealed class GpsSettings
     public string? ComPort { get; set; }
     public int BaudRate { get; set; } = 4800;
     public int LastFixHoldSeconds { get; set; } = 30;
-    /// <summary>When NMEA and Windows Location have no fix, use approximate IP geolocation.</summary>
-    public bool EnableNetworkFallback { get; set; } = true;
+    /// <summary>
+    /// When NMEA and Windows Location have no fix, use approximate IP geolocation.
+    /// Default false for new configs (coarse; opt-in).
+    /// </summary>
+    public bool EnableNetworkFallback { get; set; }
 }
 
 public sealed class ReportingSettings
@@ -158,9 +167,9 @@ public sealed class ReportingSettings
     public string Strategy { get; set; } = "Dynamic";
     public int ReliableStationarySeconds { get; set; } = 180;
     public int UnreliableStationarySeconds { get; set; } = 30;
-    public int ReliableMinSeconds { get; set; } = 2;
+    public int ReliableMinSeconds { get; set; } = 5;
     public int ReliableMaxMoveSeconds { get; set; } = 20;
-    public int UnreliableMinSeconds { get; set; } = 2;
+    public int UnreliableMinSeconds { get; set; } = 5;
     public int UnreliableMaxMoveSeconds { get; set; } = 20;
     public int ConstantIntervalSeconds { get; set; } = 10;
 
@@ -175,8 +184,8 @@ public sealed class ReportingSettings
 public sealed class MeshSaSettings
 {
     public bool Enabled { get; set; } = true;
-    /// <summary>Always | OnlyWhenDisconnected</summary>
-    public string Mode { get; set; } = "Always";
+    /// <summary>Always | OnlyWhenDisconnected — new installs default to OnlyWhenDisconnected.</summary>
+    public string Mode { get; set; } = "OnlyWhenDisconnected";
     public string MulticastAddress { get; set; } = "239.2.3.1";
     public int MulticastPort { get; set; } = 6969;
     public string NetworkInterface { get; set; } = "Auto";
@@ -207,6 +216,11 @@ public sealed class DiagnosticsSettings
     public string LogLevel { get; set; } = "Error";
     /// <summary>Max total size of rotated log files in megabytes (trim oldest / truncate).</summary>
     public int MaxLogSizeMb { get; set; } = 30;
+    /// <summary>
+    /// When false (default), TLS soft-accept is disabled: trust-store validation must succeed
+    /// or the connection is rejected. When true, keep SoftCert-style soft-accept with a warn log.
+    /// </summary>
+    public bool AllowInsecureTlsSoftAccept { get; set; }
 }
 
 public sealed class ServerProfile
@@ -230,4 +244,8 @@ public sealed class ServerProfile
     public string? ClientCertFileName { get; set; }
     public string? TrustStoreFileName { get; set; }
     public string? CloudTakUrl { get; set; }
+    /// <summary>
+    /// Per-profile override for TLS soft-accept. Null = use <see cref="DiagnosticsSettings.AllowInsecureTlsSoftAccept"/>.
+    /// </summary>
+    public bool? AllowInsecureTlsSoftAccept { get; set; }
 }

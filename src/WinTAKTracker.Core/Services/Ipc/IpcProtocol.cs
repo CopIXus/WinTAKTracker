@@ -29,6 +29,15 @@ public enum IpcMethod
     PushGpsFix,
     /// <summary>Tray cleared its companion provider (logoff / detach).</summary>
     ClearGpsFix,
+    /// <summary>Unlock settings lock on the service (password payload) so mutating IPC may proceed.</summary>
+    UnlockSettings,
+    /// <summary>Re-lock settings on the service.</summary>
+    LockSettings,
+}
+
+public sealed class UnlockSettingsDto
+{
+    public string Password { get; set; } = "";
 }
 
 public sealed class IpcRequest

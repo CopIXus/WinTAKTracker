@@ -1,4 +1,5 @@
 using System.Net.Http.Headers;
+using System.Net.Security;
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
 using WinTAKTracker.Services.Config;
@@ -38,6 +39,7 @@ public sealed class DeviceProfileSync
         string? activeUserName,
         CancellationToken ct = default)
     {
+        if (!config.ApplyRemoteIdentityFromPortal) return;
         if (string.IsNullOrWhiteSpace(profile.Host)) return;
         if (string.Equals(profile.Protocol, "ssl", StringComparison.OrdinalIgnoreCase) &&
             string.IsNullOrWhiteSpace(profile.ClientCertFileName))
@@ -98,9 +100,10 @@ public sealed class DeviceProfileSync
         var ports = new[] { 8443, 8446 };
         foreach (var port in ports)
         {
+            X509Certificate2? clientCert = null;
             try
             {
-                using var handler = CreateHandler(profile);
+                using var handler = CreateHandler(profile, config, out clientCert);
                 using var http = new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(30) };
                 http.DefaultRequestHeaders.UserAgent.ParseAdd("WinTAKTracker/0.1");
                 http.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("*/*"));
@@ -123,16 +126,23 @@ public sealed class DeviceProfileSync
             {
                 // try next port
             }
+            finally
+            {
+                clientCert?.Dispose();
+            }
         }
 
         return null;
     }
 
-    private HttpClientHandler CreateHandler(ServerProfile profile)
+    private HttpClientHandler CreateHandler(ServerProfile profile, AppConfig config, out X509Certificate2? loadedCert)
     {
+        loadedCert = null;
+        var softAccept = profile.AllowInsecureTlsSoftAccept ?? config.Diagnostics.AllowInsecureTlsSoftAccept;
         var handler = new HttpClientHandler
         {
-            ServerCertificateCustomValidationCallback = (_, _, _, _) => true,
+            ServerCertificateCustomValidationCallback = (_, cert, chain, errors) =>
+                ValidateServerCertificate(profile, softAccept, cert, chain, errors),
         };
 
         if (string.IsNullOrWhiteSpace(profile.ClientCertFileName))
@@ -162,6 +172,7 @@ public sealed class DeviceProfileSync
                 cert = new X509Certificate2(path, pwd, fallback);
             }
 
+            loadedCert = cert;
             handler.ClientCertificates.Add(cert);
         }
         catch (Exception ex)
@@ -170,5 +181,57 @@ public sealed class DeviceProfileSync
         }
 
         return handler;
+    }
+
+    private bool ValidateServerCertificate(
+        ServerProfile profile,
+        bool softAccept,
+        X509Certificate? certificate,
+        X509Chain? chain,
+        SslPolicyErrors errors)
+    {
+        if (errors == SslPolicyErrors.None) return true;
+
+        if (!string.IsNullOrWhiteSpace(profile.TrustStoreFileName) && certificate is not null)
+        {
+            var trustPath = Path.Combine(_store.CertsDirectory, profile.TrustStoreFileName);
+            if (File.Exists(trustPath) && chain is not null)
+            {
+                X509Certificate2? leaf = null;
+                try
+                {
+                    var pwd = profile.TrustPasswordBlobName is null
+                        ? (profile.CertPasswordBlobName is null
+                            ? "atakatak"
+                            : _store.ReadSecret(profile.CertPasswordBlobName) ?? "atakatak")
+                        : _store.ReadSecret(profile.TrustPasswordBlobName) ?? "";
+                    using var trust = new X509Certificate2(trustPath, pwd,
+                        X509KeyStorageFlags.EphemeralKeySet | X509KeyStorageFlags.Exportable);
+                    chain.ChainPolicy.TrustMode = X509ChainTrustMode.CustomRootTrust;
+                    chain.ChainPolicy.CustomTrustStore.Add(trust);
+                    chain.ChainPolicy.RevocationMode = X509RevocationMode.NoCheck;
+                    leaf = new X509Certificate2(certificate);
+                    if (chain.Build(leaf))
+                        return true;
+                }
+                catch
+                {
+                    // fall through
+                }
+                finally
+                {
+                    leaf?.Dispose();
+                }
+            }
+        }
+
+        if (!softAccept)
+        {
+            _log.Warn("Profile", $"HTTPS rejected ({errors}) — soft-accept disabled.");
+            return false;
+        }
+
+        _log.Warn("Profile", $"HTTPS soft-accept ({errors}).");
+        return true;
     }
 }

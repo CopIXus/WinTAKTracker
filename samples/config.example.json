@@ -25,23 +25,26 @@
     "cotType": "a-f-G-U-C-I",
     "phone": "+15555550100"
   },
+  "applyRemoteIdentityFromPortal": true,
   "gps": {
     "sourcePriority": "NmeaThenWindows",
     "comPort": null,
     "baudRate": 4800,
     "lastFixHoldSeconds": 30,
-    "enableNetworkFallback": true
+    "enableNetworkFallback": false
   },
   "reporting": {
     "strategy": "Dynamic",
     "reliableStationarySeconds": 180,
     "unreliableStationarySeconds": 30,
+    "reliableMinSeconds": 5,
+    "unreliableMinSeconds": 5,
     "constantIntervalSeconds": 10,
     "includeComputerNameInRemarks": true
   },
   "meshSa": {
     "enabled": true,
-    "mode": "Always",
+    "mode": "OnlyWhenDisconnected",
     "multicastAddress": "239.2.3.1",
     "multicastPort": 6969,
     "networkInterface": "Auto"
@@ -56,7 +59,8 @@
   },
   "diagnostics": {
     "logLevel": "Error",
-    "maxLogSizeMb": 30
+    "maxLogSizeMb": 30,
+    "allowInsecureTlsSoftAccept": false
   },
   "servers": [
     {

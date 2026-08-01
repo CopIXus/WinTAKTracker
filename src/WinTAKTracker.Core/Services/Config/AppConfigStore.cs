@@ -40,6 +40,7 @@ public sealed class AppConfigStore
     public static AppConfigStore ForMachine() => new(ConfigPaths.MachineRoot, DataProtectionScope.LocalMachine);
 
     public string RootDirectory => _rootDir;
+    public string ConfigPath => _configPath;
     public DataProtectionScope DpapiScope => _dpapiScope;
     public string LogsDirectory => Path.Combine(_rootDir, "logs");
     public string CertsDirectory => Path.Combine(_rootDir, "certs");
@@ -57,15 +58,27 @@ public sealed class AppConfigStore
         Directory.CreateDirectory(UpdatesDirectory);
     }
 
-    public AppConfig Load()
+    /// <summary>Load config; on parse failure returns empty in-memory config (may overwrite corrupt files).</summary>
+    public AppConfig Load() => LoadDetailed().Config;
+
+    /// <summary>
+    /// Load with diagnostics. Corrupt files are copied aside and never silently overwritten by the caller
+    /// unless they explicitly Save after repair.
+    /// </summary>
+    public ConfigLoadResult LoadDetailed()
     {
         EnsureDirectories();
         if (!File.Exists(_configPath))
         {
             var fresh = new AppConfig();
             fresh.EnsureIdentityDefaults();
-            Save(fresh);
-            return fresh;
+            return new ConfigLoadResult
+            {
+                Config = fresh,
+                FileExisted = false,
+                LoadHadError = false,
+                CreatedFresh = true,
+            };
         }
 
         try
@@ -73,13 +86,37 @@ public sealed class AppConfigStore
             var json = File.ReadAllText(_configPath);
             var config = JsonSerializer.Deserialize<AppConfig>(json, JsonOptions) ?? new AppConfig();
             config.EnsureIdentityDefaults();
-            return config;
+            return new ConfigLoadResult
+            {
+                Config = config,
+                FileExisted = true,
+                LoadHadError = false,
+                CreatedFresh = false,
+            };
         }
-        catch
+        catch (Exception)
         {
+            string? backup = null;
+            try
+            {
+                backup = _configPath + ".corrupt-" + DateTime.UtcNow.Ticks;
+                File.Copy(_configPath, backup, overwrite: true);
+            }
+            catch
+            {
+                backup = null;
+            }
+
             var fallback = new AppConfig();
             fallback.EnsureIdentityDefaults();
-            return fallback;
+            return new ConfigLoadResult
+            {
+                Config = fallback,
+                FileExisted = true,
+                LoadHadError = true,
+                CorruptBackupPath = backup,
+                CreatedFresh = false,
+            };
         }
     }
 

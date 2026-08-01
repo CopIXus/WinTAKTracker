@@ -110,7 +110,10 @@ public partial class SettingsWindow : Window
             "Settings lock",
             MessageBoxButton.YesNoCancel);
         if (choice == MessageBoxResult.Yes)
+        {
             _host.SettingsLock.Lock();
+            _ = _host.LockServiceSettingsAsync();
+        }
         else if (choice == MessageBoxResult.No)
             TryChangeLockPassword();
     }
@@ -121,7 +124,12 @@ public partial class SettingsWindow : Window
             "Enter the settings lock password to allow edits.");
         if (pwd is null) return;
         if (!_host.SettingsLock.TryUnlock(pwd))
+        {
             Msg("Incorrect password.", MessageBoxImage.Warning);
+            return;
+        }
+
+        _ = _host.UnlockServiceSettingsAsync(pwd);
     }
 
     private void TryCreateLockPassword()
@@ -1110,6 +1118,30 @@ public partial class SettingsWindow : Window
         BindPersistText(myTeam, SaveUser);
         BindPersistText(myRole, SaveUser);
         BindPersistText(myPhone, SaveUser);
+        panel.Children.Add(SectionHeader("Portal / remote identity"));
+        var applyRemote = new CheckBox
+        {
+            Content = "Apply callsign/team from Portal / device-profile sync",
+            IsChecked = _host.Config.ApplyRemoteIdentityFromPortal,
+            IsEnabled = edit,
+            Margin = new Thickness(0, 8, 0, 0),
+        };
+        panel.Children.Add(applyRemote);
+        panel.Children.Add(Blurb(
+            "When enabled (default), TAK Server / OpenTAK preference packages can update callsign and team (with .wtt suffix). Turn off to keep local identity authoritative."));
+        applyRemote.Checked += (_, _) =>
+        {
+            if (!CanEdit) return;
+            _host.Config.ApplyRemoteIdentityFromPortal = true;
+            Persist();
+        };
+        applyRemote.Unchecked += (_, _) =>
+        {
+            if (!CanEdit) return;
+            _host.Config.ApplyRemoteIdentityFromPortal = false;
+            Persist();
+        };
+
         panel.Children.Add(Chip("Persisted", "Identity saves automatically when you change a field."));
         return panel;
     }
@@ -1121,6 +1153,7 @@ public partial class SettingsWindow : Window
         panel.Children.Add(Blurb(
             "Preferred order: USB NMEA (if you select a COM port) → Windows Location (Wi‑Fi/OS, same stack browsers use) → network/IP geolocation last (approximate, large CE via ipwho.is).\n\n" +
             "Laptops often have no GNSS chip — Chrome/Edge use Wi‑Fi/IP via the same Windows Location stack. Enable Settings → Privacy & security → Location → Location services ON, and “Let desktop apps access your location”. Then Request permission below (must run from this tray app, not the Windows Service).\n\n" +
+            "Network/IP fallback defaults off for new configs (opt-in; coarse location).\n\n" +
             (_host.AttachedToService
                 ? "Service mode: the tray acquires Windows Location and feeds the service over IPC while you are logged on. USB NMEA is best for always-on GPS after logoff."
                 : "Standalone mode: this process owns GPS directly. USB NMEA is still best when you need a fix after the user session ends.")));
@@ -1234,9 +1267,15 @@ public partial class SettingsWindow : Window
         {
             if (!CanEdit) return;
             _host.Config.Reporting.Strategy = strategy.SelectedItem?.ToString() ?? "Dynamic";
-            if (int.TryParse(relStat.Text, out var rs)) _host.Config.Reporting.ReliableStationarySeconds = rs;
-            if (int.TryParse(unrelStat.Text, out var us)) _host.Config.Reporting.UnreliableStationarySeconds = us;
-            if (int.TryParse(constant.Text, out var c)) _host.Config.Reporting.ConstantIntervalSeconds = c;
+            if (int.TryParse(relStat.Text, out var rs))
+                _host.Config.Reporting.ReliableStationarySeconds = Math.Max(5, rs);
+            if (int.TryParse(unrelStat.Text, out var us))
+                _host.Config.Reporting.UnreliableStationarySeconds = Math.Max(5, us);
+            if (int.TryParse(constant.Text, out var c))
+                _host.Config.Reporting.ConstantIntervalSeconds = Math.Max(5, c);
+            // Dynamic floors also default to ≥5s in the reporting engine.
+            _host.Config.Reporting.ReliableMinSeconds = Math.Max(5, _host.Config.Reporting.ReliableMinSeconds);
+            _host.Config.Reporting.UnreliableMinSeconds = Math.Max(5, _host.Config.Reporting.UnreliableMinSeconds);
             _host.Config.Reporting.IncludeComputerNameInRemarks = remarks.IsChecked == true;
             Persist();
         }
@@ -1522,6 +1561,22 @@ public partial class SettingsWindow : Window
             Style = TryStyle("HelperText"),
         });
 
+        var softTls = new CheckBox
+        {
+            Content = "Allow insecure TLS soft-accept (private CA / SoftCert lab)",
+            IsChecked = _host.Config.Diagnostics.AllowInsecureTlsSoftAccept,
+            IsEnabled = edit,
+            Margin = new Thickness(0, 12, 0, 0),
+        };
+        panel.Children.Add(softTls);
+        panel.Children.Add(new TextBlock
+        {
+            Text = "Default off: trust-store validation must succeed or TLS is rejected. Enable only for SoftCert / private-CA labs that cannot present a chain the OS trusts.",
+            Style = TryStyle("HelperText"),
+            TextWrapping = TextWrapping.Wrap,
+            Margin = new Thickness(0, 4, 0, 8),
+        });
+
         void SaveDiagnostics()
         {
             if (!CanEdit) return;
@@ -1531,11 +1586,14 @@ public partial class SettingsWindow : Window
             else
                 _host.Config.Diagnostics.MaxLogSizeMb = 30;
             maxSize.Text = _host.Config.Diagnostics.MaxLogSizeMb.ToString();
+            _host.Config.Diagnostics.AllowInsecureTlsSoftAccept = softTls.IsChecked == true;
             Persist();
         }
 
         level.SelectionChanged += (_, _) => SaveDiagnostics();
         BindPersistText(maxSize, SaveDiagnostics);
+        softTls.Checked += (_, _) => SaveDiagnostics();
+        softTls.Unchecked += (_, _) => SaveDiagnostics();
 
         panel.Children.Add(Btn("Open log folder", () =>
         {
@@ -1805,7 +1863,7 @@ public partial class SettingsWindow : Window
         return panel;
     }
 
-    private void Persist() => _host.SaveConfig();
+    private void Persist() => _ = _host.SaveConfigAsync();
 
     private static void BindPersistText(System.Windows.Controls.Control control, Action save)
     {

@@ -215,6 +215,7 @@ public sealed class EnrollmentService
                 parsed.Token!,
                 config.DeviceUid ?? Environment.MachineName,
                 profileId,
+                config.Diagnostics.AllowInsecureTlsSoftAccept,
                 progress,
                 ct);
         }
@@ -267,15 +268,23 @@ public sealed class EnrollmentService
         string token,
         string clientUid,
         string profileId,
+        bool allowInsecureTlsSoftAccept,
         IProgress<string>? progress,
         CancellationToken ct)
     {
         using var rsa = RSA.Create(4096);
-        using var handler = new HttpClientHandler
+        using var handler = new HttpClientHandler();
+        if (allowInsecureTlsSoftAccept)
         {
-            // Enrollment port often uses a private CA / Let's Encrypt; client has no trust yet.
-            ServerCertificateCustomValidationCallback = (_, _, _, _) => true,
-        };
+            // Enrollment often uses a private CA before any trust store exists — opt-in soft-accept.
+            handler.ServerCertificateCustomValidationCallback = (_, _, _, errors) =>
+            {
+                if (errors == System.Net.Security.SslPolicyErrors.None) return true;
+                _log.Warn("Enroll", $"HTTPS soft-accept during enrollment ({errors}).");
+                return true;
+            };
+        }
+        // else: default OS chain validation (no blind accept)
         using var http = new HttpClient(handler) { Timeout = EnrollHttpTimeout };
         http.DefaultRequestHeaders.UserAgent.ParseAdd("WinTAKTracker/0.1");
         var auth = Convert.ToBase64String(Encoding.UTF8.GetBytes($"{username}:{token}"));
@@ -614,6 +623,9 @@ public sealed class EnrollmentService
         string? activeUserSid = null,
         string? activeUserName = null)
     {
+        if (!config.ApplyRemoteIdentityFromPortal)
+            return;
+
         RemoteIdentityApply.Apply(
             config,
             parsed.Callsign,

@@ -145,6 +145,8 @@ public sealed class TakConnectionManager : ITakConnectionManager, IDisposable
                 }
             }
 
+            client.AllowInsecureTlsSoftAccept = ResolveSoftAccept(config, profile);
+
             if (client.State == TakConnectionState.Connected && !ProfileEndpointChanged(client.Profile, profile))
             {
                 // Keep healthy sockets across reload/config save; refresh profile metadata only.
@@ -187,7 +189,10 @@ public sealed class TakConnectionManager : ITakConnectionManager, IDisposable
         if (profile is null) return (false, "Profile not found.");
         if (string.IsNullOrWhiteSpace(profile.Host)) return (false, "Host is empty.");
 
-        using var client = new CotStreamClient(_store, _log);
+        using var client = new CotStreamClient(_store, _log)
+        {
+            AllowInsecureTlsSoftAccept = ResolveSoftAccept(config, profile),
+        };
         try
         {
             return await client.TestAsync(profile).ConfigureAwait(false);
@@ -412,6 +417,9 @@ public sealed class TakConnectionManager : ITakConnectionManager, IDisposable
         _log.Info("TAK", $"Network availability: {e.IsAvailable}");
         if (e.IsAvailable) ScheduleDebouncedReload();
     }
+
+    private static bool ResolveSoftAccept(AppConfig config, ServerProfile profile) =>
+        profile.AllowInsecureTlsSoftAccept ?? config.Diagnostics.AllowInsecureTlsSoftAccept;
 
     private static void DeleteProfileFiles(ServerProfile profile, AppConfigStore store)
     {

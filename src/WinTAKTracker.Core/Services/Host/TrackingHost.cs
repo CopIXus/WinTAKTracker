@@ -32,6 +32,12 @@ public sealed class TrackingHost : IDisposable
     public PowerService Power { get; }
     public bool ServiceMode { get; }
 
+    /// <summary>True when config.json was corrupt at load — automatic Saves on ctor were skipped.</summary>
+    public bool LoadHadError { get; private set; }
+
+    /// <summary>SID of the interactive companion currently owning GPS pushes / session identity.</summary>
+    public string? ActiveCompanionSid { get; private set; }
+
     private string? _activeUserSid;
     private string? _activeUserName;
 
@@ -42,17 +48,32 @@ public sealed class TrackingHost : IDisposable
         ServiceMode = serviceMode;
         ConfigStore = store ?? (serviceMode ? AppConfigStore.ForMachine() : AppConfigStore.ForUser());
         ConfigStore.EnsureDirectories();
-        Config = ConfigStore.Load();
+        var load = ConfigStore.LoadDetailed();
+        Config = load.Config;
+        LoadHadError = load.LoadHadError;
         SettingsLock = new SettingsLockService(ConfigStore);
-        EnsureDeviceUid();
+        EnsureDeviceUid(allowSave: !LoadHadError);
         Config.EnsureIdentityDefaults();
-        ConfigStore.Save(Config);
+
+        // First-run (missing file) may Save fresh. Never overwrite a corrupt path on ctor.
+        if (load.CreatedFresh)
+            ConfigStore.Save(Config);
+        else if (!LoadHadError)
+            ConfigStore.Save(Config);
 
         Log = new RedactedLogger(ConfigStore.LogsDirectory);
         ApplyLogSettings();
 
+        if (LoadHadError)
+        {
+            Log.Error("Config",
+                load.CorruptBackupPath is not null
+                    ? $"config.json was corrupt — quarantined to {Path.GetFileName(load.CorruptBackupPath)}; using in-memory defaults (not overwriting)."
+                    : "config.json was corrupt; using in-memory defaults (not overwriting).");
+        }
+
         Pause = new PauseService();
-        Gps = new GpsService(Log);
+        Gps = new GpsService(Log, serviceMode);
         Mesh = new MeshSaBroadcaster(Log);
         SoftCert = new SoftCertImporter(ConfigStore, Log);
         Enrollment = new EnrollmentService(ConfigStore, SoftCert, Log);
@@ -169,6 +190,7 @@ public sealed class TrackingHost : IDisposable
     {
         Config.EnsureIdentityDefaults();
         ConfigStore.Save(Config);
+        LoadHadError = false;
         ApplyLogSettings();
         Reporting.ApplyConfig(Config);
         Power.SetPreventSleep(Config.Startup.PreventSleepWhileTracking && !Pause.IsPaused);
@@ -188,11 +210,18 @@ public sealed class TrackingHost : IDisposable
         Log.EnforceSizeLimit();
     }
 
-    public void ReplaceConfig(AppConfig config)
+    public void ReplaceConfig(AppConfig config, bool save = true)
     {
         Config = config;
         Config.EnsureIdentityDefaults();
-        SaveConfig();
+        if (save)
+            SaveConfig();
+        else
+        {
+            ApplyLogSettings();
+            Reporting.ApplyConfig(Config);
+        }
+
         Reporting.NotifyIdentityChanged();
     }
 
@@ -206,15 +235,37 @@ public sealed class TrackingHost : IDisposable
         StatusChanged?.Invoke(this, EventArgs.Empty);
     }
 
+    /// <summary>
+    /// Bind or clear the active interactive companion. When cleared, companion GPS is dropped.
+    /// </summary>
     public void SetActiveSession(string? userSid, string? userName)
     {
+        var previous = _activeUserSid;
         _activeUserSid = userSid;
         _activeUserName = userName;
+        ActiveCompanionSid = string.IsNullOrWhiteSpace(userSid) ? null : userSid;
+
+        if (string.IsNullOrWhiteSpace(userSid) && !string.IsNullOrWhiteSpace(previous))
+            Gps.ClearExternalFix();
+
         Reporting.NotifyIdentityChanged();
         Log.Info("Identity", string.IsNullOrWhiteSpace(userSid)
             ? "Active identity → computer callsign (logged off / no session)."
             : $"Active session user SID set; identity source={GetActiveIdentity().Source}.");
         StatusChanged?.Invoke(this, EventArgs.Empty);
+    }
+
+    /// <summary>
+    /// True when <paramref name="callerSid"/> may push GPS / claim session
+    /// (no active companion, or same SID).
+    /// </summary>
+    public bool IsCompanionSidAllowed(string? callerSid)
+    {
+        if (string.IsNullOrWhiteSpace(ActiveCompanionSid))
+            return true;
+        if (string.IsNullOrWhiteSpace(callerSid))
+            return false;
+        return string.Equals(ActiveCompanionSid, callerSid, StringComparison.OrdinalIgnoreCase);
     }
 
     public void SetComputerIdentity(string callsign, string team, string role, string cotType, string? phone = null)
@@ -235,9 +286,19 @@ public sealed class TrackingHost : IDisposable
 
     /// <summary>
     /// Apply Portal / remote identity prefs. Appends <c>.wtt</c> to callsign when missing.
+    /// Honors <see cref="AppConfig.ApplyRemoteIdentityFromPortal"/>.
     /// </summary>
     public RemoteIdentityApply.Result ApplyRemoteIdentity(string? callsign, string? team, string? role = null)
     {
+        if (!Config.ApplyRemoteIdentityFromPortal)
+        {
+            return new RemoteIdentityApply.Result
+            {
+                Applied = false,
+                Message = "Remote identity apply disabled (ApplyRemoteIdentityFromPortal=false).",
+            };
+        }
+
         var result = RemoteIdentityApply.Apply(
             Config, callsign, team, role, _activeUserSid, _activeUserName);
         if (result.Applied)
@@ -299,7 +360,7 @@ public sealed class TrackingHost : IDisposable
         StatusChanged?.Invoke(this, EventArgs.Empty);
     }
 
-    private void EnsureDeviceUid()
+    private void EnsureDeviceUid(bool allowSave)
     {
         if (!string.IsNullOrWhiteSpace(Config.DeviceUid)) return;
         try
@@ -316,7 +377,8 @@ public sealed class TrackingHost : IDisposable
             Config.DeviceUid = "WIN-" + Guid.NewGuid().ToString("N")[..12].ToUpperInvariant();
         }
 
-        ConfigStore.Save(Config);
+        if (allowSave)
+            ConfigStore.Save(Config);
     }
 
     public void Dispose()

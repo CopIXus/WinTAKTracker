@@ -37,18 +37,19 @@ public sealed class AdaptiveReportingRate : IReportingRate
             ? _settings.ReliableMaxMoveSeconds
             : _settings.UnreliableMaxMoveSeconds;
 
+        // Floor at 5s so Dynamic rates never hammer TAK/mesh.
         if (speedMph < 1.0)
-            return TimeSpan.FromSeconds(Math.Max(1, stationary));
+            return TimeSpan.FromSeconds(Math.Max(5, stationary));
 
         if (speedMph >= 30.0)
-            return TimeSpan.FromSeconds(Math.Max(1, min));
+            return TimeSpan.FromSeconds(Math.Max(5, min));
 
         // Linear interpolate 1–30 mph: maxMove → min
         var t = (speedMph - 1.0) / 29.0;
         var seconds = maxMove + (min - maxMove) * t;
         if (double.IsNaN(seconds) || double.IsInfinity(seconds))
             seconds = stationary;
-        return TimeSpan.FromSeconds(Math.Max(1, seconds));
+        return TimeSpan.FromSeconds(Math.Max(5, seconds));
     }
 
     public bool ShouldReportAsap(double? previousAltM, double? currentAltM, double? previousSpeedMph, double currentSpeedMph)
@@ -74,7 +75,7 @@ public sealed class ConstantReportingRate : IReportingRate
     public ConstantReportingRate(ReportingSettings settings) => _settings = settings;
 
     public TimeSpan GetInterval(ReportingPath path, double speedMph) =>
-        TimeSpan.FromSeconds(Math.Max(1, _settings.ConstantIntervalSeconds));
+        TimeSpan.FromSeconds(Math.Max(5, _settings.ConstantIntervalSeconds));
 
     public bool ShouldReportAsap(double? previousAltM, double? currentAltM, double? previousSpeedMph, double currentSpeedMph) =>
         false;

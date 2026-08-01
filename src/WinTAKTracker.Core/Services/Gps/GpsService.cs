@@ -30,6 +30,7 @@ public sealed class GpsService : IGpsService, IDisposable
     private static readonly TimeSpan NetworkFallbackDelay = TimeSpan.FromSeconds(18);
 
     private readonly IRedactedLogger _log;
+    private readonly bool _serviceMode;
     private readonly NmeaSerialGps _nmea = new();
     private readonly WindowsLocationGps _windows = new();
     private readonly NetworkIpGeolocationGps _network = new();
@@ -44,9 +45,10 @@ public sealed class GpsService : IGpsService, IDisposable
     private bool _started;
     private bool _companionFixActive;
 
-    public GpsService(IRedactedLogger log)
+    public GpsService(IRedactedLogger log, bool serviceMode = false)
     {
         _log = log;
+        _serviceMode = serviceMode;
         _nmea.FixReceived += OnNmeaFix;
         _nmea.ErrorOccurred += (_, msg) => _log.Warn("GPS/NMEA", msg);
         _windows.FixReceived += OnWindowsFix;
@@ -194,13 +196,16 @@ public sealed class GpsService : IGpsService, IDisposable
             }
         }
 
-        if (useWin)
+        // Session 0 / LocalSystem: WinRT Geolocator is unreliable — companion tray + NMEA + optional IP only.
+        if (useWin && !_serviceMode)
             await _windows.StartAsync();
+        else if (useWin && _serviceMode)
+            _log.Info("GPS", "Windows Location skipped in service mode (tray companion / NMEA / IP only).");
         else
             _log.Info("GPS", "Windows Location disabled by source priority.");
 
         if (settings.EnableNetworkFallback)
-            ScheduleNetworkFallback(useWin);
+            ScheduleNetworkFallback(useWin && !_serviceMode);
         else
             _log.Info("GPS", "Network IP geolocation fallback disabled.");
     }

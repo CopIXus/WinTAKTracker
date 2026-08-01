@@ -91,6 +91,27 @@ public static class RemoteIdentityApply
                 config.UserIdentities[activeUserSid!] = user;
             }
 
+            var unchanged =
+                (normalizedCallsign is null ||
+                 string.Equals(user.Callsign, normalizedCallsign, StringComparison.OrdinalIgnoreCase)) &&
+                (normalizedTeam is null ||
+                 string.Equals(user.Team, normalizedTeam, StringComparison.OrdinalIgnoreCase)) &&
+                (normalizedRole is null ||
+                 string.Equals(user.Role, normalizedRole, StringComparison.OrdinalIgnoreCase));
+
+            if (unchanged && user.HasCallsign)
+            {
+                return new Result
+                {
+                    Applied = false,
+                    Callsign = user.Callsign,
+                    Team = user.Team,
+                    Role = user.Role,
+                    Target = "user",
+                    Message = "Remote identity unchanged; skip apply.",
+                };
+            }
+
             if (!string.IsNullOrWhiteSpace(activeUserName))
                 user.UserName = activeUserName!;
             if (normalizedCallsign is not null)
@@ -110,6 +131,27 @@ public static class RemoteIdentityApply
                 Role = user.Role,
                 Target = "user",
                 Message = "Remote identity applied to per-user callsign.",
+            };
+        }
+
+        var computerUnchanged =
+            (normalizedCallsign is null ||
+             string.Equals(config.ComputerIdentity.Callsign, normalizedCallsign, StringComparison.OrdinalIgnoreCase)) &&
+            (normalizedTeam is null ||
+             string.Equals(config.ComputerIdentity.Team, normalizedTeam, StringComparison.OrdinalIgnoreCase)) &&
+            (normalizedRole is null ||
+             string.Equals(config.ComputerIdentity.Role, normalizedRole, StringComparison.OrdinalIgnoreCase));
+
+        if (computerUnchanged)
+        {
+            return new Result
+            {
+                Applied = false,
+                Callsign = config.ComputerIdentity.Callsign,
+                Team = config.ComputerIdentity.Team,
+                Role = config.ComputerIdentity.Role,
+                Target = "computer",
+                Message = "Remote identity unchanged; skip apply.",
             };
         }
 

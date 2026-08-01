@@ -49,6 +49,7 @@ public sealed class AppHost : IDisposable
 
     private System.Threading.Timer? _updateTimer;
     private System.Threading.Timer? _trayTimer;
+    private bool _migrationChangedMachineStore;
 
     public AppHost()
     {
@@ -73,30 +74,33 @@ public sealed class AppHost : IDisposable
         // Service mode: best-effort start so tray can attach; HKCU Run still launches this tray.
         TryEnsureServiceRunning();
 
-        ServiceClient = await TrackerIpcClient.TryConnectAsync(TimeSpan.FromSeconds(2)).ConfigureAwait(false);
+        var serviceInstalled = ConfigPaths.IsServiceInstalled();
+        ServiceClient = await TryAttachWithRetryAsync(serviceInstalled).ConfigureAwait(false);
+
         if (ServiceClient is not null)
         {
             try
             {
-                await ServiceClient.NotifyCurrentUserSessionAsync().ConfigureAwait(false);
-                var remote = await ServiceClient.GetConfigDtoAsync().ConfigureAwait(false);
-                if (remote is not null)
-                    Core.ReplaceConfig(remote);
-                LastServiceStatus = await ServiceClient.GetStatusDtoAsync().ConfigureAwait(false);
-
-                // Push any locally completed migration bits, then ask service to (re)connect enabled profiles.
-                await ServiceClient.SetConfigAsync(Config).ConfigureAwait(false);
-                await ServiceClient.ReloadConnectionsAsync().ConfigureAwait(false);
-                LastServiceStatus = await ServiceClient.GetStatusDtoAsync().ConfigureAwait(false);
-
+                await AttachToServiceAsync().ConfigureAwait(false);
                 Log.Info("App", "Attached to WinTAKTracker Windows Service (no in-process tracker).");
             }
             catch (Exception ex)
             {
-                Log.Warn("App", $"Service attach incomplete: {ex.Message}. Falling back to in-process mode.");
+                Log.Warn("App", $"Service attach incomplete: {ex.Message}.");
                 await ServiceClient.DisposeAsync().ConfigureAwait(false);
                 ServiceClient = null;
+
+                if (serviceInstalled)
+                {
+                    Log.Error("App",
+                        "Service unreachable after attach failure — not starting in-process tracker (companion-only).");
+                }
             }
+        }
+        else if (serviceInstalled)
+        {
+            Log.Error("App",
+                "Service unreachable — not starting in-process tracker (companion-only: tray UI + timers).");
         }
 
         // Always honor Start with Windows for the tray (portable tracking UI, or service companion + GPS bridge).
@@ -108,14 +112,14 @@ public sealed class AppHost : IDisposable
         if (!string.IsNullOrWhiteSpace(sid))
             Core.SetActiveSession(sid, userName);
 
-        if (ServiceClient is null)
+        if (ServiceClient is null && !serviceInstalled)
         {
             // Portable / no-service: own the tracker in this process.
             await Core.StartAsync().ConfigureAwait(false);
-            Core.StatusChanged += (_, _) => RefreshTray();
+            Core.StatusChanged += (_, _) => _ = RefreshTrayAsync();
             Pause.PauseChanged += OnPauseChanged;
         }
-        else
+        else if (ServiceClient is not null)
         {
             // Companion mode: tracking owned by service; tray feeds Windows Location over IPC.
             Pause.PauseChanged += OnPauseChangedService;
@@ -129,15 +133,70 @@ public sealed class AppHost : IDisposable
                 Log.Warn("GPS/Companion", $"Failed to start tray location bridge: {ex.Message}");
             }
         }
+        else
+        {
+            // Service installed but unreachable: companion-only UI — never Core.StartAsync().
+            Pause.PauseChanged += (_, _) => RefreshTray();
+        }
 
-        _trayTimer = new System.Threading.Timer(_ => RefreshTray(), null, 1000, 2000);
+        _trayTimer = new System.Threading.Timer(_ => _ = RefreshTrayAsync(), null, 1000, 2000);
         _updateTimer = new System.Threading.Timer(async _ => await CheckUpdatesQuietAsync(), null,
             TimeSpan.FromSeconds(20), TimeSpan.FromHours(6));
 
-        RefreshTray();
+        await RefreshTrayAsync().ConfigureAwait(false);
         Log.Info("App", AttachedToService
             ? "WinTAKTracker tray started (service companion)."
-            : "WinTAKTracker started (in-process tracking).");
+            : serviceInstalled
+                ? "WinTAKTracker tray started (companion-only; service unreachable)."
+                : "WinTAKTracker started (in-process tracking).");
+    }
+
+    private async Task<TrackerIpcClient?> TryAttachWithRetryAsync(bool serviceInstalled)
+    {
+        var attempts = serviceInstalled ? 5 : 1;
+        for (var i = 0; i < attempts; i++)
+        {
+            var client = await TrackerIpcClient.TryConnectAsync(TimeSpan.FromSeconds(2)).ConfigureAwait(false);
+            if (client is not null)
+                return client;
+
+            if (i + 1 < attempts)
+            {
+                Log.Info("App", $"Service attach attempt {i + 1}/{attempts} failed; retrying…");
+                await Task.Delay(TimeSpan.FromSeconds(1)).ConfigureAwait(false);
+                TryEnsureServiceRunning();
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Prefer service-authoritative config. Only SetConfig when local migration actually changed something.
+    /// At most one ReloadConnections.
+    /// </summary>
+    private async Task AttachToServiceAsync()
+    {
+        if (ServiceClient is null) return;
+
+        await ServiceClient.NotifyCurrentUserSessionAsync().ConfigureAwait(false);
+        var remote = await ServiceClient.GetConfigDtoAsync().ConfigureAwait(false);
+        if (remote is not null)
+            Core.ReplaceConfig(remote, save: false);
+
+        LastServiceStatus = await ServiceClient.GetStatusDtoAsync().ConfigureAwait(false);
+
+        if (_migrationChangedMachineStore)
+        {
+            // Push migrated secrets/certs-related config once, then a single reload.
+            var response = await ServiceClient.SetConfigAsync(Config).ConfigureAwait(false);
+            if (!response.Ok)
+                Log.Warn("IPC", $"SetConfig after migration: {response.Error}");
+            else
+                await ServiceClient.ReloadConnectionsAsync().ConfigureAwait(false);
+        }
+
+        LastServiceStatus = await ServiceClient.GetStatusDtoAsync().ConfigureAwait(false);
     }
 
     /// <summary>
@@ -168,21 +227,53 @@ public sealed class AppHost : IDisposable
         return Tak.GetStatuses();
     }
 
-    public void SaveConfig()
+    public void SaveConfig() => _ = SaveConfigAsync();
+
+    public async Task SaveConfigAsync()
     {
-        Core.SaveConfig();
-        // Tray Run-key applies in both portable and service-companion modes.
-        StartupRegistration.SetEnabled(Config.Startup.StartWithWindows);
-        if (ServiceClient is not null)
+        try
         {
-            try
+            Core.SaveConfig();
+            // Tray Run-key applies in both portable and service-companion modes.
+            StartupRegistration.SetEnabled(Config.Startup.StartWithWindows);
+            if (ServiceClient is not null)
             {
-                ServiceClient.SetConfigAsync(Config).GetAwaiter().GetResult();
+                var response = await ServiceClient.SetConfigAsync(Config).ConfigureAwait(false);
+                if (!response.Ok)
+                    Log.Warn("IPC", $"SetConfig failed: {response.Error}");
             }
-            catch (Exception ex)
-            {
-                Log.Warn("IPC", $"SetConfig failed: {ex.Message}");
-            }
+        }
+        catch (Exception ex)
+        {
+            Log.Warn("IPC", $"SaveConfig failed: {ex.Message}");
+        }
+    }
+
+    public async Task UnlockServiceSettingsAsync(string password)
+    {
+        if (ServiceClient is null) return;
+        try
+        {
+            var response = await ServiceClient.UnlockSettingsAsync(password).ConfigureAwait(false);
+            if (!response.Ok)
+                Log.Warn("IPC", $"UnlockSettings failed: {response.Error}");
+        }
+        catch (Exception ex)
+        {
+            Log.Warn("IPC", $"UnlockSettings failed: {ex.Message}");
+        }
+    }
+
+    public async Task LockServiceSettingsAsync()
+    {
+        if (ServiceClient is null) return;
+        try
+        {
+            await ServiceClient.LockSettingsAsync().ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            Log.Warn("IPC", $"LockSettings failed: {ex.Message}");
         }
     }
 
@@ -203,24 +294,28 @@ public sealed class AppHost : IDisposable
 
     public async Task ReloadConnectionsAsync()
     {
-        SaveConfig();
+        await SaveConfigAsync().ConfigureAwait(false);
         if (ServiceClient is not null)
         {
             await ServiceClient.ReloadConnectionsAsync().ConfigureAwait(false);
             LastServiceStatus = await ServiceClient.GetStatusDtoAsync().ConfigureAwait(false);
         }
-        else
+        else if (!ConfigPaths.IsServiceInstalled())
         {
             await Core.ReloadConnectionsAsync().ConfigureAwait(false);
         }
 
-        RefreshTray();
+        await RefreshTrayAsync().ConfigureAwait(false);
     }
 
     public bool CurrentUserNeedsCallsignSetup() =>
         IdentityResolver.CurrentUserNeedsSetup(Config);
 
-    public void SaveCurrentUserIdentity(string callsign, string team, string role, string cotType, string? phone = null)
+    public void SaveCurrentUserIdentity(string callsign, string team, string role, string cotType, string? phone = null) =>
+        _ = SaveCurrentUserIdentityAsync(callsign, team, role, cotType, phone);
+
+    public async Task SaveCurrentUserIdentityAsync(
+        string callsign, string team, string role, string cotType, string? phone = null)
     {
         var sid = IdentityResolver.CurrentUserSid() ?? throw new InvalidOperationException("No Windows user SID.");
         var userName = IdentityResolver.CurrentUserName() ?? Environment.UserName;
@@ -229,46 +324,64 @@ public sealed class AppHost : IDisposable
 
         if (ServiceClient is not null)
         {
-            ServiceClient.SetUserIdentityAsync(new IdentityUpdateDto
+            try
             {
-                UserSid = sid,
-                UserName = userName,
-                Callsign = callsign,
-                Team = team,
-                Role = role,
-                CotType = cotType,
-                Phone = phone,
-            }).GetAwaiter().GetResult();
-            ServiceClient.NotifyCurrentUserSessionAsync().GetAwaiter().GetResult();
+                await ServiceClient.SetUserIdentityAsync(new IdentityUpdateDto
+                {
+                    UserSid = sid,
+                    UserName = userName,
+                    Callsign = callsign,
+                    Team = team,
+                    Role = role,
+                    CotType = cotType,
+                    Phone = phone,
+                }).ConfigureAwait(false);
+                await ServiceClient.NotifyCurrentUserSessionAsync().ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                Log.Warn("IPC", $"SetUserIdentity failed: {ex.Message}");
+            }
         }
         else
         {
             Reporting.NotifyIdentityChanged();
         }
 
-        RefreshTray();
+        await RefreshTrayAsync().ConfigureAwait(false);
     }
 
-    public void SaveComputerIdentity(string callsign, string team, string role, string cotType, string? phone = null)
+    public void SaveComputerIdentity(string callsign, string team, string role, string cotType, string? phone = null) =>
+        _ = SaveComputerIdentityAsync(callsign, team, role, cotType, phone);
+
+    public async Task SaveComputerIdentityAsync(
+        string callsign, string team, string role, string cotType, string? phone = null)
     {
         Core.SetComputerIdentity(callsign, team, role, cotType, phone);
         if (ServiceClient is not null)
         {
-            ServiceClient.SetComputerIdentityAsync(new IdentityUpdateDto
+            try
             {
-                Callsign = callsign,
-                Team = team,
-                Role = role,
-                CotType = cotType,
-                Phone = phone,
-            }).GetAwaiter().GetResult();
+                await ServiceClient.SetComputerIdentityAsync(new IdentityUpdateDto
+                {
+                    Callsign = callsign,
+                    Team = team,
+                    Role = role,
+                    CotType = cotType,
+                    Phone = phone,
+                }).ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                Log.Warn("IPC", $"SetComputerIdentity failed: {ex.Message}");
+            }
         }
         else
         {
             Reporting.NotifyIdentityChanged();
         }
 
-        RefreshTray();
+        await RefreshTrayAsync().ConfigureAwait(false);
     }
 
     public void DismissCurrentUserSetupPrompt()
@@ -279,11 +392,15 @@ public sealed class AppHost : IDisposable
         Core.DismissUserSetupPrompt(sid, userName);
         if (ServiceClient is not null)
         {
-            ServiceClient.DismissUserSetupPromptAsync(new IdentityUpdateDto
+            _ = ServiceClient.DismissUserSetupPromptAsync(new IdentityUpdateDto
             {
                 UserSid = sid,
                 UserName = userName,
-            }).GetAwaiter().GetResult();
+            }).ContinueWith(t =>
+            {
+                if (t.IsFaulted)
+                    Log.Warn("IPC", $"DismissUserSetupPrompt failed: {t.Exception?.GetBaseException().Message}");
+            }, TaskScheduler.Default);
         }
     }
 
@@ -306,12 +423,16 @@ public sealed class AppHost : IDisposable
             {
                 AppConfigStore.MigrateUserStoreToMachine(user, ConfigStore);
                 Core.ReplaceConfig(ConfigStore.Load());
+                _migrationChangedMachineStore = true;
                 Log.Info("App", "Migrated portable servers into ProgramData machine store.");
                 return;
             }
 
             if (AppConfigStore.CompleteUserToMachineMigration(user, ConfigStore))
+            {
+                _migrationChangedMachineStore = true;
                 Log.Info("App", "Re-protected portable secrets/certs into ProgramData for the Windows Service.");
+            }
         }
         catch (Exception ex)
         {
@@ -322,37 +443,39 @@ public sealed class AppHost : IDisposable
     private void OnPauseChanged(object? sender, bool paused)
     {
         Power.SetPreventSleep(!paused && Config.Startup.PreventSleepWhileTracking);
-        RefreshTray();
+        _ = RefreshTrayAsync();
         Tray.ShowBalloon(paused ? "Tracking paused" : "Tracking resumed",
             paused ? "Outbound CoT muted (servers + mesh)." : "PLI reporting active.");
     }
 
-    private void OnPauseChangedService(object? sender, bool paused)
+    private async void OnPauseChangedService(object? sender, bool paused)
     {
         try
         {
             if (ServiceClient is null) return;
-            if (paused) ServiceClient.PauseAsync().GetAwaiter().GetResult();
-            else ServiceClient.ResumeAsync().GetAwaiter().GetResult();
-            LastServiceStatus = ServiceClient.GetStatusDtoAsync().GetAwaiter().GetResult();
+            if (paused) await ServiceClient.PauseAsync().ConfigureAwait(false);
+            else await ServiceClient.ResumeAsync().ConfigureAwait(false);
+            LastServiceStatus = await ServiceClient.GetStatusDtoAsync().ConfigureAwait(false);
         }
         catch (Exception ex)
         {
             Log.Warn("IPC", $"Pause/resume failed: {ex.Message}");
         }
 
-        RefreshTray();
+        await RefreshTrayAsync().ConfigureAwait(false);
         Tray.ShowBalloon(paused ? "Tracking paused" : "Tracking resumed",
             paused ? "Service outbound CoT muted." : "Service PLI reporting active.");
     }
 
-    public void RefreshTray()
+    public void RefreshTray() => _ = RefreshTrayAsync();
+
+    public async Task RefreshTrayAsync()
     {
         if (ServiceClient is not null)
         {
             try
             {
-                LastServiceStatus = ServiceClient.GetStatusDtoAsync().GetAwaiter().GetResult();
+                LastServiceStatus = await ServiceClient.GetStatusDtoAsync().ConfigureAwait(false);
             }
             catch
             {
@@ -363,6 +486,12 @@ public sealed class AppHost : IDisposable
                 ? parsed
                 : TrayIconState.Disconnected;
             Tray.SetState(state);
+            return;
+        }
+
+        if (ConfigPaths.IsServiceInstalled() && ServiceClient is null)
+        {
+            Tray.SetState(TrayIconState.Disconnected);
             return;
         }
 
@@ -406,7 +535,8 @@ public sealed class AppHost : IDisposable
                 var (ok, msg) = await Updates.DownloadAndApplyAsync(result).ConfigureAwait(false);
                 if (ok)
                 {
-                    Tray.ShowBalloon("Updating", msg);
+                    // Do not claim install success — Setup/UAC may still be pending.
+                    Tray.ShowBalloon("Update started", msg);
                     System.Windows.Application.Current.Dispatcher.Invoke(() =>
                         System.Windows.Application.Current.Shutdown());
                 }

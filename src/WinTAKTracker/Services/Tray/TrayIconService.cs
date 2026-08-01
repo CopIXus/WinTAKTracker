@@ -183,11 +183,15 @@ public sealed class TrayIconService : IDisposable
                 {
                     MessageBox.Show("Incorrect password.", "WinTAKTracker",
                         MessageBoxButton.OK, MessageBoxImage.Warning);
+                    return;
                 }
+
+                _ = _host.UnlockServiceSettingsAsync(pwd);
                 return;
             }
 
             _host.SettingsLock.Lock();
+            _ = _host.LockServiceSettingsAsync();
         });
     }
 

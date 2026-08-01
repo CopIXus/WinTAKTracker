@@ -8,6 +8,10 @@
   (auto-start), and starts it. Optionally migrates %LocalAppData%\WinTAKTracker config into
   %ProgramData%\WinTAKTracker\ (LocalMachine DPAPI for secrets).
 
+  Machine store ACL:
+  - Root / logs / updates: SYSTEM + Administrators Full; Authenticated Users Modify
+  - secrets / certs: SYSTEM + Administrators Full only (tray mutates secrets via IPC when possible)
+
 .PARAMETER SourceDir
   Folder containing the published service binaries (default: adjacent publish\service).
 
@@ -38,6 +42,28 @@ function Test-IsAdmin {
     $id = [Security.Principal.WindowsIdentity]::GetCurrent()
     $p = [Security.Principal.WindowsPrincipal]::new($id)
     return $p.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+}
+
+function Set-MachineStoreAcl {
+    param([string]$MachineRoot)
+
+    New-Item -ItemType Directory -Force -Path $MachineRoot | Out-Null
+    $secrets = Join-Path $MachineRoot 'secrets'
+    $certs = Join-Path $MachineRoot 'certs'
+    $logs = Join-Path $MachineRoot 'logs'
+    $updates = Join-Path $MachineRoot 'updates'
+    foreach ($d in @($secrets, $certs, $logs, $updates)) {
+        New-Item -ItemType Directory -Force -Path $d | Out-Null
+    }
+
+    # S-1-5-18 SYSTEM; S-1-5-32-544 Administrators; S-1-5-11 Authenticated Users
+    icacls $MachineRoot /inheritance:r | Out-Null
+    icacls $MachineRoot /grant '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-544:(OI)(CI)F' '*S-1-5-11:(OI)(CI)M' | Out-Null
+    icacls $logs /grant '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-544:(OI)(CI)F' '*S-1-5-11:(OI)(CI)M' | Out-Null
+    icacls $updates /grant '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-544:(OI)(CI)F' '*S-1-5-11:(OI)(CI)M' | Out-Null
+    icacls $secrets /inheritance:r /grant '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-544:(OI)(CI)F' | Out-Null
+    icacls $certs /inheritance:r /grant '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-544:(OI)(CI)F' | Out-Null
+    Write-Host "Machine store ACL: Authenticated Users Modify on root/logs/updates; secrets/certs SYSTEM+Admins only → $MachineRoot"
 }
 
 if (-not (Test-IsAdmin)) {
@@ -96,10 +122,7 @@ sc.exe description $ServiceName "Always-on TAK PLI tracker (NMEA/Mesh/TAK). Tray
 sc.exe failure $ServiceName reset= 86400 actions= restart/5000/restart/10000/restart/30000 | Out-Null
 
 $machineRoot = Join-Path $env:ProgramData 'WinTAKTracker'
-New-Item -ItemType Directory -Force -Path $machineRoot | Out-Null
-# Builtin\Users Modify — tray runs asInvoker and must write ProgramData after SYSTEM creates the folder.
-icacls $machineRoot /grant '*S-1-5-32-545:(OI)(CI)M' /T | Out-Null
-Write-Host "Machine store ACL: Users Modify → $machineRoot"
+Set-MachineStoreAcl -MachineRoot $machineRoot
 
 if ($MigrateUserConfig) {
     $userRoot = Join-Path $env:LOCALAPPDATA 'WinTAKTracker'
@@ -113,9 +136,12 @@ if ($MigrateUserConfig) {
                 Copy-Item (Join-Path $from '*') $to -Recurse -Force -ErrorAction SilentlyContinue
             }
         }
+        # Re-assert certs ACL after copy
+        icacls (Join-Path $machineRoot 'certs') /inheritance:r /grant '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-544:(OI)(CI)F' | Out-Null
         Write-Host "Copied config/certs to $machineRoot"
         Write-Host "NOTE: DPAPI CurrentUser secret blobs cannot be read as LocalSystem."
         Write-Host "      Re-enter tokens/passwords in Settings after install, or run migration while elevated from the enrolled user (service re-protects on first successful CU read during migrate API)."
+        Write-Host "      Prefer mutating secrets via the tray → service IPC when the service is running."
     }
 }
 

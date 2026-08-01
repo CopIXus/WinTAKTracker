@@ -12,6 +12,34 @@ namespace WinTAKTracker.Services.Ipc;
 /// <summary>Named-pipe JSON RPC server for tray ↔ service control.</summary>
 public sealed class TrackerIpcServer : IAsyncDisposable
 {
+    private static readonly HashSet<string> MutatingMethods = new(StringComparer.Ordinal)
+    {
+        nameof(IpcMethod.SetConfig),
+        nameof(IpcMethod.Pause),
+        nameof(IpcMethod.Resume),
+        nameof(IpcMethod.ReloadConnections),
+        nameof(IpcMethod.SetComputerIdentity),
+        nameof(IpcMethod.SetUserIdentity),
+        nameof(IpcMethod.SetActiveSession),
+        nameof(IpcMethod.DismissUserSetupPrompt),
+        nameof(IpcMethod.PushGpsFix),
+        nameof(IpcMethod.ClearGpsFix),
+        nameof(IpcMethod.UnlockSettings),
+        nameof(IpcMethod.LockSettings),
+    };
+
+    /// <summary>
+    /// Settings-lock gated: config/identity writes. Companion GPS / session / pause stay available while locked
+    /// so tracking continues; UnlockSettings unlocks the service session for Settings Persist.
+    /// </summary>
+    private static readonly HashSet<string> LockGatedMethods = new(StringComparer.Ordinal)
+    {
+        nameof(IpcMethod.SetConfig),
+        nameof(IpcMethod.SetComputerIdentity),
+        nameof(IpcMethod.SetUserIdentity),
+        nameof(IpcMethod.DismissUserSetupPrompt),
+    };
+
     private readonly TrackingHost _host;
     private readonly CancellationTokenSource _cts = new();
     private Task? _loop;
@@ -56,7 +84,7 @@ public sealed class TrackerIpcServer : IAsyncDisposable
     {
         var security = new PipeSecurity();
         security.AddAccessRule(new PipeAccessRule(
-            new SecurityIdentifier(WellKnownSidType.BuiltinUsersSid, null),
+            new SecurityIdentifier(WellKnownSidType.AuthenticatedUserSid, null),
             PipeAccessRights.ReadWrite | PipeAccessRights.CreateNewInstance,
             AccessControlType.Allow));
         security.AddAccessRule(new PipeAccessRule(
@@ -99,7 +127,7 @@ public sealed class TrackerIpcServer : IAsyncDisposable
                     {
                         var request = IpcJson.Deserialize<IpcRequest>(line)
                                       ?? throw new InvalidOperationException("Invalid request.");
-                        response = await DispatchAsync(request).ConfigureAwait(false);
+                        response = await DispatchAsync(request, pipe).ConfigureAwait(false);
                     }
                     catch (Exception ex)
                     {
@@ -116,11 +144,43 @@ public sealed class TrackerIpcServer : IAsyncDisposable
         }
     }
 
-    private async Task<IpcResponse> DispatchAsync(IpcRequest request)
+    private async Task<IpcResponse> DispatchAsync(IpcRequest request, NamedPipeServerStream pipe)
     {
         var method = request.Method;
         try
         {
+            if (MutatingMethods.Contains(method))
+            {
+                if (!TryGetInteractiveClientSid(pipe, out var clientSid, out var interactiveError))
+                    throw new InvalidOperationException(interactiveError ?? "IPC mutation requires an interactive Windows user.");
+
+                if (LockGatedMethods.Contains(method) && _host.SettingsLock.IsLocked)
+                    throw new InvalidOperationException(
+                        "Settings are locked — unlock in the tray (or UnlockSettings) before mutating config/identity/GPS.");
+
+                // Multi-session: only the active companion SID may push GPS / claim session when one is set.
+                if (method is nameof(IpcMethod.PushGpsFix) or nameof(IpcMethod.SetActiveSession))
+                {
+                    var sid = ResolveCallerSid(method, request.Payload, clientSid);
+                    if (!_host.IsCompanionSidAllowed(sid) &&
+                        method == nameof(IpcMethod.PushGpsFix))
+                    {
+                        throw new InvalidOperationException(
+                            "Another interactive companion owns GPS pushes; ignore from this session.");
+                    }
+
+                    if (method == nameof(IpcMethod.SetActiveSession) &&
+                        !_host.IsCompanionSidAllowed(sid) &&
+                        request.Payload is { } p &&
+                        p.TryGetProperty("loggedOn", out var logged) &&
+                        logged.ValueKind == JsonValueKind.True)
+                    {
+                        throw new InvalidOperationException(
+                            "Another interactive companion is already active; SetActiveSession rejected.");
+                    }
+                }
+            }
+
             object? result = method switch
             {
                 nameof(IpcMethod.Ping) => new { pong = true, utc = DateTimeOffset.UtcNow },
@@ -136,6 +196,8 @@ public sealed class TrackerIpcServer : IAsyncDisposable
                 nameof(IpcMethod.DismissUserSetupPrompt) => DismissSetup(request.Payload),
                 nameof(IpcMethod.PushGpsFix) => PushGpsFix(request.Payload),
                 nameof(IpcMethod.ClearGpsFix) => ClearGpsFix(),
+                nameof(IpcMethod.UnlockSettings) => UnlockSettings(request.Payload),
+                nameof(IpcMethod.LockSettings) => LockSettings(),
                 _ => throw new InvalidOperationException($"Unknown method '{method}'."),
             };
 
@@ -157,8 +219,13 @@ public sealed class TrackerIpcServer : IAsyncDisposable
         if (payload is null) throw new InvalidOperationException("Missing config payload.");
         var config = payload.Value.Deserialize<AppConfig>(IpcJson.Options)
                      ?? throw new InvalidOperationException("Invalid config.");
+        var before = _host.Config;
+        var needsReload = ConfigReconnectComparer.RequiresConnectionReload(before, config);
         _host.ReplaceConfig(config);
-        await _host.ReloadConnectionsAsync().ConfigureAwait(false);
+        if (needsReload)
+            await _host.ReloadConnectionsAsync().ConfigureAwait(false);
+        else
+            _host.Log.Info("IPC", "SetConfig applied without connection reload (non-connection fields only).");
         return _host.GetStatus();
     }
 
@@ -235,6 +302,114 @@ public sealed class TrackerIpcServer : IAsyncDisposable
     {
         _host.Gps.ClearExternalFix();
         return _host.GetStatus();
+    }
+
+    private object UnlockSettings(JsonElement? payload)
+    {
+        var dto = DeserializePayload<UnlockSettingsDto>(payload);
+        if (!_host.SettingsLock.TryUnlock(dto.Password ?? ""))
+            throw new InvalidOperationException("Incorrect settings lock password.");
+        return new { unlocked = true };
+    }
+
+    private object LockSettings()
+    {
+        _host.SettingsLock.Lock();
+        return new { locked = _host.SettingsLock.IsLocked };
+    }
+
+    private static string? ResolveCallerSid(string method, JsonElement? payload, string? pipeSid)
+    {
+        if (payload is null) return pipeSid;
+        try
+        {
+            if (method == nameof(IpcMethod.SetActiveSession))
+            {
+                var dto = payload.Value.Deserialize<SessionUpdateDto>(IpcJson.Options);
+                return dto?.UserSid ?? pipeSid;
+            }
+        }
+        catch
+        {
+            /* ignore */
+        }
+
+        return pipeSid;
+    }
+
+    /// <summary>
+    /// Impersonate the pipe client and require a non-service interactive Windows user.
+    /// </summary>
+    private static bool TryGetInteractiveClientSid(
+        NamedPipeServerStream pipe,
+        out string? clientSid,
+        out string? error)
+    {
+        clientSid = null;
+        error = null;
+        WindowsIdentity? identity = null;
+        try
+        {
+            pipe.RunAsClient(() => { identity = WindowsIdentity.GetCurrent(); });
+        }
+        catch (Exception ex)
+        {
+            error = "Could not impersonate pipe client: " + ex.Message;
+            return false;
+        }
+
+        if (identity is null)
+        {
+            error = "Pipe client identity unavailable.";
+            return false;
+        }
+
+        using (identity)
+        {
+            if (identity.IsSystem || identity.IsAnonymous || identity.IsGuest)
+            {
+                error = "Non-interactive pipe client rejected.";
+                return false;
+            }
+
+            var sid = identity.User?.Value ?? "";
+            // LocalSystem / LocalService / NetworkService
+            if (sid is "S-1-5-18" or "S-1-5-19" or "S-1-5-20")
+            {
+                error = "Service account pipe clients cannot mutate tracker state.";
+                return false;
+            }
+
+            // Prefer rejecting tokens that are not interactive logons when detectable.
+            if (!IsLikelyInteractive(identity))
+            {
+                error = "Pipe client is not an interactive Windows user.";
+                return false;
+            }
+
+            clientSid = sid;
+            return true;
+        }
+    }
+
+    private static bool IsLikelyInteractive(WindowsIdentity identity)
+    {
+        try
+        {
+            // Impersonation from a named-pipe client of the tray app is typically Identification or Impersonation.
+            if (identity.ImpersonationLevel is TokenImpersonationLevel.None)
+                return false;
+
+            // Empty name often means machine/service context.
+            if (string.IsNullOrWhiteSpace(identity.Name))
+                return false;
+
+            return true;
+        }
+        catch
+        {
+            return true; // fail open on exotic tokens after SID checks passed
+        }
     }
 
     private static T DeserializePayload<T>(JsonElement? payload)

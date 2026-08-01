@@ -25,12 +25,15 @@ public sealed class ReportingEngine : IDisposable
     private AppConfig _config = new();
     private IReportingRate _rate = new AdaptiveReportingRate(new ReportingSettings());
     private System.Threading.Timer? _timer;
+    private static readonly TimeSpan CotSendTimeout = TimeSpan.FromSeconds(8);
+
     private DateTimeOffset _lastReliable = DateTimeOffset.MinValue;
     private DateTimeOffset _lastUnreliable = DateTimeOffset.MinValue;
     private double? _prevAlt;
     private double? _prevSpeedMph;
     private bool _identityDirty;
     private bool _asap;
+    private int _tickBusy;
 
     public DateTimeOffset? LastPliSentUtc { get; private set; }
     public event EventHandler? Reported;
@@ -97,66 +100,91 @@ public sealed class ReportingEngine : IDisposable
 
     private void Tick()
     {
+        // Serialize CoT sends — skip overlapping ticks while a send is in flight.
+        if (Interlocked.CompareExchange(ref _tickBusy, 1, 0) != 0)
+            return;
+        _ = TickCoreAsync();
+    }
+
+    private async Task TickCoreAsync()
+    {
         try
         {
-            if (_pause.IsPaused) return;
-            var fix = _gps.CurrentFix;
-            if (fix is null) return;
-
-            AppConfig config;
-            IReportingRate rate;
-            bool asap;
-            lock (_gate)
-            {
-                config = _config;
-                rate = _rate;
-                asap = _asap || _identityDirty;
-            }
-
-            var speed = fix.SpeedMph;
-            var reliableDue = asap || DateTimeOffset.UtcNow - _lastReliable >= rate.GetInterval(ReportingPath.Reliable, speed);
-            var unreliableDue = asap || DateTimeOffset.UtcNow - _lastUnreliable >= rate.GetInterval(ReportingPath.Unreliable, speed);
-
-            if (!reliableDue && !unreliableDue) return;
-
-            var battery = TryGetBatteryPercent();
-            var active = _identityProvider?.Invoke();
-            var identity = active is not null
-                ? CotEventBuilder.FromActiveIdentity(config, active, battery: battery)
-                : CotEventBuilder.FromConfig(config, battery: battery);
-            var stale = rate.GetStale(rate.GetInterval(ReportingPath.Reliable, speed));
-            var cot = CotEventBuilder.Build(fix, identity, stale);
-
-            if (reliableDue && _tak.AnyConnected)
-            {
-                _ = _tak.SendToAllAsync(cot);
-                _lastReliable = DateTimeOffset.UtcNow;
-                LastPliSentUtc = _lastReliable;
-            }
-
-            if (unreliableDue && ShouldSendMesh(config))
-            {
-                if (_mesh.TrySend(cot))
-                {
-                    _lastUnreliable = DateTimeOffset.UtcNow;
-                    LastPliSentUtc = _lastUnreliable;
-                }
-            }
-
-            lock (_gate)
-            {
-                _prevAlt = fix.AltitudeMeters;
-                _prevSpeedMph = speed;
-                _asap = false;
-                _identityDirty = false;
-            }
-
-            Reported?.Invoke(this, EventArgs.Empty);
+            await TickCoreBodyAsync().ConfigureAwait(false);
         }
         catch (Exception ex)
         {
             _log.Warn("Report", $"Tick error: {ex.GetType().Name}: {ex.Message}");
         }
+        finally
+        {
+            Interlocked.Exchange(ref _tickBusy, 0);
+        }
+    }
+
+    private async Task TickCoreBodyAsync()
+    {
+        if (_pause.IsPaused) return;
+        var fix = _gps.CurrentFix;
+        if (fix is null) return;
+
+        AppConfig config;
+        IReportingRate rate;
+        bool asap;
+        lock (_gate)
+        {
+            config = _config;
+            rate = _rate;
+            asap = _asap || _identityDirty;
+        }
+
+        var speed = fix.SpeedMph;
+        var reliableDue = asap || DateTimeOffset.UtcNow - _lastReliable >= rate.GetInterval(ReportingPath.Reliable, speed);
+        var unreliableDue = asap || DateTimeOffset.UtcNow - _lastUnreliable >= rate.GetInterval(ReportingPath.Unreliable, speed);
+
+        if (!reliableDue && !unreliableDue) return;
+
+        var battery = TryGetBatteryPercent();
+        var active = _identityProvider?.Invoke();
+        var identity = active is not null
+            ? CotEventBuilder.FromActiveIdentity(config, active, battery: battery)
+            : CotEventBuilder.FromConfig(config, battery: battery);
+        var stale = rate.GetStale(rate.GetInterval(ReportingPath.Reliable, speed));
+        var cot = CotEventBuilder.Build(fix, identity, stale);
+
+        if (reliableDue && _tak.AnyConnected)
+        {
+            try
+            {
+                using var timeout = new CancellationTokenSource(CotSendTimeout);
+                await _tak.SendToAllAsync(cot, timeout.Token).ConfigureAwait(false);
+                _lastReliable = DateTimeOffset.UtcNow;
+                LastPliSentUtc = _lastReliable;
+            }
+            catch (Exception ex)
+            {
+                _log.Warn("Report", $"Reliable CoT send timed out or failed: {ex.GetType().Name}");
+            }
+        }
+
+        if (unreliableDue && ShouldSendMesh(config))
+        {
+            if (_mesh.TrySend(cot))
+            {
+                _lastUnreliable = DateTimeOffset.UtcNow;
+                LastPliSentUtc = _lastUnreliable;
+            }
+        }
+
+        lock (_gate)
+        {
+            _prevAlt = fix.AltitudeMeters;
+            _prevSpeedMph = speed;
+            _asap = false;
+            _identityDirty = false;
+        }
+
+        Reported?.Invoke(this, EventArgs.Empty);
     }
 
     private bool ShouldSendMesh(AppConfig config)

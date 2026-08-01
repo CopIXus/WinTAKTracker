@@ -38,8 +38,9 @@ public sealed class SessionIdentityWatcher : IDisposable
 
             if (!loggedOn)
             {
-                _host.SetActiveSession(null, null);
-                _log.Info("Session", "No interactive user — CoT identity reverted to computer callsign.");
+                _host.SetActiveSession(null, null); // also clears companion GPS via TrackingHost
+                _host.Gps.ClearExternalFix();
+                _log.Info("Session", "No interactive user — CoT identity reverted to computer callsign; companion GPS cleared.");
             }
             else
             {

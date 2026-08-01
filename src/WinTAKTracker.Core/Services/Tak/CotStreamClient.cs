@@ -31,6 +31,7 @@ public sealed class CotStreamClient : IDisposable
     private Stream? _stream;
     private CancellationTokenSource? _cts;
     private Task? _readLoop;
+    private X509Certificate2Collection? _clientCerts;
     private int _backoffSeconds = 2;
     private int _consecutiveFailures;
     private string? _lastLoggedFailureKey;
@@ -53,6 +54,9 @@ public sealed class CotStreamClient : IDisposable
     public TakConnectionState State { get; private set; } = TakConnectionState.Disconnected;
     public string? LastErrorCode { get; private set; }
     public DateTimeOffset? LastSendUtc { get; private set; }
+
+    /// <summary>When false (default), reject TLS if trust-store validation fails. When true, SoftCert soft-accept.</summary>
+    public bool AllowInsecureTlsSoftAccept { get; set; }
 
     /// <summary>True when auto-reconnect stopped to avoid fail2ban / hammering — user can retry Connect.</summary>
     public bool AutoReconnectSuspended { get; private set; }
@@ -107,10 +111,12 @@ public sealed class CotStreamClient : IDisposable
                     var (certs, loadError) = LoadClientCerts(profile);
                     if (certs.Count == 0)
                     {
+                        DisposeClientCerts(certs);
                         LastErrorCode = loadError ?? "No client certificate — enroll first";
                         throw new InvalidOperationException(LastErrorCode);
                     }
 
+                    _clientCerts = certs;
                     await ssl.AuthenticateAsClientAsync(new SslClientAuthenticationOptions
                     {
                         TargetHost = profile.Host,
@@ -382,12 +388,13 @@ public sealed class CotStreamClient : IDisposable
     {
         if (sslPolicyErrors == SslPolicyErrors.None) return true;
 
-        // Accept when we have a configured trust store, or self-signed lab servers.
+        // Accept when configured trust store validates the chain.
         if (!string.IsNullOrWhiteSpace(Profile.TrustStoreFileName))
         {
             var trustPath = Path.Combine(_store.CertsDirectory, Profile.TrustStoreFileName);
             if (File.Exists(trustPath) && certificate is not null)
             {
+                X509Certificate2? leaf = null;
                 try
                 {
                     var pwd = Profile.TrustPasswordBlobName is null
@@ -399,18 +406,31 @@ public sealed class CotStreamClient : IDisposable
                         chain.ChainPolicy.TrustMode = X509ChainTrustMode.CustomRootTrust;
                         chain.ChainPolicy.CustomTrustStore.Add(trust);
                         chain.ChainPolicy.RevocationMode = X509RevocationMode.NoCheck;
-                        if (chain.Build(new X509Certificate2(certificate)))
+                        leaf = new X509Certificate2(certificate);
+                        if (chain.Build(leaf))
                             return true;
                     }
                 }
                 catch
                 {
-                    // fall through to permissive accept for SoftCert-style deployments
+                    // fall through
+                }
+                finally
+                {
+                    leaf?.Dispose();
                 }
             }
         }
 
-        // SoftCert / private CAs often fail default chain building — allow (rate-limited).
+        if (!AllowInsecureTlsSoftAccept)
+        {
+            if (ShouldLog($"{Profile.Id}|tls-reject|{sslPolicyErrors}"))
+                _log.Warn("TAK",
+                    $"TLS rejected ({sslPolicyErrors}) profile={ProfileLabel(Profile)} — soft-accept disabled.");
+            return false;
+        }
+
+        // SoftCert / private CAs often fail default chain building — allow when opted in (rate-limited).
         if (ShouldLog($"{Profile.Id}|soft-accept|{sslPolicyErrors}"))
             _log.Warn("TAK", $"TLS soft-accept ({sslPolicyErrors}) profile={ProfileLabel(Profile)}.");
         return true;
@@ -464,9 +484,21 @@ public sealed class CotStreamClient : IDisposable
             _tcp = null;
         }
 
+        DisposeClientCerts(_clientCerts);
+        _clientCerts = null;
+
         _cts?.Dispose();
         _cts = null;
         _readLoop = null;
+    }
+
+    private static void DisposeClientCerts(X509Certificate2Collection? certs)
+    {
+        if (certs is null) return;
+        foreach (var c in certs)
+        {
+            try { c.Dispose(); } catch { /* ignore */ }
+        }
     }
 
     private void SetState(TakConnectionState state)

@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Settings: **Apply callsign/team from Portal** toggle (`ApplyRemoteIdentityFromPortal`, default on); Diagnostics **TLS soft-accept** opt-in (`AllowInsecureTlsSoftAccept`, default off)
+- IPC `UnlockSettings` / `LockSettings`; settings lock passwords hashed (SHA-256 + salt) with plaintext migration on unlock
+- Corrupt `config.json` quarantine (`config.json.corrupt-<ticks>`) via `LoadDetailed` — no silent overwrite on load
+- Uninstall: remove HKCU Run value; optional prompt to delete `%ProgramData%\WinTAKTracker` (default No)
 - README Status dashboard screenshot (illustrative Plymouth Rock sample) and architecture mermaid diagram
 - Companion apps section with platform icons; **TAK.gov** link to https://tak.gov
 - Portal / OpenTAK remote identity: device-profile sync + preference/SoftCert apply with **`.wtt`** callsign suffix and team color ([docs/remote-config.md](docs/remote-config.md))
@@ -27,11 +31,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **No double tracker** — when the Windows Service is installed, tray retries IPC attach (backoff) and never falls back to in-process `Core.StartAsync` if the service is unreachable (companion-only)
+- **Safe config load** — parse failures quarantine the file; TrackingHost ctor does not Save over corrupt `config.json`
+- **IPC hardening** — mutating methods require an interactive pipe client; settings lock gates `SetConfig`/identity; one active companion SID for GPS/session; clear companion GPS on logoff
+- **SetConfig ≠ full reload** — connection reload only when servers/GPS/mesh-relevant fields change
+- **Service mode GPS** — skip WinRT Geolocator under LocalSystem (NMEA + companion + optional IP only)
+- **Async tray IPC** — `SaveConfigAsync` / pause / tray refresh avoid UI-thread `.GetResult()` where practical
+- **Reporting** — serialize CoT sends with timeout; dispose client certs after TLS sessions
 - **fail2ban-safe reconnect** — stop auto-reconnect after a few TLS/cert (or limited network) failures so infra-TAK’s TAK Server jail (~20 TLS fails / 5 min) does not ban the client IP; show a detailed Error on the server card with fix steps ([docs/fail2ban.md](docs/fail2ban.md))
-- **Update now** for Setup/service installs: download elevated `WinTAKTracker-Setup.exe` (UAC) instead of a silent portable EXE replace that could not overwrite Program Files / the running service; only quit after the installer or replace helper is armed; show errors if apply fails
+- **Update now** for Setup/service installs: download elevated `WinTAKTracker-Setup.exe` (UAC) instead of a silent portable EXE replace that could not overwrite Program Files / the running service; only quit after the installer or replace helper is armed; show errors if apply fails; auto-update balloon says Setup started (not install success)
 
 ### Changed
 
+- Machine store ACL: Authenticated Users Modify on root/logs/updates; **secrets/certs SYSTEM+Admins only** ([SECURITY.md](SECURITY.md), [docs/windows-service.md](docs/windows-service.md))
+- New-config defaults: Mesh `OnlyWhenDisconnected`; `EnableNetworkFallback = false`; reporting min intervals ≥ **5s**; TLS soft-accept off
+- Attach path: prefer service-authoritative `GetConfig`; `SetConfig` only when migration changed something (single reload max)
 - Relicensed to **WinTAKTracker Free Application License 1.0** (source available, free to use; no selling the app; paid install/support OK). Not OSI Open Source. Prior Apache-2.0 releases remain under Apache
 - Removed CloudTAK URL field and tray “Open CloudTAK” (use Companion apps for map clients)
 - Start with Windows always registers the tray Run key (portable + service companion); best-effort service start on tray launch; per-user callsign prompt on each tray start when unset

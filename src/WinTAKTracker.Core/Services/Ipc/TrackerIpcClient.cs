@@ -99,6 +99,12 @@ public sealed class TrackerIpcClient : IAsyncDisposable
     public Task<IpcResponse> ClearGpsFixAsync(CancellationToken ct = default) =>
         CallAsync(IpcMethod.ClearGpsFix, null, ct);
 
+    public Task<IpcResponse> UnlockSettingsAsync(string password, CancellationToken ct = default) =>
+        CallAsync(IpcMethod.UnlockSettings, new UnlockSettingsDto { Password = password }, ct);
+
+    public Task<IpcResponse> LockSettingsAsync(CancellationToken ct = default) =>
+        CallAsync(IpcMethod.LockSettings, null, ct);
+
     public async Task NotifyCurrentUserSessionAsync(CancellationToken ct = default)
     {
         await SetActiveSessionAsync(new SessionUpdateDto

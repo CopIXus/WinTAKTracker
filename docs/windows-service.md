@@ -118,7 +118,14 @@ dotnet run --project src/WinTAKTracker
 | Portable tray | `%LocalAppData%\WinTAKTracker\` | CurrentUser |
 | Service | `%ProgramData%\WinTAKTracker\` | LocalMachine |
 
-**Permissions:** Setup and the service grant **Builtin Users Modify** on `%ProgramData%\WinTAKTracker` so the tray (runs `asInvoker`, not as admin) can save settings. If you see *Access to the path is denied* after an older install, elevated once: `icacls "%ProgramData%\WinTAKTracker" /grant "*S-1-5-32-545:(OI)(CI)M" /T`, or reinstall Setup.
+**Permissions (hardened):** Setup and the service apply:
+
+| Path | ACL |
+|------|-----|
+| `%ProgramData%\WinTAKTracker\` (root), `logs\`, `updates\` | SYSTEM + Administrators Full; Authenticated Users **Modify** |
+| `secrets\`, `certs\` | SYSTEM + Administrators Full **only** |
+
+The tray (asInvoker) writes `config.json` / logs at the root; prefer mutating secret blobs via named-pipe IPC when the service is running. If you see *Access to the path is denied* after an older install, reinstall Setup or re-run `scripts\install-service.ps1 -RegisterOnly`.
 
 **Migration:** On first service start, if ProgramData has no `config.json` but LocalAppData does, the service copies config/certs and attempts to re-protect secrets. CurrentUser DPAPI blobs **cannot** be decrypted as LocalSystem — re-enter tokens/cert passwords after install if migration could not re-protect them. Prefer running `install-service.ps1 -MigrateUserConfig` while logged on as the enrolled user, then re-save secrets from Settings (writes LocalMachine blobs via the service).
 
@@ -140,7 +147,11 @@ dotnet run --project src/WinTAKTracker
 
 ## IPC control plane
 
-Named pipe **`WinTAKTracker.Control`** (ACL: Users read/write, Administrators + SYSTEM full). JSON line protocol methods include: `Ping`, `GetStatus`, `GetConfig`, `SetConfig`, `Pause`, `Resume`, `ReloadConnections`, `SetComputerIdentity`, `SetUserIdentity`, `SetActiveSession`, `DismissUserSetupPrompt`, `PushGpsFix`, `ClearGpsFix`.
+Named pipe **`WinTAKTracker.Control`** (ACL: Authenticated Users read/write, Administrators + SYSTEM full). Mutating methods require an interactive Windows user (impersonation). When a settings lock password is configured and the service session is locked, `SetConfig` / identity mutators are rejected until `UnlockSettings`. One active companion SID owns `PushGpsFix` / `SetActiveSession`.
+
+JSON line protocol methods include: `Ping`, `GetStatus`, `GetConfig`, `SetConfig`, `Pause`, `Resume`, `ReloadConnections`, `SetComputerIdentity`, `SetUserIdentity`, `SetActiveSession`, `DismissUserSetupPrompt`, `PushGpsFix`, `ClearGpsFix`, `UnlockSettings`, `LockSettings`.
+
+If the service is installed but unreachable, the tray stays **companion-only** (UI + timers) and **does not** start a second in-process tracker.
 
 ---
 

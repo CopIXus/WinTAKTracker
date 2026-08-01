@@ -33,4 +33,4 @@ dotnet publish src/WinTAKTracker -c Release -r win-x64 --self-contained true `
 
 ## License
 
-Contributions are accepted under the Apache License 2.0 (see `LICENSE`).
+Contributions are accepted under the **WinTAKTracker Free Application License 1.0** (see `LICENSE`) — source-available, free to use; no selling the app; paid services OK. This is not an OSI Open Source license.

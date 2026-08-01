@@ -27,4 +27,6 @@ Source: [github.com/CopIXus/WinTAKTracker](https://github.com/CopIXus/WinTAKTrac
 
 ## License
 
-Apache License 2.0. TAK / ATAK / WinTAK / CloudTAK / TAK Aware are trademarks of their respective owners. WinTAKTracker is an independent project, not an official TAK Product Center app.
+**WinTAKTracker Free Application License 1.0** — source available, free to use; no charging for the software; paid install/support services OK. Not an OSI Open Source license. See [LICENSE](https://github.com/CopIXus/WinTAKTracker/blob/main/LICENSE). Prior Apache-2.0 releases remain under Apache. Not legal advice.
+
+TAK / ATAK / WinTAK / CloudTAK / TAK Aware are trademarks of their respective owners. WinTAKTracker is an independent project, not an official TAK Product Center app.

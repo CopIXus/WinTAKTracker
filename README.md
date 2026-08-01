@@ -187,4 +187,6 @@ CI (`.github/workflows/release.yml`) publishes **`WinTAKTracker-Setup.exe`** (pr
 
 ## License
 
-Apache License 2.0 — see [`LICENSE`](LICENSE) and [`NOTICE`](NOTICE).
+**[WinTAKTracker Free Application License 1.0](LICENSE)** — source available, free to use; **no charging for the software**; paid install / training / support services OK. This is **not** an OSI Open Source license (those generally allow selling the app). See [`LICENSE`](LICENSE) and [`NOTICE`](NOTICE). Not legal advice — consult counsel for your situation.
+
+Prior Apache-2.0 releases remain under Apache; new code from this change forward uses the Free Application License.

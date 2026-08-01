@@ -1710,7 +1710,9 @@ public partial class SettingsWindow : Window
             "TAK / ATAK / WinTAK / CloudTAK / TAK Aware are trademarks of their respective owners.\n" +
             "Map tiles: © OpenStreetMap contributors.\n" +
             "Network location: ipwho.is (approximate IP geolocation).\n" +
-            "License: see LICENSE in the repository.\n" +
+            "License: WinTAKTracker Free Application License 1.0\n" +
+            "(source available, free to use; no charging for the software).\n" +
+            "See LICENSE in the repository.\n" +
             "Updates: github.com/CopIXus/WinTAKTracker"));
         return panel;
     }

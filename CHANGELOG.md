@@ -27,6 +27,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Relicensed to **WinTAKTracker Free Application License 1.0** (source available, free to use; no selling the app; paid install/support OK). Not OSI Open Source. Prior Apache-2.0 releases remain under Apache
 - Removed CloudTAK URL field and tray “Open CloudTAK” (use Companion apps for map clients)
 - Start with Windows always registers the tray Run key (portable + service companion); best-effort service start on tray launch; per-user callsign prompt on each tray start when unset
 - Tray attaches to the service when present (no second in-process tracker); portable in-process mode remains when the service is absent

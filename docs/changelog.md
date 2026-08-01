@@ -24,6 +24,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Relicensed to **WinTAKTracker Free Application License 1.0** (source available; no selling the app; paid services OK). Prior Apache releases unchanged
 - Removed CloudTAK URL settings / tray action; Companion apps section replaces “View the map”
 - Tray attaches to service when present; portable in-process mode when absent
 - Prefer Windows Location (Wi‑Fi/OS) over IP geolocation; delayed IP fallback; Status labels distinguish Wi‑Fi vs Network IP

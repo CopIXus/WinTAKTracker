@@ -1191,8 +1191,34 @@ public partial class SettingsWindow : Window
         _host.Config.UserIdentities.TryGetValue(sid ?? "", out var user);
 
         panel.Children.Add(Blurb(
-            "Computer callsign is used when nobody is logged on (Windows Service / logoff). " +
-            "Your callsign is used while you are logged in. Defaults for computer callsign: this PC’s Windows name."));
+            "Your callsign is used while you are logged in. After logoff, the service keeps the last user’s callsign by default " +
+            "(see option below). Computer callsign is the bootstrap identity before anyone sets a user callsign, " +
+            "and when “On logoff, use computer callsign” is enabled. Default computer callsign: this PC’s Windows name."));
+
+        panel.Children.Add(SectionHeader("After logoff"));
+        var revertOnLogoff = new CheckBox
+        {
+            Content = "On logoff, use computer callsign",
+            IsChecked = _host.Config.RevertToComputerCallsignOnLogoff,
+            IsEnabled = edit,
+            Margin = new Thickness(0, 4, 0, 0),
+        };
+        panel.Children.Add(revertOnLogoff);
+        panel.Children.Add(Blurb(
+            "Unchecked (default): after Windows logoff, tracking keeps the last logged-in user’s callsign. " +
+            "Checked: CoT falls back to the computer callsign when nobody is logged on."));
+        revertOnLogoff.Checked += (_, _) =>
+        {
+            if (!CanEdit) return;
+            _host.Config.RevertToComputerCallsignOnLogoff = true;
+            Persist();
+        };
+        revertOnLogoff.Unchecked += (_, _) =>
+        {
+            if (!CanEdit) return;
+            _host.Config.RevertToComputerCallsignOnLogoff = false;
+            Persist();
+        };
 
         panel.Children.Add(SectionHeader("Computer callsign"));
         var computerCallsign = new TextBox { Text = computer.GetEffectiveCallsign(), IsEnabled = edit };
@@ -2027,7 +2053,7 @@ public partial class SettingsWindow : Window
         panel.Children.Add(Blurb(
             "Independent Windows PLI tracker. Not an official TAK Product Center application.\n\n" +
             "TAK / ATAK / WinTAK / CloudTAK / TAK Aware are trademarks of their respective owners.\n" +
-            "Map tiles: © OpenStreetMap contributors.\n" +
+            "Map tiles: © OpenStreetMap contributors; dark preview © CARTO.\n" +
             "Network location: ipwho.is (approximate IP geolocation).\n" +
             "License: WinTAKTracker Free Application License 1.0\n" +
             "(source available, free to use; no charging for the software).\n" +

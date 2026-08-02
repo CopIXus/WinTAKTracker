@@ -14,8 +14,14 @@ public sealed class ThemeManager : IDisposable
 
     public bool IsLightTheme => _isLight;
 
+    /// <summary>Raised after Light/Dark resource dictionaries are applied.</summary>
+    public event EventHandler? ThemeChanged;
+
+    public static ThemeManager? Current { get; private set; }
+
     public void Start()
     {
+        Current = this;
         ApplySystemTheme();
         HookWindowLoaded();
         _uiSettings.ColorValuesChanged += OnColorValuesChanged;
@@ -26,6 +32,8 @@ public sealed class ThemeManager : IDisposable
     {
         if (_disposed) return;
         _disposed = true;
+        if (ReferenceEquals(Current, this))
+            Current = null;
         _uiSettings.ColorValuesChanged -= OnColorValuesChanged;
         SystemEvents.UserPreferenceChanged -= OnUserPreferenceChanged;
     }
@@ -86,6 +94,7 @@ public sealed class ThemeManager : IDisposable
         // Keep colors before AppTheme so DynamicResource resolves.
         app.Resources.MergedDictionaries.Insert(0, colors);
         WindowChromeHelper.ApplyToAllWindows(dark: !light);
+        ThemeChanged?.Invoke(this, EventArgs.Empty);
     }
 
     private static ResourceDictionary? FindColorsDictionary()

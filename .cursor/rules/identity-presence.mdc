@@ -10,8 +10,9 @@ WinTAKTracker is tracking-only. Map clients (CloudTAK / ATAK / WinTAK) show PLI 
 ## Callsign sources
 
 1. **Per-user callsign** (`userIdentities[sid]`) — when an interactive tray session is bound; this is what operators set under Identity → “My callsign”.
-2. **Computer callsign** (`computerIdentity`) — when logged off / no user session (service headless). Default = Windows computer name.
-3. Never put a **bare hostname** in CoT `remarks` (some Portal UIs mis-read that as the callsign). Optional remarks must be prefixed (`Computer: {name}`). Default `IncludeComputerNameInRemarks` is **off**.
+2. **Sticky last user** (default after logoff) — `lastInteractiveUserSid` keeps that user’s callsign while the service runs headless. Opt into computer fallback with Identity → “On logoff, use computer callsign” (`revertToComputerCallsignOnLogoff`).
+3. **Computer callsign** (`computerIdentity`) — bootstrap before any user callsign exists, and when computer-on-logoff is enabled. Default = Windows computer name.
+4. Never put a **bare hostname** in CoT `remarks` (some Portal UIs mis-read that as the callsign). Optional remarks must be prefixed (`Computer: {name}`). Default `IncludeComputerNameInRemarks` is **off**.
 
 ## Presence announce (must keep working)
 

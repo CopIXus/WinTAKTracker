@@ -12,7 +12,7 @@ public sealed class ActiveIdentity
     public required string CotType { get; init; }
     /// <summary>Optional phone for ATAK Call; empty means omit from CoT contact.</summary>
     public string Phone { get; init; } = "";
-    /// <summary>Computer | User</summary>
+    /// <summary>Computer | User | LastUser</summary>
     public required string Source { get; init; }
     public string? UserSid { get; init; }
     public string? UserName { get; init; }
@@ -46,36 +46,25 @@ public static class IdentityResolver
     }
 
     /// <summary>
-    /// Resolve active CoT identity. When <paramref name="activeUserSid"/> is null/empty
-    /// (logged off / Session 0 with no interactive user), use computer identity.
+    /// Resolve active CoT identity.
+    /// Preference: active user with callsign → sticky last user (default after logoff) → computer.
     /// </summary>
     public static ActiveIdentity Resolve(AppConfig config, string? activeUserSid = null)
     {
         config.EnsureIdentityDefaults();
 
+        if (TryResolveUser(config, activeUserSid, source: "User") is { } active)
+            return active;
+
+        // Default after logoff / service headless: keep last logged-in user callsign.
+        if (!config.RevertToComputerCallsignOnLogoff &&
+            TryResolveUser(config, config.LastInteractiveUserSid, source: "LastUser") is { } sticky)
+            return sticky;
+
         var computer = config.ComputerIdentity;
-        var computerCallsign = computer.GetEffectiveCallsign();
-
-        if (!string.IsNullOrWhiteSpace(activeUserSid) &&
-            config.UserIdentities.TryGetValue(activeUserSid, out var user) &&
-            user.HasCallsign)
-        {
-            return new ActiveIdentity
-            {
-                Callsign = user.Callsign.Trim(),
-                Team = string.IsNullOrWhiteSpace(user.Team) ? computer.Team : user.Team,
-                Role = string.IsNullOrWhiteSpace(user.Role) ? computer.Role : user.Role,
-                CotType = string.IsNullOrWhiteSpace(user.CotType) ? computer.CotType : user.CotType,
-                Phone = string.IsNullOrWhiteSpace(user.Phone) ? "" : user.Phone.Trim(),
-                Source = "User",
-                UserSid = activeUserSid,
-                UserName = user.UserName,
-            };
-        }
-
         return new ActiveIdentity
         {
-            Callsign = computerCallsign,
+            Callsign = computer.GetEffectiveCallsign(),
             Team = computer.Team,
             Role = computer.Role,
             CotType = computer.CotType,
@@ -83,6 +72,27 @@ public static class IdentityResolver
             Source = "Computer",
             UserSid = activeUserSid,
             UserName = null,
+        };
+    }
+
+    private static ActiveIdentity? TryResolveUser(AppConfig config, string? userSid, string source)
+    {
+        if (string.IsNullOrWhiteSpace(userSid) ||
+            !config.UserIdentities.TryGetValue(userSid, out var user) ||
+            !user.HasCallsign)
+            return null;
+
+        var computer = config.ComputerIdentity;
+        return new ActiveIdentity
+        {
+            Callsign = user.Callsign.Trim(),
+            Team = string.IsNullOrWhiteSpace(user.Team) ? computer.Team : user.Team,
+            Role = string.IsNullOrWhiteSpace(user.Role) ? computer.Role : user.Role,
+            CotType = string.IsNullOrWhiteSpace(user.CotType) ? computer.CotType : user.CotType,
+            Phone = string.IsNullOrWhiteSpace(user.Phone) ? "" : user.Phone.Trim(),
+            Source = source,
+            UserSid = userSid,
+            UserName = user.UserName,
         };
     }
 

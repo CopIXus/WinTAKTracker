@@ -24,7 +24,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- Status dashboard UI: sidebar icons, numbered tiles with circular icons, mode banner, icon action buttons
+- **Identity after logoff** — default keeps the last logged-in user’s callsign; Identity setting “On logoff, use computer callsign” restores the old computer-name fallback ([Windows Service](windows-service.md))
+- Status dashboard UI: sidebar icons, status tiles with circular icons, mode banner, icon action buttons
 - FEATURES.md synced to shipping capabilities
 
 ### Fixed

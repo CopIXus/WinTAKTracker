@@ -14,10 +14,10 @@
 
 ### Identity rules
 
-1. **Computer callsign** (`computerIdentity`) — used when nobody is logged on / no user identity is active. Default = `Environment.MachineName` until set. Optional computer team/role/CoT type.
+1. **Computer callsign** (`computerIdentity`) — bootstrap identity before any user callsign exists, and when Identity → “On logoff, use computer callsign” is enabled. Default = `Environment.MachineName` until set.
 2. **Per-user callsign** (`userIdentities[sid]`) — when a Windows user is logged in and has a saved callsign, CoT uses that user’s callsign/team/role.
-3. **First login prompt** — if the current Windows user has no saved callsign, the tray asks once. Skip → fall back to computer callsign (`setupPromptDismissed`).
-4. **On logoff** — service reverts CoT identity to computer callsign (session watcher + tray clears session over IPC).
+3. **First login prompt** — if the current Windows user has no saved callsign, the tray asks once. Skip → keep using sticky last-user / computer (`setupPromptDismissed`).
+4. **On logoff (default)** — companion GPS clears, but CoT keeps the **last logged-in user’s callsign** (`lastInteractiveUserSid`). Opt in to computer fallback with `revertToComputerCallsignOnLogoff`.
 
 Legacy `identity` in `config.json` is mirrored from `computerIdentity` for compatibility.
 

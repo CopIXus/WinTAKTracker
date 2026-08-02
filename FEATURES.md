@@ -13,7 +13,8 @@ Status legend: **Shipping** (in the current public build), **Planned** (future).
 | Manual WinTAK-style `.p12` + CA import (TLS or cleartext TCP) | Shipping |
 | Webcam QR scan with paste-URL fallback | Shipping |
 | Manual identity edit — computer callsign + per-user callsign/team/role/phone | Shipping |
-| First-login callsign prompt (skip → computer callsign) | Shipping |
+| Sticky last-user callsign after logoff (opt-in revert to computer callsign) | Shipping |
+| First-login callsign prompt (skip → sticky/computer until set in Settings) | Shipping |
 | DPAPI-protected config (LocalAppData CurrentUser; ProgramData LocalMachine for service) | Shipping |
 | Windows Service always-on host + tray IPC companion | Shipping |
 | One-click Setup (`WinTAKTracker-Setup.exe`) — service + tray, elevated install | Shipping |

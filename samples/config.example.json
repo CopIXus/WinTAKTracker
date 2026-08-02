@@ -26,6 +26,8 @@
     "phone": "+15555550100"
   },
   "applyRemoteIdentityFromPortal": true,
+  "revertToComputerCallsignOnLogoff": false,
+  "lastInteractiveUserSid": "S-1-5-21-EXAMPLE-1001",
   "gps": {
     "sourcePriority": "NmeaThenWindows",
     "comPort": null,

@@ -51,12 +51,41 @@ flowchart LR
 
 In **Setup** installs, the service owns tracking after logoff; the tray attaches over IPC and can bridge Windows Location from the interactive session. In portable mode, the tray runs tracking in-process.
 
+## Callsign identity
+
+![Callsign identity flow: computer name default, first-login prompt, sticky last user after logoff, optional computer fallback](docs/images/callsign-identity-flow.svg)
+
+| Situation | CoT callsign |
+|-----------|----------------|
+| Fresh install / nobody has set a user callsign | **Computer name** (or customized computer callsign) |
+| Windows user logged in with “My callsign” set | **That user’s callsign** |
+| User logs off, service still running (**default**) | **Last logged-in user’s callsign** (sticky) |
+| Same, but Identity → **On logoff, use computer callsign** is checked | **Computer callsign** |
+| New / unset user opens the tray | **Prompt** to set callsign (Skip dismisses until they set it in Settings) |
+
+```mermaid
+flowchart TD
+  install[Fresh install] --> computer[Computer callsign = PC name]
+  trayStart[Tray start / new Windows user] --> need{User callsign set?}
+  need -->|No| prompt[Prompt Callsign setup]
+  prompt -->|Save| userCs[Use user callsign]
+  prompt -->|Skip| stickOrPc[Sticky last user or computer]
+  need -->|Yes| userCs
+  userCs --> logoff[Windows logoff]
+  logoff --> setting{On logoff use computer callsign?}
+  setting -->|No default| sticky[Keep last user callsign]
+  setting -->|Yes| computer
+  stickOrPc --> logoff
+```
+
+Details: [docs/windows-service.md](docs/windows-service.md#identity-rules).
+
 ## Features
 
 - **Multi-server TAK** — enroll several profiles, enable/disable per server, TLS (`ssl`) or cleartext TCP, auto-reconnect
 - **Mesh SA** — ATAK-default UDP multicast (`239.2.3.1:6969`), always-on or only when disconnected
 - **GPS** — USB NMEA serial, Windows Location, last-fix hold, and **network/IP geolocation** fallback (approximate)
-- **Identity** — **computer callsign** (default: Windows computer name; used when logged off) and **per-user callsign**/team/role when logged in
+- **Identity** — per-user callsign while logged in; **sticky last-user callsign after logoff** by default (optional Identity setting reverts to computer name); computer callsign defaults to the Windows PC name
 - **Remote config** — Portal / OpenTAK device-profile prefs and preference URLs apply callsign (with **`.wtt`** suffix) and team color ([docs/remote-config.md](docs/remote-config.md))
 - **Windows Service** (optional) — always-on PLI from Session 0; tray attaches via named-pipe IPC
 - **Enrollment** — paste Portal / OpenTAK Tracker–style URLs, SoftCert ZIP, manual `.p12`, webcam QR scan
@@ -101,7 +130,7 @@ Every push to `main` publishes a Release with version `0.1.<run_number>` (git ta
      `tak://com.atakmap.app/enroll?host=tak.example.com&username=USER&token=TOKEN`
    - Enroll tokens are short-lived (~15 minutes) — paste and apply promptly.
    - Or **Scan QR…**, **Import SoftCert ZIP…**, or **Manual .p12 import…**
-2. Confirm **Identity** — computer callsign (defaults to this PC’s Windows name) and your per-user callsign (prompted on first login if unset). Remote Portal prefs append **`.wtt`** to callsigns.
+2. Confirm **Identity** — set your per-user callsign when prompted (first login / new Windows user). Computer callsign defaults to this PC’s Windows name. After logoff the service keeps the last user’s callsign unless you enable **On logoff, use computer callsign**. Remote Portal prefs append **`.wtt`** to callsigns.
 3. Configure **GPS** (COM port / baud, Windows Location permission, optional network fallback).
 4. Open a companion map app from **Settings → Companion apps** (ATAK / iTAK / WinTAK / [TAK.gov](https://tak.gov)) to see the COP.
 5. Leave the app running in the tray; use **Pause tracking** to mute outbound CoT without quitting.

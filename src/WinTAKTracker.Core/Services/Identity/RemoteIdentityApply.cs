@@ -121,6 +121,8 @@ public static class RemoteIdentityApply
             if (normalizedRole is not null)
                 user.Role = normalizedRole;
             user.SetupPromptDismissed = false;
+            if (user.HasCallsign)
+                config.LastInteractiveUserSid = activeUserSid;
 
             config.EnsureIdentityDefaults();
             return new Result

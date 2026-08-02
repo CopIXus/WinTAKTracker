@@ -1,0 +1,83 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="920" height="560" viewBox="0 0 920 560" role="img" aria-labelledby="title desc">
+  <title id="title">WinTAKTracker callsign identity flow</title>
+  <desc id="desc">Computer name by default; user callsign when logged in; sticky last user after logoff unless Identity setting reverts to computer callsign; tray prompts for callsign setup.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#0f1613"/>
+      <stop offset="100%" stop-color="#1a2420"/>
+    </linearGradient>
+    <marker id="arrow" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+      <path d="M0,0 L6,3 L0,6 Z" fill="#8aa396"/>
+    </marker>
+    <style>
+      .title { font: 700 20px Segoe UI, system-ui, sans-serif; fill: #e8f0eb; }
+      .sub { font: 400 12px Segoe UI, system-ui, sans-serif; fill: #9aada3; }
+      .box { fill: #24302b; stroke: #3d4f47; stroke-width: 1.5; rx: 10; }
+      .boxAccent { fill: #1e3a32; stroke: #3d9b78; stroke-width: 1.5; rx: 10; }
+      .boxWarn { fill: #2a2620; stroke: #a67c3a; stroke-width: 1.5; rx: 10; }
+      .boxMuted { fill: #1c2421; stroke: #4a5a52; stroke-width: 1.5; rx: 10; }
+      .label { font: 600 13px Segoe UI, system-ui, sans-serif; fill: #e8f0eb; }
+      .small { font: 400 11px Segoe UI, system-ui, sans-serif; fill: #a8b8b0; }
+      .chip { font: 600 10px Segoe UI, system-ui, sans-serif; fill: #7dcea0; }
+      .edge { stroke: #8aa396; stroke-width: 1.5; fill: none; marker-end: url(#arrow); }
+      .note { font: 400 11px Segoe UI, system-ui, sans-serif; fill: #c5d4cc; }
+    </style>
+  </defs>
+
+  <rect width="920" height="560" fill="url(#bg)" rx="16"/>
+  <text x="32" y="40" class="title">Callsign identity</text>
+  <text x="32" y="62" class="sub">Defaults · first-login prompt · sticky after logoff · optional computer fallback</text>
+
+  <!-- Install -->
+  <rect x="32" y="90" width="200" height="70" class="boxMuted"/>
+  <text x="48" y="118" class="label">Fresh install</text>
+  <text x="48" y="138" class="small">No user callsign yet</text>
+  <text x="48" y="156" class="chip">DEFAULT ’ computer name</text>
+
+  <!-- Prompt -->
+  <rect x="280" y="90" width="220" height="70" class="boxWarn"/>
+  <text x="296" y="118" class="label">Tray starts / new user</text>
+  <text x="296" y="138" class="small">No callsign for this Windows user</text>
+  <text x="296" y="156" class="chip">PROMPT to set My callsign</text>
+
+  <!-- Logged in -->
+  <rect x="548" y="90" width="340" height="70" class="boxAccent"/>
+  <text x="564" y="118" class="label">User logged in + callsign set</text>
+  <text x="564" y="138" class="small">Tray binds session over IPC</text>
+  <text x="564" y="156" class="chip">CoT callsign = that users callsign</text>
+
+  <path class="edge" d="M232,125 H272"/>
+  <path class="edge" d="M500,125 H540"/>
+
+  <!-- Skip note -->
+  <rect x="280" y="180" width="220" height="48" class="box"/>
+  <text x="296" y="200" class="small">Skip / dismiss once</text>
+  <text x="296" y="216" class="small">Keep sticky / computer until set in Settings</text>
+  <path class="edge" d="M390,160 V180"/>
+
+  <!-- Logoff decision -->
+  <rect x="280" y="270" width="360" height="64" class="box"/>
+  <text x="296" y="296" class="label">Windows logoff (service still running)</text>
+  <text x="296" y="316" class="small">Companion GPS clears · identity follows Identity setting</text>
+  <path class="edge" d="M718,160 V302 H640"/>
+
+  <!-- Default sticky -->
+  <rect x="32" y="380" width="400" height="88" class="boxAccent"/>
+  <text x="48" y="408" class="label">Default (recommended)</text>
+  <text x="48" y="428" class="small">On logoff, use computer callsign = OFF</text>
+  <text x="48" y="448" class="chip">Keep last logged-in users callsign (sticky)</text>
+  <text x="48" y="466" class="small">Persists lastInteractiveUserSid across service headless</text>
+
+  <!-- Opt-in computer -->
+  <rect x="488" y="380" width="400" height="88" class="boxMuted"/>
+  <text x="504" y="408" class="label">Opt-in setting</text>
+  <text x="504" y="428" class="small">Identity ’ On logoff, use computer callsign</text>
+  <text x="504" y="448" class="chip">CoT falls back to computer callsign</text>
+  <text x="504" y="466" class="small">Same as Windows computer name until customized</text>
+
+  <path class="edge" d="M360,334 V380"/>
+  <path class="edge" d="M560,334 V380"/>
+
+  <text x="32" y="510" class="note">New user logs in ’ switch to their callsign if set; otherwise prompt again (unless they dismissed) while sticky last user may still be on the wire until they save one.</text>
+  <text x="32" y="532" class="sub">See docs/windows-service.md · Identity settings in the tray app</text>
+</svg>

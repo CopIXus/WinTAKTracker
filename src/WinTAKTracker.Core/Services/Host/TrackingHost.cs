@@ -216,6 +216,7 @@ public sealed class TrackingHost : IDisposable
 
     public void ReplaceConfig(AppConfig config, bool save = true)
     {
+        var previousCallsign = GetActiveIdentity().Callsign;
         Config = config;
         Config.EnsureIdentityDefaults();
         if (save)
@@ -227,6 +228,9 @@ public sealed class TrackingHost : IDisposable
         }
 
         Reporting.NotifyIdentityChanged();
+        var nextCallsign = GetActiveIdentity().Callsign;
+        if (!string.Equals(previousCallsign, nextCallsign, StringComparison.Ordinal))
+            _ = Reporting.AnnouncePresenceAsync();
     }
 
     public async Task ReloadConnectionsAsync()
@@ -241,6 +245,8 @@ public sealed class TrackingHost : IDisposable
 
     /// <summary>
     /// Bind or clear the active interactive companion. When cleared, companion GPS is dropped.
+    /// CoT identity after clear follows <see cref="AppConfig.RevertToComputerCallsignOnLogoff"/>
+    /// (default: sticky last user callsign).
     /// </summary>
     public void SetActiveSession(string? userSid, string? userName)
     {
@@ -253,16 +259,44 @@ public sealed class TrackingHost : IDisposable
         if (string.IsNullOrWhiteSpace(userSid) && !string.IsNullOrWhiteSpace(previous))
             Gps.ClearExternalFix();
 
+        RememberInteractiveUserIfNeeded(userSid, userName);
+
         var next = GetActiveIdentity();
         Reporting.NotifyIdentityChanged();
         // Re-bind TAK Server / Portal connection label when user callsign replaces machine name.
         if (!string.Equals(previousCallsign, next.Callsign, StringComparison.Ordinal))
             _ = Reporting.AnnouncePresenceAsync();
 
-        Log.Info("Identity", string.IsNullOrWhiteSpace(userSid)
-            ? "Active identity → computer callsign (logged off / no session)."
-            : $"Active session user SID set; identity source={next.Source} callsign={next.Callsign}.");
+        if (string.IsNullOrWhiteSpace(userSid))
+        {
+            Log.Info("Identity", Config.RevertToComputerCallsignOnLogoff
+                ? $"Active identity → computer callsign (logged off). callsign={next.Callsign}"
+                : $"Interactive session cleared; sticky identity source={next.Source} callsign={next.Callsign}.");
+        }
+        else
+        {
+            Log.Info("Identity",
+                $"Active session user SID set; identity source={next.Source} callsign={next.Callsign}.");
+        }
+
         StatusChanged?.Invoke(this, EventArgs.Empty);
+    }
+
+    private void RememberInteractiveUserIfNeeded(string? userSid, string? userName)
+    {
+        if (string.IsNullOrWhiteSpace(userSid) ||
+            !Config.UserIdentities.TryGetValue(userSid, out var user) ||
+            !user.HasCallsign)
+            return;
+
+        if (!string.IsNullOrWhiteSpace(userName))
+            user.UserName = userName;
+
+        if (string.Equals(Config.LastInteractiveUserSid, userSid, StringComparison.OrdinalIgnoreCase))
+            return;
+
+        Config.LastInteractiveUserSid = userSid;
+        SaveConfig();
     }
 
     private async Task AnnouncePresenceAfterConnectAsync(ServerProfile profile)
@@ -358,12 +392,20 @@ public sealed class TrackingHost : IDisposable
         user.CotType = string.IsNullOrWhiteSpace(cotType) ? "" : cotType.Trim();
         user.Phone = phone?.Trim() ?? "";
         user.SetupPromptDismissed = false;
+        if (user.HasCallsign)
+            Config.LastInteractiveUserSid = userSid;
         SaveConfig();
 
         if (string.Equals(_activeUserSid, userSid, StringComparison.OrdinalIgnoreCase) ||
             _activeUserSid is null && !ServiceMode)
         {
             _activeUserSid ??= userSid;
+            Reporting.NotifyIdentityChanged();
+            _ = Reporting.AnnouncePresenceAsync();
+        }
+        else if (!Config.RevertToComputerCallsignOnLogoff &&
+                 string.Equals(Config.LastInteractiveUserSid, userSid, StringComparison.OrdinalIgnoreCase))
+        {
             Reporting.NotifyIdentityChanged();
             _ = Reporting.AnnouncePresenceAsync();
         }

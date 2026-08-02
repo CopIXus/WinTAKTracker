@@ -53,6 +53,18 @@ public sealed class AppConfig
     public bool ApplyRemoteIdentityFromPortal { get; set; } = true;
 
     /// <summary>
+    /// When true, CoT falls back to <see cref="ComputerIdentity"/> after interactive logoff.
+    /// Default false: keep the last logged-in user's callsign while the service keeps tracking.
+    /// </summary>
+    public bool RevertToComputerCallsignOnLogoff { get; set; }
+
+    /// <summary>
+    /// SID of the last interactive Windows user who had a saved callsign.
+    /// Used for sticky post-logoff identity when <see cref="RevertToComputerCallsignOnLogoff"/> is false.
+    /// </summary>
+    public string? LastInteractiveUserSid { get; set; }
+
+    /// <summary>
     /// Migrate v1 Identity → ComputerIdentity and ensure computer callsign default.
     /// </summary>
     public void EnsureIdentityDefaults()

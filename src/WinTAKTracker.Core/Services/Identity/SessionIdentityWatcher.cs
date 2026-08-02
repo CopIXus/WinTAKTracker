@@ -5,7 +5,8 @@ using WinTAKTracker.Services.Host;
 namespace WinTAKTracker.Services.Identity;
 
 /// <summary>
-/// Best-effort console session watch: when the interactive session goes away, revert to computer callsign.
+/// Best-effort console session watch: when the interactive session goes away, clear the companion
+/// session (GPS bridge). CoT identity then follows sticky last-user vs computer-on-logoff setting.
 /// Tray UI also pushes SetActiveSession over IPC on logon for a clearer SID.
 /// </summary>
 public sealed class SessionIdentityWatcher : IDisposable
@@ -38,9 +39,11 @@ public sealed class SessionIdentityWatcher : IDisposable
 
             if (!loggedOn)
             {
-                _host.SetActiveSession(null, null); // also clears companion GPS via TrackingHost
+                _host.SetActiveSession(null, null); // clears companion GPS; sticky vs computer via config
                 _host.Gps.ClearExternalFix();
-                _log.Info("Session", "No interactive user — CoT identity reverted to computer callsign; companion GPS cleared.");
+                _log.Info("Session", _host.Config.RevertToComputerCallsignOnLogoff
+                    ? "No interactive user — CoT identity → computer callsign; companion GPS cleared."
+                    : "No interactive user — companion GPS cleared; CoT keeps last user callsign (sticky).");
             }
             else
             {

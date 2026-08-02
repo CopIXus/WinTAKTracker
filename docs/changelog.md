@@ -22,6 +22,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Optional Authenticode signing in release CI when secrets are set; [Code signing](code-signing.md) for SmartScreen / Smart App Control
 - Status Mode badge (Windows Service vs Standalone); system light/dark theme
 
+### Changed
+
+- Status dashboard UI: sidebar icons, numbered tiles with circular icons, mode banner, icon action buttons
+- FEATURES.md synced to shipping capabilities
+
 ### Fixed
 
 - **Callsign vs computer name on Portal/Server** — wait for user session before first PLI; re-announce on callsign change; bare hostname remarks removed (optional `Computer: …`, default off)

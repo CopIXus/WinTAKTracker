@@ -7,6 +7,8 @@ using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using System.Windows.Threading;
+using WpfShape = System.Windows.Shapes.Shape;
+using WpfPath = System.Windows.Shapes.Path;
 using WinTAKTracker.Services;
 using WinTAKTracker.Services.Config;
 using WinTAKTracker.Services.Gps;
@@ -58,8 +60,127 @@ public partial class SettingsWindow : Window
 
         RefreshPauseButton();
         RefreshLockChrome();
+        DecorateSidebarNav();
         // SelectionChanged → ShowSection; do not call ShowSection again (re-parents map preview).
         SectionList.SelectedIndex = 0;
+    }
+
+    private void DecorateSidebarNav()
+    {
+        var map = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["Status"] = "IconStatus",
+            ["Servers"] = "IconServers",
+            ["Identity"] = "IconIdentity",
+            ["Gps"] = "IconGps",
+            ["Reporting"] = "IconReporting",
+            ["MeshSa"] = "IconMesh",
+            ["Companions"] = "IconCompanions",
+            ["Startup"] = "IconStartup",
+            ["Diagnostics"] = "IconDiagnostics",
+            ["Updates"] = "IconUpdates",
+            ["About"] = "IconAbout",
+        };
+
+        foreach (var item in SectionList.Items.OfType<ListBoxItem>())
+        {
+            if (item.Tag is not string tag || !map.TryGetValue(tag, out var iconKey))
+                continue;
+            var label = item.Content as string ?? tag;
+            var icon = CreateIconPath(iconKey, 16);
+            SetTheme(icon, WpfShape.StrokeProperty, "SidebarTextBrush");
+            var row = new StackPanel { Orientation = Orientation.Horizontal };
+            row.Children.Add(new Viewbox
+            {
+                Width = 16,
+                Height = 16,
+                Margin = new Thickness(0, 0, 10, 0),
+                VerticalAlignment = VerticalAlignment.Center,
+                Child = icon,
+            });
+            row.Children.Add(new TextBlock
+            {
+                Text = label,
+                VerticalAlignment = VerticalAlignment.Center,
+            });
+            item.Content = row;
+            item.ToolTip = label;
+        }
+    }
+
+    private static WpfPath CreateIconPath(string geometryKey, double thickness = 1.6)
+    {
+        var geo = Application.Current.TryFindResource(geometryKey) as Geometry
+                  ?? Geometry.Parse("M12,3 L12,21");
+        return new WpfPath
+        {
+            Data = geo,
+            StrokeThickness = thickness,
+            StrokeStartLineCap = PenLineCap.Round,
+            StrokeEndLineCap = PenLineCap.Round,
+            StrokeLineJoin = PenLineJoin.Round,
+            Stretch = Stretch.Uniform,
+            Width = 24,
+            Height = 24,
+        };
+    }
+
+    private Button IconBtn(string iconKey, string text, Action action, bool primary = false)
+    {
+        var icon = CreateIconPath(iconKey, 1.5);
+        SetTheme(icon, WpfShape.StrokeProperty, primary ? "OnAccentBrush" : "TextPrimaryBrush");
+        var content = new StackPanel { Orientation = Orientation.Horizontal };
+        content.Children.Add(new Viewbox
+        {
+            Width = 14,
+            Height = 14,
+            Margin = new Thickness(0, 0, 8, 0),
+            VerticalAlignment = VerticalAlignment.Center,
+            Child = icon,
+        });
+        content.Children.Add(new TextBlock
+        {
+            Text = text,
+            VerticalAlignment = VerticalAlignment.Center,
+        });
+        var b = new Button
+        {
+            Content = content,
+            Style = TryStyle(primary ? "PrimaryButton" : "SecondaryButton"),
+        };
+        b.Click += (_, _) => action();
+        return b;
+    }
+
+    private Button IconBtn(string iconKey, string text, Func<Task> action, bool primary = false)
+    {
+        var icon = CreateIconPath(iconKey, 1.5);
+        SetTheme(icon, WpfShape.StrokeProperty, primary ? "OnAccentBrush" : "TextPrimaryBrush");
+        var content = new StackPanel { Orientation = Orientation.Horizontal };
+        content.Children.Add(new Viewbox
+        {
+            Width = 14,
+            Height = 14,
+            Margin = new Thickness(0, 0, 8, 0),
+            VerticalAlignment = VerticalAlignment.Center,
+            Child = icon,
+        });
+        content.Children.Add(new TextBlock
+        {
+            Text = text,
+            VerticalAlignment = VerticalAlignment.Center,
+        });
+        var b = new Button
+        {
+            Content = content,
+            Style = TryStyle(primary ? "PrimaryButton" : "SecondaryButton"),
+        };
+        b.Click += async (_, _) =>
+        {
+            try { await action(); }
+            catch (Exception ex) { Msg(ex.Message, MessageBoxImage.Warning); }
+        };
+        return b;
     }
 
     private void OnLockStateChanged(object? sender, EventArgs e) =>
@@ -218,6 +339,20 @@ public partial class SettingsWindow : Window
     private readonly Dictionary<string, TextBlock> _statusTileValues = new(StringComparer.Ordinal);
     private readonly Dictionary<string, TextBlock> _statusTileDetails = new(StringComparer.Ordinal);
     private readonly Dictionary<string, Border> _statusTiles = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, WpfShape> _statusTileIcons = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, Border> _statusTileIconCircles = new(StringComparer.Ordinal);
+
+    private static readonly (string Key, string IconKey, int Index)[] StatusTileDefs =
+    [
+        ("Tracking", "IconTracking", 1),
+        ("GPS", "IconGps", 2),
+        ("Position", "IconPosition", 3),
+        ("Motion", "IconMotion", 4),
+        ("Servers", "IconServers", 5),
+        ("Mesh", "IconMesh", 6),
+        ("Last PLI", "IconClock", 7),
+        ("Callsign", "IconCallsign", 8),
+    ];
 
     private UIElement BuildStatus()
     {
@@ -225,6 +360,8 @@ public partial class SettingsWindow : Window
         _statusTileValues.Clear();
         _statusTileDetails.Clear();
         _statusTiles.Clear();
+        _statusTileIcons.Clear();
+        _statusTileIconCircles.Clear();
 
         _statusPanel.Children.Add(BuildModeBadge());
 
@@ -233,19 +370,15 @@ public partial class SettingsWindow : Window
             Columns = 2,
             Margin = new Thickness(0, 0, -8, 4),
         };
-        foreach (var key in new[]
-                 {
-                     "Tracking", "GPS", "Position", "Motion",
-                     "Servers", "Mesh", "Last PLI", "Callsign",
-                 })
-            grid.Children.Add(CreateStatusTile(key));
+        foreach (var def in StatusTileDefs)
+            grid.Children.Add(CreateStatusTile(def.Key, def.IconKey, def.Index));
         _statusPanel.Children.Add(grid);
 
         _statusPanel.Children.Add(new TextBlock
         {
-            Text = "Many laptops have no GNSS chip — browsers use Wi‑Fi/IP location. WinTAKTracker needs Location services ON, “Let desktop apps access your location”, and a permission grant from this tray app. When the Windows Service owns tracking, the tray acquires the fix and feeds it over IPC. USB NMEA is best for always-on GPS after logoff.",
+            Text = "WinTAKTracker uses Windows Location to get your position. Location permissions are required. USB NMEA is best for always-on GPS after logoff.",
             Style = TryStyle("HelperText"),
-            Margin = new Thickness(0, 0, 0, 12),
+            Margin = new Thickness(0, 4, 0, 12),
         });
 
         var perm = _host.WindowsLocationPermission;
@@ -273,7 +406,7 @@ public partial class SettingsWindow : Window
         }
 
         var actionRow = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 0, 0, 8) };
-        actionRow.Children.Add(Btn("Request location permission", async () =>
+        actionRow.Children.Add(IconBtn("IconShield", "Request location permission", async () =>
         {
             var state = await _host.RequestWindowsLocationAccessAsync();
             Msg(state == GpsPermissionState.Allowed
@@ -283,7 +416,7 @@ public partial class SettingsWindow : Window
                 ShowSection("Status");
         }));
         actionRow.Children.Add(Spacer(8));
-        actionRow.Children.Add(Btn("Open Windows Location settings", () =>
+        actionRow.Children.Add(IconBtn("IconGear", "Open Windows Location settings", () =>
             WindowsLocationGps.OpenWindowsLocationPrivacySettings()));
         _statusPanel.Children.Add(actionRow);
 
@@ -308,7 +441,7 @@ public partial class SettingsWindow : Window
         var mapChrome = new Border
         {
             BorderThickness = new Thickness(1),
-            CornerRadius = new CornerRadius(8),
+            CornerRadius = new CornerRadius(12),
             ClipToBounds = true,
             Child = _mapPreview,
         };
@@ -318,25 +451,54 @@ public partial class SettingsWindow : Window
         return _statusPanel;
     }
 
-    private Border CreateStatusTile(string key)
+    private Border CreateStatusTile(string key, string iconKey, int index)
     {
-        var stack = new StackPanel();
-        var label = new TextBlock { Text = key, Style = TryStyle("StatusTileLabel") };
+        var icon = CreateIconPath(iconKey, 18);
+        var iconCircle = new Border
+        {
+            Style = TryStyle("StatusIconCircle"),
+            Child = new Viewbox
+            {
+                Width = 18,
+                Height = 18,
+                Child = icon,
+                HorizontalAlignment = WpfHAlign.Center,
+                VerticalAlignment = VerticalAlignment.Center,
+            },
+        };
+
+        var label = new TextBlock { Text = $"{index}  {key}", Style = TryStyle("StatusTileLabel") };
+        var left = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
+        left.Children.Add(iconCircle);
+        left.Children.Add(label);
+
         var value = new TextBlock { Text = "—", Style = TryStyle("StatusTileValue") };
         var detail = new TextBlock { Text = "", Style = TryStyle("StatusTileDetail"), Visibility = Visibility.Collapsed };
-        stack.Children.Add(label);
-        stack.Children.Add(value);
-        stack.Children.Add(detail);
+        var right = new StackPanel
+        {
+            VerticalAlignment = VerticalAlignment.Center,
+            HorizontalAlignment = WpfHAlign.Right,
+            Margin = new Thickness(12, 0, 0, 0),
+        };
+        right.Children.Add(value);
+        right.Children.Add(detail);
+
+        var row = new DockPanel { LastChildFill = true };
+        DockPanel.SetDock(left, Dock.Left);
+        row.Children.Add(left);
+        row.Children.Add(right);
 
         var tile = new Border
         {
             Style = TryStyle("StatusTile"),
-            Child = stack,
+            Child = row,
             Tag = key,
         };
         _statusTiles[key] = tile;
         _statusTileValues[key] = value;
         _statusTileDetails[key] = detail;
+        _statusTileIcons[key] = icon;
+        _statusTileIconCircles[key] = iconCircle;
         return tile;
     }
 
@@ -369,6 +531,10 @@ public partial class SettingsWindow : Window
         SetTheme(tile, Border.BackgroundProperty, bg);
         if (valueTb is not null)
             SetTheme(valueTb, TextBlock.ForegroundProperty, fg);
+        if (_statusTileIcons.TryGetValue(key, out var icon))
+            SetTheme(icon, WpfShape.StrokeProperty, fg);
+        if (_statusTileIconCircles.TryGetValue(key, out var circle))
+            SetTheme(circle, Border.BorderBrushProperty, fg);
     }
 
     private GpsFix? GetEffectiveFix()
@@ -433,15 +599,36 @@ public partial class SettingsWindow : Window
                 ? "In-process tracking · service installed but not attached"
                 : "In-process tracking · Windows Service not installed");
 
-        var stack = new StackPanel();
+        var icon = CreateIconPath(service ? "IconServers" : "IconChip", 20);
+        SetTheme(icon, WpfShape.StrokeProperty, "StatusOkFgBrush");
+        var iconCircle = new Border
+        {
+            Style = TryStyle("StatusIconCircle"),
+            Width = 40,
+            Height = 40,
+            CornerRadius = new CornerRadius(20),
+            Margin = new Thickness(0, 0, 12, 0),
+            VerticalAlignment = VerticalAlignment.Center,
+            Child = new Viewbox
+            {
+                Width = 20,
+                Height = 20,
+                Child = icon,
+                HorizontalAlignment = WpfHAlign.Center,
+                VerticalAlignment = VerticalAlignment.Center,
+            },
+        };
+        SetTheme(iconCircle, Border.BorderBrushProperty, "StatusOkFgBrush");
+
+        var text = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
         var titleTb = new TextBlock
         {
             Text = title,
             FontWeight = FontWeights.SemiBold,
-            FontSize = 14,
+            FontSize = 15,
         };
-        SetTheme(titleTb, TextBlock.ForegroundProperty, "TextPrimaryBrush");
-        stack.Children.Add(titleTb);
+        SetTheme(titleTb, TextBlock.ForegroundProperty, "StatusOkFgBrush");
+        text.Children.Add(titleTb);
         var subTb = new TextBlock
         {
             Text = sub,
@@ -450,13 +637,17 @@ public partial class SettingsWindow : Window
             TextWrapping = TextWrapping.Wrap,
         };
         SetTheme(subTb, TextBlock.ForegroundProperty, "TextSecondaryBrush");
-        stack.Children.Add(subTb);
+        text.Children.Add(subTb);
+
+        var row = new DockPanel { LastChildFill = true };
+        DockPanel.SetDock(iconCircle, Dock.Left);
+        row.Children.Add(iconCircle);
+        row.Children.Add(text);
 
         return new Border
         {
-            Style = TryStyle("InfoChip"),
-            Margin = new Thickness(0, 0, 0, 14),
-            Child = stack,
+            Style = TryStyle("ModeBanner") ?? TryStyle("InfoChip"),
+            Child = row,
         };
     }
 

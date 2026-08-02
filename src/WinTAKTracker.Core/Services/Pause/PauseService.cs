@@ -1,7 +1,7 @@
 namespace WinTAKTracker.Services.Pause;
 
 /// <summary>
-/// Pause / mute outbound CoT (servers + mesh). Phase 1 stub — no network paths yet.
+/// Pause / mute outbound CoT (servers + mesh). ReportingEngine skips sends while paused.
 /// </summary>
 public sealed class PauseService
 {

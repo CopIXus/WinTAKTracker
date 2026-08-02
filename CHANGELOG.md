@@ -29,6 +29,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Status **Mode** badge: Windows Service (IPC) vs Standalone
 - System light/dark theme from Windows `AppsUseLightTheme` (runtime swap)
 
+### Changed
+
+- Status dashboard UI aligned with the design mock: sidebar icons, numbered status tiles with circular icons, mode banner, icon action buttons
+- FEATURES.md / docs/features.md updated to match shipping capabilities (Mesh SA, Startup, GPS, pause, diagnostics, presence)
+
 ### Fixed
 
 - **Callsign vs computer name on Portal/Server** — delay first PLI until user session can bind; re-announce when callsign changes; stop bare hostname in CoT remarks (optional `Computer: …`, default off)

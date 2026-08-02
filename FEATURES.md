@@ -35,6 +35,19 @@ Status legend: **Shipping** (in the current public build), **Planned** (future).
 | Schannel-safe client cert load (`MachineKeySet` / `UserKeySet`) | Shipping |
 | Full Marti CA chain in trust store; TLS soft-accept opt-in | Shipping |
 
+## Video streaming (ICU-inspired)
+
+| Capability | Status |
+|------------|--------|
+| Settings → Video setup + Video Console (previews, Start/Stop, Stay on top) | Shipping |
+| Tray camera indicator when video configured; LIVE while streaming | Shipping |
+| Open Video Console on tray startup (optional) | Shipping |
+| FFmpeg capture: on-device RTSP, push URL, UDP MPEG-TS multicast | Shipping |
+| Self-SA `<__video>` + `<sensor>` FOV CoT for ATAK / CloudTAK / TAK Aware | Shipping |
+| FOV aim viewer + shared GPS course offset | Shipping |
+| Global hotkey + start/stop sounds + 2‑min LIVE ping | Shipping |
+| 5‑minute record segments: MP4 + SHA-256 + KML track | Shipping |
+
 ## Mesh SA (LAN / VPN)
 
 | Capability | Status |

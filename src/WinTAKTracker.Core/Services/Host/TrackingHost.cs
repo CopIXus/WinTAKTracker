@@ -104,6 +104,9 @@ public sealed class TrackingHost : IDisposable
     public ActiveIdentity GetActiveIdentity() =>
         IdentityResolver.Resolve(Config, _activeUserSid);
 
+    public void SetVideoAnnounce(Reporting.VideoAnnounceState? state) =>
+        Reporting.SetVideoAnnounce(state);
+
     public TrackerStatusDto GetStatus()
     {
         var active = GetActiveIdentity();

@@ -33,7 +33,37 @@
     "comPort": null,
     "baudRate": 4800,
     "lastFixHoldSeconds": 30,
-    "enableNetworkFallback": false
+    "enableNetworkFallback": false,
+    "courseOffsetDegrees": 0
+  },
+  "video": {
+    "enabled": false,
+    "feeds": [
+      {
+        "id": "cam1",
+        "enabled": true,
+        "cameraName": "Camera 0",
+        "tag": "cam1",
+        "hfovDegrees": 60,
+        "vfovDegrees": 34,
+        "rangeMeters": 100,
+        "azimuthOffsetDegrees": 0,
+        "elevationDegrees": 0
+      }
+    ],
+    "transport": "OnDeviceRtsp",
+    "multicastAddress": "239.2.3.2",
+    "multicastPort": 5004,
+    "rtspListenPort": 8554,
+    "width": 1280,
+    "height": 720,
+    "fps": 30,
+    "bitrateKbps": 2500,
+    "openConsoleOnStartup": false,
+    "recordingEnabled": false,
+    "recordingMaxFolderMb": 2048,
+    "recordingOverLimitPolicy": "DeleteOldest",
+    "recordingSegmentMinutes": 5
   },
   "reporting": {
     "strategy": "Dynamic",

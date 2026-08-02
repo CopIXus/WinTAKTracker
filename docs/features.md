@@ -39,6 +39,17 @@ Status legend: **Shipping** (in the current public build), **Planned** (future).
 | Immediate presence PLI + ATAK-shaped self-SA | Shipping |
 | Server ping reply; Schannel-safe certs; full CA trust store | Shipping |
 
+## Video streaming (ICU-inspired)
+
+| Capability | Status |
+|------------|--------|
+| Settings → Video setup + Video Console (previews, Start/Stop, Stay on top) | Shipping |
+| Tray camera indicator; open Console on startup (optional) | Shipping |
+| FFmpeg: on-device RTSP, push URL, UDP MPEG-TS | Shipping |
+| Self-SA `__video` + FOV sensor CoT | Shipping |
+| FOV aim viewer + GPS course offset | Shipping |
+| Hotkey / audio cues; 5‑min MP4 + SHA-256 + KML recording | Shipping |
+
 ## Mesh SA (LAN / VPN)
 
 | Capability | Status |

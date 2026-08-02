@@ -28,7 +28,7 @@ public static class CotEventBuilder
     public const string GroundUnitType = "a-f-G-U-C-I";
     public const string VehicleType = "a-f-G-E-V";
 
-    public static string Build(GpsFix fix, CotIdentity identity, TimeSpan stale)
+    public static string Build(GpsFix fix, CotIdentity identity, TimeSpan stale, double courseOffsetDegrees = 0)
     {
         var now = DateTimeOffset.UtcNow;
         var start = now;
@@ -40,7 +40,7 @@ public static class CotEventBuilder
         var le = fix.AccuracyMeters ?? 9999999;
         var hae = fix.AltitudeMeters ?? 0;
         var speed = fix.SpeedMetersPerSecond ?? 0;
-        var course = fix.CourseDegrees ?? 0;
+        var course = NormalizeCourse((fix.CourseDegrees ?? 0) + courseOffsetDegrees);
 
         var evt = new XElement("event",
             new XAttribute("version", "2.0"),
@@ -82,10 +82,15 @@ public static class CotEventBuilder
         if (identity.BatteryPercent is int bat)
             detail.Add(new XElement("status", new XAttribute("battery", bat.ToString(CultureInfo.InvariantCulture))));
 
-        var sb = new StringBuilder();
-        sb.Append(evt.ToString(SaveOptions.DisableFormatting));
-        sb.Append('\n');
-        return sb.ToString();
+        return Finalize(evt);
+    }
+
+    /// <summary>Normalize compass degrees into [0, 360).</summary>
+    public static double NormalizeCourse(double degrees)
+    {
+        var d = degrees % 360;
+        if (d < 0) d += 360;
+        return d;
     }
 
     public static CotIdentity FromConfig(AppConfig config, ServerProfile? server = null, int? battery = null)
@@ -147,12 +152,31 @@ public static class CotEventBuilder
         return contact;
     }
 
-    private static string F(double v)
+    internal static string F(double v)
     {
         if (double.IsNaN(v) || double.IsInfinity(v)) v = 0;
         return v.ToString("0.#######", CultureInfo.InvariantCulture);
     }
 
-    private static string FormatTakTime(DateTimeOffset dto) =>
+    internal static string FormatTakTime(DateTimeOffset dto) =>
         dto.UtcDateTime.ToString("yyyy-MM-ddTHH:mm:ss.fffZ", CultureInfo.InvariantCulture);
+
+    internal static string Finalize(XElement evt)
+    {
+        var sb = new StringBuilder();
+        sb.Append(evt.ToString(SaveOptions.DisableFormatting));
+        sb.Append('\n');
+        return sb.ToString();
+    }
+
+    /// <summary>Parse CoT XML, append detail children, return serialized event + newline.</summary>
+    public static string MergeDetailChildren(string cotXml, IEnumerable<XElement> detailChildren)
+    {
+        var doc = XDocument.Parse(cotXml.Trim());
+        var detail = doc.Root?.Element("detail");
+        if (detail is null) return cotXml;
+        foreach (var child in detailChildren)
+            detail.Add(child);
+        return Finalize(doc.Root!);
+    }
 }

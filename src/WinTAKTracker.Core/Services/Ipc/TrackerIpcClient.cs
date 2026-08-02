@@ -105,6 +105,9 @@ public sealed class TrackerIpcClient : IAsyncDisposable
     public Task<IpcResponse> LockSettingsAsync(CancellationToken ct = default) =>
         CallAsync(IpcMethod.LockSettings, null, ct);
 
+    public Task<IpcResponse> SetVideoAnnounceAsync(VideoAnnounceDto dto, CancellationToken ct = default) =>
+        CallAsync(IpcMethod.SetVideoAnnounce, dto, ct);
+
     public async Task NotifyCurrentUserSessionAsync(CancellationToken ct = default)
     {
         await SetActiveSessionAsync(new SessionUpdateDto

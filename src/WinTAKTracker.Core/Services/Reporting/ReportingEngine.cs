@@ -34,9 +34,96 @@ public sealed class ReportingEngine : IDisposable
     private bool _identityDirty;
     private bool _asap;
     private int _tickBusy;
+    private VideoAnnounceState _video = new();
+    private DateTimeOffset _lastSensorMarker = DateTimeOffset.MinValue;
+    private readonly List<VideoFeedAnnounce> _pendingCollapse = [];
 
     public DateTimeOffset? LastPliSentUtc { get; private set; }
+    public VideoAnnounceState VideoAnnounce
+    {
+        get { lock (_gate) return CloneVideo(_video); }
+    }
+
     public event EventHandler? Reported;
+
+    public void SetVideoAnnounce(VideoAnnounceState? state)
+    {
+        lock (_gate)
+        {
+            var next = state is null
+                ? new VideoAnnounceState()
+                : new VideoAnnounceState
+                {
+                    Active = state.Active,
+                    SendFovSensorMarker = state.SendFovSensorMarker,
+                    Feeds = state.Feeds.Select(f => new VideoFeedAnnounce
+                    {
+                        FeedId = f.FeedId,
+                        Tag = f.Tag,
+                        StreamUrl = f.StreamUrl,
+                        Alias = f.Alias,
+                        VideoUid = f.VideoUid,
+                        HfovDegrees = f.HfovDegrees,
+                        VfovDegrees = f.VfovDegrees,
+                        RangeMeters = f.RangeMeters,
+                        AzimuthDegrees = f.AzimuthDegrees,
+                        ElevationDegrees = f.ElevationDegrees,
+                    }).ToList(),
+                };
+
+            // Collapse FOV cones for feeds that stop so peers clear the wedge.
+            if (_video.SendFovSensorMarker || next.SendFovSensorMarker)
+            {
+                var nextIds = next.Active
+                    ? next.Feeds.Select(f => f.FeedId).ToHashSet(StringComparer.OrdinalIgnoreCase)
+                    : new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                foreach (var old in _video.Feeds)
+                {
+                    if (!nextIds.Contains(old.FeedId))
+                        _pendingCollapse.Add(CloneFeed(old));
+                }
+            }
+
+            _video = next;
+            _asap = true;
+            _identityDirty = true;
+        }
+    }
+
+    private static VideoFeedAnnounce CloneFeed(VideoFeedAnnounce f) =>
+        new()
+        {
+            FeedId = f.FeedId,
+            Tag = f.Tag,
+            StreamUrl = f.StreamUrl,
+            Alias = f.Alias,
+            VideoUid = f.VideoUid,
+            HfovDegrees = f.HfovDegrees,
+            VfovDegrees = f.VfovDegrees,
+            RangeMeters = f.RangeMeters,
+            AzimuthDegrees = f.AzimuthDegrees,
+            ElevationDegrees = f.ElevationDegrees,
+        };
+
+    private static VideoAnnounceState CloneVideo(VideoAnnounceState state) =>
+        new()
+        {
+            Active = state.Active,
+            SendFovSensorMarker = state.SendFovSensorMarker,
+            Feeds = state.Feeds.Select(f => new VideoFeedAnnounce
+            {
+                FeedId = f.FeedId,
+                Tag = f.Tag,
+                StreamUrl = f.StreamUrl,
+                Alias = f.Alias,
+                VideoUid = f.VideoUid,
+                HfovDegrees = f.HfovDegrees,
+                VfovDegrees = f.VfovDegrees,
+                RangeMeters = f.RangeMeters,
+                AzimuthDegrees = f.AzimuthDegrees,
+                ElevationDegrees = f.ElevationDegrees,
+            }).ToList(),
+        };
 
     public ReportingEngine(
         IGpsService gps,
@@ -151,10 +238,12 @@ public sealed class ReportingEngine : IDisposable
 
         AppConfig config;
         IReportingRate rate;
+        VideoAnnounceState video;
         lock (_gate)
         {
             config = _config;
             rate = _rate;
+            video = CloneVideo(_video);
             _asap = true;
         }
 
@@ -164,7 +253,7 @@ public sealed class ReportingEngine : IDisposable
             ? CotEventBuilder.FromActiveIdentity(config, active, battery: battery)
             : CotEventBuilder.FromConfig(config, battery: battery);
         var stale = rate.GetStale(TimeSpan.FromSeconds(Math.Max(config.Reporting.ReliableMinSeconds, 30)));
-        var cot = CotEventBuilder.Build(fix, identity, stale);
+        var cot = BuildCot(fix, identity, stale, config, video);
 
         try
         {
@@ -197,18 +286,30 @@ public sealed class ReportingEngine : IDisposable
         AppConfig config;
         IReportingRate rate;
         bool asap;
+        VideoAnnounceState video;
         lock (_gate)
         {
             config = _config;
             rate = _rate;
             asap = _asap || _identityDirty;
+            video = CloneVideo(_video);
         }
 
         var speed = fix.SpeedMph;
         var reliableDue = asap || DateTimeOffset.UtcNow - _lastReliable >= rate.GetInterval(ReportingPath.Reliable, speed);
         var unreliableDue = asap || DateTimeOffset.UtcNow - _lastUnreliable >= rate.GetInterval(ReportingPath.Unreliable, speed);
+        List<VideoFeedAnnounce> collapse;
+        lock (_gate)
+        {
+            collapse = _pendingCollapse.ToList();
+            _pendingCollapse.Clear();
+        }
 
-        if (!reliableDue && !unreliableDue) return;
+        var sensorDue = video.Active && video.SendFovSensorMarker &&
+                        DateTimeOffset.UtcNow - _lastSensorMarker >=
+                        TimeSpan.FromSeconds(Math.Clamp(config.Video.FovRefreshSeconds, 3, 30));
+
+        if (!reliableDue && !unreliableDue && !sensorDue && collapse.Count == 0) return;
 
         var battery = TryGetBatteryPercent();
         var active = _identityProvider?.Invoke();
@@ -216,7 +317,7 @@ public sealed class ReportingEngine : IDisposable
             ? CotEventBuilder.FromActiveIdentity(config, active, battery: battery)
             : CotEventBuilder.FromConfig(config, battery: battery);
         var stale = rate.GetStale(rate.GetInterval(ReportingPath.Reliable, speed));
-        var cot = CotEventBuilder.Build(fix, identity, stale);
+        var cot = BuildCot(fix, identity, stale, config, video);
 
         if (reliableDue && _tak.AnyConnected)
         {
@@ -242,6 +343,27 @@ public sealed class ReportingEngine : IDisposable
             }
         }
 
+        if ((sensorDue || collapse.Count > 0) && (_tak.AnyConnected || ShouldSendMesh(config)))
+        {
+            var deviceUid = config.DeviceUid ?? ("WIN-" + Environment.MachineName.Replace(" ", ""));
+            if (sensorDue)
+            {
+                foreach (var feed in video.Feeds)
+                {
+                    var marker = CotVideoBuilder.BuildSensorMarkerEvent(feed, fix, deviceUid, TimeSpan.FromSeconds(60));
+                    await SendSensorCotAsync(marker, config).ConfigureAwait(false);
+                }
+
+                _lastSensorMarker = DateTimeOffset.UtcNow;
+            }
+
+            foreach (var feed in collapse)
+            {
+                var marker = CotVideoBuilder.BuildCollapsedSensorEvent(feed, fix, deviceUid);
+                await SendSensorCotAsync(marker, config).ConfigureAwait(false);
+            }
+        }
+
         lock (_gate)
         {
             _prevAlt = fix.AltitudeMeters;
@@ -251,6 +373,37 @@ public sealed class ReportingEngine : IDisposable
         }
 
         Reported?.Invoke(this, EventArgs.Empty);
+    }
+
+    private async Task SendSensorCotAsync(string marker, AppConfig config)
+    {
+        try
+        {
+            if (_tak.AnyConnected)
+            {
+                using var timeout = new CancellationTokenSource(CotSendTimeout);
+                await _tak.SendToAllAsync(marker, timeout.Token).ConfigureAwait(false);
+            }
+
+            if (ShouldSendMesh(config))
+                _mesh.TrySend(marker);
+        }
+        catch (Exception ex)
+        {
+            _log.Warn("Report", $"Video sensor CoT failed: {ex.GetType().Name}");
+        }
+    }
+
+    private static string BuildCot(
+        GpsFix fix,
+        CotIdentity identity,
+        TimeSpan stale,
+        AppConfig config,
+        VideoAnnounceState video)
+    {
+        var cot = CotEventBuilder.Build(fix, identity, stale, config.Gps.CourseOffsetDegrees);
+        if (!video.Active || video.Feeds.Count == 0) return cot;
+        return CotEventBuilder.MergeDetailChildren(cot, CotVideoBuilder.BuildSelfDetailFragments(video));
     }
 
     private bool ShouldSendMesh(AppConfig config)

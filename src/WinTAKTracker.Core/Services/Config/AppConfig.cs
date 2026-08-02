@@ -25,6 +25,8 @@ public sealed class AppConfig
 
     public GpsSettings Gps { get; set; } = new();
 
+    public VideoSettings Video { get; set; } = new();
+
     public ReportingSettings Reporting { get; set; } = new();
 
     public MeshSaSettings MeshSa { get; set; } = new();
@@ -178,6 +180,68 @@ public sealed class GpsSettings
     /// Default false for new configs (coarse; opt-in).
     /// </summary>
     public bool EnableNetworkFallback { get; set; }
+    /// <summary>
+    /// Degrees added to GPS course for PLI <c>track@course</c> and video FOV azimuth (shared with Video).
+    /// </summary>
+    public double CourseOffsetDegrees { get; set; }
+}
+
+/// <summary>ICU-inspired camera streaming (tray session; not Session 0).</summary>
+public sealed class VideoSettings
+{
+    public bool Enabled { get; set; }
+    public List<VideoFeedSettings> Feeds { get; set; } = [];
+    /// <summary>OnDeviceRtsp | Push | UdpMulticast</summary>
+    public string Transport { get; set; } = "OnDeviceRtsp";
+    public string? PushUrl { get; set; }
+    public string? PushUsername { get; set; }
+    public string? PushPasswordBlobName { get; set; }
+    public string MulticastAddress { get; set; } = "239.2.3.2";
+    public int MulticastPort { get; set; } = 5004;
+    public string NetworkInterface { get; set; } = "Auto";
+    public int RtspListenPort { get; set; } = 8554;
+    public int Width { get; set; } = 1280;
+    public int Height { get; set; } = 720;
+    public int Fps { get; set; } = 30;
+    public int BitrateKbps { get; set; } = 2500;
+    public int KeyframeSeconds { get; set; } = 2;
+    public bool StreamAudio { get; set; }
+    public bool SendFovSensorMarker { get; set; } = true;
+    public int FovRefreshSeconds { get; set; } = 5;
+    public string? FfmpegPath { get; set; }
+    public bool OpenConsoleOnStartup { get; set; }
+    public bool ConsoleStayOnTop { get; set; }
+    public bool StopStreamsWhenConsoleCloses { get; set; }
+    public bool AudioCuesEnabled { get; set; } = true;
+    public bool AudioPingWhileLive { get; set; } = true;
+    /// <summary>Virtual-key + modifiers encoded as "Ctrl+Shift+V" style; empty = none.</summary>
+    public string? Hotkey { get; set; }
+    public bool RecordingEnabled { get; set; }
+    public string? RecordingFolder { get; set; }
+    public int RecordingMaxFolderMb { get; set; } = 2048;
+    /// <summary>DeleteOldest | StopRecording</summary>
+    public string RecordingOverLimitPolicy { get; set; } = "DeleteOldest";
+    public int RecordingSegmentMinutes { get; set; } = 5;
+    public int RecordingGpsSampleSeconds { get; set; } = 5;
+
+    public bool IsConfigured =>
+        Enabled && Feeds.Any(f => f.Enabled && !string.IsNullOrWhiteSpace(f.CameraName));
+}
+
+public sealed class VideoFeedSettings
+{
+    public string Id { get; set; } = Guid.NewGuid().ToString("N")[..8];
+    public bool Enabled { get; set; } = true;
+    /// <summary>DirectShow friendly name (or index string).</summary>
+    public string? CameraName { get; set; }
+    /// <summary>Short path/alias suffix, e.g. cam1.</summary>
+    public string Tag { get; set; } = "cam1";
+    public double HfovDegrees { get; set; } = 60;
+    public double VfovDegrees { get; set; } = 34;
+    public double RangeMeters { get; set; } = 100;
+    /// <summary>Added on top of GPS course + <see cref="GpsSettings.CourseOffsetDegrees"/>.</summary>
+    public double AzimuthOffsetDegrees { get; set; }
+    public double ElevationDegrees { get; set; }
 }
 
 public sealed class ReportingSettings

@@ -12,8 +12,10 @@ public sealed class TrayIconService : IDisposable
     private readonly AppHost _host;
     private readonly Forms.NotifyIcon _notifyIcon;
     private readonly Icon _baseIcon;
+    private Icon? _composedIcon;
     private TrayIconState _state = TrayIconState.Disconnected;
     private SettingsWindow? _settingsWindow;
+    private VideoConsoleWindow? _videoConsole;
 
     public TrayIconService(AppHost host)
     {
@@ -28,6 +30,9 @@ public sealed class TrayIconService : IDisposable
 
         var menu = new Forms.ContextMenuStrip();
         menu.Items.Add("Show settings", null, (_, _) => ShowSettings());
+        var videoItem = new Forms.ToolStripMenuItem("Video Console…");
+        videoItem.Click += (_, _) => ShowVideoConsole();
+        menu.Items.Add(videoItem);
         var lockItem = new Forms.ToolStripMenuItem("Unlock settings…");
         lockItem.Click += (_, _) => ToggleSettingsLockFromTray();
         menu.Items.Add(lockItem);
@@ -95,18 +100,82 @@ public sealed class TrayIconService : IDisposable
         });
     }
 
+    public void ShowVideoConsole()
+    {
+        Application.Current.Dispatcher.Invoke(() =>
+        {
+            if (_videoConsole is null)
+            {
+                _videoConsole = new VideoConsoleWindow(_host);
+                _videoConsole.Closed += (_, _) => _videoConsole = null;
+            }
+
+            _videoConsole.Show();
+            _videoConsole.Activate();
+            if (_videoConsole.WindowState == WindowState.Minimized)
+                _videoConsole.WindowState = WindowState.Normal;
+        });
+    }
+
     private void ApplyState(TrayIconState state)
     {
         _state = state;
         _notifyIcon.Text = TruncateTooltip(BuildTooltip(state));
-        _notifyIcon.Icon = _baseIcon;
+        _notifyIcon.Icon = ComposeTrayIcon();
+        RefreshVideoMenuEnabled();
     }
 
     private string BuildTooltip(TrayIconState state)
     {
         var version = _host.Updates.CurrentVersion;
         var updateVersion = ResolveUpdateVersionHint();
-        return state.ToTooltip(version, updateVersion);
+        var tip = state.ToTooltip(version, updateVersion);
+        if (_host.Config.Video.IsConfigured || _host.Video.LiveCount > 0)
+        {
+            var live = _host.Video.LiveCount;
+            var cams = _host.Config.Video.Feeds.Count(f => f.Enabled);
+            tip += live > 0 ? $" | Video: LIVE ×{live}" : $" | Video: idle ({cams} cams)";
+        }
+
+        return tip;
+    }
+
+    private Icon ComposeTrayIcon()
+    {
+        _composedIcon?.Dispose();
+        _composedIcon = null;
+        var configured = _host.Config.Video.IsConfigured || _host.Video.LiveCount > 0;
+        if (!configured) return _baseIcon;
+
+        try
+        {
+            using var bmp = _baseIcon.ToBitmap();
+            using var g = Graphics.FromImage(bmp);
+            g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+            var live = _host.Video.LiveCount > 0;
+            var accent = live ? Color.FromArgb(220, 60, 60) : Color.FromArgb(40, 180, 200);
+            // Small camera body in bottom-right.
+            var x = bmp.Width - 10;
+            var y = bmp.Height - 9;
+            using var brush = new SolidBrush(accent);
+            using var pen = new Pen(Color.White, 1f);
+            g.FillRectangle(brush, x, y + 2, 8, 5);
+            g.FillEllipse(brush, x + 2, y, 4, 4);
+            g.DrawRectangle(pen, x, y + 2, 8, 5);
+            _composedIcon = Icon.FromHandle(bmp.GetHicon());
+            return _composedIcon;
+        }
+        catch
+        {
+            return _baseIcon;
+        }
+    }
+
+    private void RefreshVideoMenuEnabled()
+    {
+        if (_notifyIcon.ContextMenuStrip?.Items.Count > 1 &&
+            _notifyIcon.ContextMenuStrip.Items[1] is Forms.ToolStripMenuItem videoItem)
+            videoItem.Enabled = _host.Config.Video.Enabled || _host.Config.Video.IsConfigured || _host.Video.LiveCount > 0;
     }
 
     private string? ResolveUpdateVersionHint()
@@ -130,13 +199,17 @@ public sealed class TrayIconService : IDisposable
 
     private void RefreshPauseMenuText()
     {
-        if (_notifyIcon.ContextMenuStrip?.Items[3] is Forms.ToolStripMenuItem item)
+        // 0 Settings, 1 Video, 2 Lock, 3 sep, 4 Pause
+        if (_notifyIcon.ContextMenuStrip?.Items.Count > 4 &&
+            _notifyIcon.ContextMenuStrip.Items[4] is Forms.ToolStripMenuItem item)
             item.Text = _host.Pause.IsPaused ? "Resume tracking" : "Pause tracking";
     }
 
     private void RefreshLockMenuText()
     {
-        if (_notifyIcon.ContextMenuStrip?.Items[1] is not Forms.ToolStripMenuItem item)
+        if (_notifyIcon.ContextMenuStrip is null ||
+            _notifyIcon.ContextMenuStrip.Items.Count <= 2 ||
+            _notifyIcon.ContextMenuStrip.Items[2] is not Forms.ToolStripMenuItem item)
             return;
 
         if (!_host.SettingsLock.HasPassword)
@@ -264,6 +337,7 @@ public sealed class TrayIconService : IDisposable
         _host.Pause.PauseChanged -= OnPauseChanged;
         _notifyIcon.Visible = false;
         _notifyIcon.Dispose();
+        _composedIcon?.Dispose();
         _baseIcon.Dispose();
     }
 }

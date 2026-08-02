@@ -16,6 +16,7 @@ using WinTAKTracker.Services.Reporting;
 using WinTAKTracker.Services.Tak;
 using WinTAKTracker.Services.Tray;
 using WinTAKTracker.Services.Update;
+using WinTAKTracker.Services.Video;
 using OpenFileDialog = Microsoft.Win32.OpenFileDialog;
 using SaveFileDialog = Microsoft.Win32.SaveFileDialog;
 using WpfHAlign = System.Windows.HorizontalAlignment;
@@ -72,6 +73,7 @@ public partial class SettingsWindow : Window
             ["Servers"] = "IconServers",
             ["Identity"] = "IconIdentity",
             ["Gps"] = "IconGps",
+            ["Video"] = "IconVideo",
             ["Reporting"] = "IconReporting",
             ["MeshSa"] = "IconMesh",
             ["Companions"] = "IconCompanions",
@@ -272,6 +274,7 @@ public partial class SettingsWindow : Window
             "Servers" => "Servers",
             "Identity" => "Identity",
             "Gps" => "GPS",
+            "Video" => "Video",
             "Reporting" => "Reporting",
             "MeshSa" => "Mesh SA",
             "Companions" => "Companion apps",
@@ -288,6 +291,7 @@ public partial class SettingsWindow : Window
             "Servers" => BuildServers(),
             "Identity" => BuildIdentity(),
             "Gps" => BuildGps(),
+            "Video" => BuildVideo(),
             "Reporting" => BuildReporting(),
             "MeshSa" => BuildMeshSa(),
             "Companions" or "ViewMap" => BuildCompanions(),
@@ -1341,6 +1345,293 @@ public partial class SettingsWindow : Window
         return panel;
     }
 
+    private UIElement BuildVideo()
+    {
+        var panel = new StackPanel();
+        var edit = CanEdit;
+        var v = _host.Config.Video;
+        if (v.Feeds.Count == 0)
+            v.Feeds.Add(new VideoFeedSettings());
+
+        panel.Children.Add(Blurb(
+            "ICU-inspired camera streaming (session-bound). Configure feeds here; use Video Console for live preview and Start/Stop. " +
+            "Requires FFmpeg on PATH or a path below. Streams advertise via CoT so ATAK / CloudTAK / TAK Aware can open the feed."));
+
+        var enabled = new CheckBox
+        {
+            Content = "Enable video feature",
+            IsChecked = v.Enabled,
+            IsEnabled = edit,
+            Margin = new Thickness(0, 0, 0, 8),
+        };
+        enabled.Checked += (_, _) => { if (!CanEdit) return; v.Enabled = true; Persist(); };
+        enabled.Unchecked += (_, _) => { if (!CanEdit) return; v.Enabled = false; Persist(); };
+        panel.Children.Add(enabled);
+
+        var openStartup = new CheckBox
+        {
+            Content = "Open Video Console when WinTAKTracker starts",
+            IsChecked = v.OpenConsoleOnStartup,
+            IsEnabled = edit,
+            Margin = new Thickness(0, 0, 0, 8),
+        };
+        openStartup.Checked += (_, _) => { if (!CanEdit) return; v.OpenConsoleOnStartup = true; Persist(); };
+        openStartup.Unchecked += (_, _) => { if (!CanEdit) return; v.OpenConsoleOnStartup = false; Persist(); };
+        panel.Children.Add(openStartup);
+
+        panel.Children.Add(Btn("Open Video Console", () => _host.Tray.ShowVideoConsole()));
+
+        panel.Children.Add(SectionHeader("Camera feeds"));
+        var feed = v.Feeds[0];
+        VideoFeedSettings? selectedFeed = feed;
+        var devices = Services.Video.CameraEnumerator.ListDevices(v.FfmpegPath);
+        var camNames = devices.Select(d => d.Name).ToList();
+        if (feed.CameraName is { Length: > 0 } && !camNames.Contains(feed.CameraName))
+            camNames.Insert(0, feed.CameraName);
+        var feedPicker = new ComboBox
+        {
+            ItemsSource = v.Feeds.Select(f => $"{f.Tag} ({f.Id})").ToList(),
+            SelectedIndex = 0,
+            IsEnabled = edit,
+            Margin = new Thickness(0, 0, 0, 6),
+        };
+        var cam = new ComboBox
+        {
+            ItemsSource = camNames,
+            Text = feed.CameraName ?? camNames.FirstOrDefault() ?? "",
+            IsEnabled = edit,
+            IsEditable = true,
+        };
+        var tag = new TextBox { Text = feed.Tag, IsEnabled = edit };
+        panel.Children.Add(Label("Selected feed")); panel.Children.Add(feedPicker);
+        panel.Children.Add(Label("Camera")); panel.Children.Add(cam);
+        panel.Children.Add(Label("Short tag (multi-cam alias suffix)")); panel.Children.Add(tag);
+        if (edit)
+        {
+            panel.Children.Add(Btn("Add camera feed", () =>
+            {
+                if (v.Feeds.Count >= 2)
+                {
+                    Msg("Phase 1 supports up to 2 concurrent feeds (CPU/GPU load).", MessageBoxImage.Information);
+                    return;
+                }
+
+                var n = v.Feeds.Count + 1;
+                v.Feeds.Add(new VideoFeedSettings { Tag = $"cam{n}", Enabled = true });
+                Persist();
+                ShowSection("Video");
+            }));
+        }
+
+        panel.Children.Add(SectionHeader("Transport"));
+        var transport = new ComboBox
+        {
+            ItemsSource = new[] { "OnDeviceRtsp", "Push", "UdpMulticast" },
+            SelectedItem = v.Transport,
+            IsEnabled = edit,
+        };
+        var pushUrl = new TextBox { Text = v.PushUrl ?? "", IsEnabled = edit };
+        var pushUser = new TextBox { Text = v.PushUsername ?? "", IsEnabled = edit };
+        var pushPass = new PasswordBox { IsEnabled = edit };
+        var mcast = new TextBox { Text = $"{v.MulticastAddress}:{v.MulticastPort}", IsEnabled = edit };
+        var rtspPort = new TextBox { Text = v.RtspListenPort.ToString(), IsEnabled = edit };
+        var nics = MeshSaBroadcaster.ListInterfaces().Select(i => i.Name).ToList();
+        nics.Insert(0, "Auto");
+        var nic = new ComboBox
+        {
+            ItemsSource = nics,
+            SelectedItem = nics.Contains(v.NetworkInterface) ? v.NetworkInterface : "Auto",
+            IsEnabled = edit,
+        };
+        panel.Children.Add(Label("Mode")); panel.Children.Add(transport);
+        panel.Children.Add(Label("Push URL (MediaMTX / restreamer)")); panel.Children.Add(pushUrl);
+        panel.Children.Add(Label("Push username (optional)")); panel.Children.Add(pushUser);
+        panel.Children.Add(Label("Push password (optional, stored via DPAPI)")); panel.Children.Add(pushPass);
+        panel.Children.Add(Label("UDP multicast host:port")); panel.Children.Add(mcast);
+        panel.Children.Add(Label("On-device RTSP listen port")); panel.Children.Add(rtspPort);
+        panel.Children.Add(Label("Advertise NIC (LAN IP in CoT)")); panel.Children.Add(nic);
+        panel.Children.Add(Blurb(
+            "On-device RTSP needs an inbound firewall allow for the listen port. Prefer push to MediaMTX for WAN."));
+
+        panel.Children.Add(SectionHeader("Encode"));
+        var ffmpeg = new TextBox { Text = v.FfmpegPath ?? "", IsEnabled = edit };
+        var resolution = new ComboBox
+        {
+            ItemsSource = new[] { "1280x720", "1920x1080", "640x480" },
+            SelectedItem = $"{v.Width}x{v.Height}",
+            IsEnabled = edit,
+        };
+        if (resolution.SelectedItem is null) resolution.Text = $"{v.Width}x{v.Height}";
+        var fps = new TextBox { Text = v.Fps.ToString(), IsEnabled = edit };
+        var bitrate = new TextBox { Text = v.BitrateKbps.ToString(), IsEnabled = edit };
+        var streamAudio = new CheckBox { Content = "Stream microphone audio (AAC)", IsChecked = v.StreamAudio, IsEnabled = edit };
+        panel.Children.Add(Label("FFmpeg path (optional if on PATH)")); panel.Children.Add(ffmpeg);
+        panel.Children.Add(Label("Resolution")); panel.Children.Add(resolution);
+        panel.Children.Add(Label("FPS")); panel.Children.Add(fps);
+        panel.Children.Add(Label("Bitrate (kbps)")); panel.Children.Add(bitrate);
+        panel.Children.Add(streamAudio);
+        panel.Children.Add(Blurb(Services.Video.FfmpegLocator.IsAvailable(v.FfmpegPath)
+            ? "FFmpeg found."
+            : "FFmpeg not found — install and set path, or place ffmpeg.exe next to WinTAKTracker."));
+
+        panel.Children.Add(SectionHeader("FOV / aim"));
+        var courseOffset = new TextBox { Text = _host.Config.Gps.CourseOffsetDegrees.ToString("0.###"), IsEnabled = edit };
+        var hfov = new TextBox { Text = feed.HfovDegrees.ToString("0.###"), IsEnabled = edit };
+        var range = new TextBox { Text = feed.RangeMeters.ToString("0.###"), IsEnabled = edit };
+        var camAz = new TextBox { Text = feed.AzimuthOffsetDegrees.ToString("0.###"), IsEnabled = edit };
+        var sendFov = new CheckBox
+        {
+            Content = "Send FOV sensor marker (b-m-p-s-p-loc)",
+            IsChecked = v.SendFovSensorMarker,
+            IsEnabled = edit,
+        };
+        panel.Children.Add(Label("GPS / course offset (°) — shared with GPS settings")); panel.Children.Add(courseOffset);
+        panel.Children.Add(Label("Camera azimuth offset (°)")); panel.Children.Add(camAz);
+        panel.Children.Add(Label("HFOV (°)")); panel.Children.Add(hfov);
+        panel.Children.Add(Label("FOV range / depth (m)")); panel.Children.Add(range);
+        panel.Children.Add(sendFov);
+
+        var fovViewer = new FovCotViewerControl { Margin = new Thickness(0, 8, 0, 8) };
+        void RefreshFov()
+        {
+            var f = selectedFeed ?? v.Feeds[0];
+            var fix = _host.AttachedToService
+                ? null
+                : _host.Gps.CurrentFix;
+            fovViewer.Update(
+                _host.Config,
+                f.Id,
+                fix?.Latitude ?? _host.LastServiceStatus?.Latitude,
+                fix?.Longitude ?? _host.LastServiceStatus?.Longitude,
+                fix?.CourseDegrees ?? _host.LastServiceStatus?.CourseDegrees);
+        }
+        fovViewer.FeedSelected += (_, id) =>
+        {
+            selectedFeed = v.Feeds.FirstOrDefault(x => x.Id == id) ?? v.Feeds[0];
+            var idx = v.Feeds.IndexOf(selectedFeed);
+            if (idx >= 0) feedPicker.SelectedIndex = idx;
+            cam.Text = selectedFeed.CameraName ?? "";
+            tag.Text = selectedFeed.Tag;
+            hfov.Text = selectedFeed.HfovDegrees.ToString("0.###");
+            range.Text = selectedFeed.RangeMeters.ToString("0.###");
+            camAz.Text = selectedFeed.AzimuthOffsetDegrees.ToString("0.###");
+            RefreshFov();
+        };
+        feedPicker.SelectionChanged += (_, _) =>
+        {
+            if (feedPicker.SelectedIndex < 0 || feedPicker.SelectedIndex >= v.Feeds.Count) return;
+            selectedFeed = v.Feeds[feedPicker.SelectedIndex];
+            cam.Text = selectedFeed.CameraName ?? "";
+            tag.Text = selectedFeed.Tag;
+            hfov.Text = selectedFeed.HfovDegrees.ToString("0.###");
+            range.Text = selectedFeed.RangeMeters.ToString("0.###");
+            camAz.Text = selectedFeed.AzimuthOffsetDegrees.ToString("0.###");
+            RefreshFov();
+        };
+        panel.Children.Add(fovViewer);
+        RefreshFov();
+
+        panel.Children.Add(SectionHeader("Hotkey & audio"));
+        var hotkey = new TextBox { Text = v.Hotkey ?? "", IsEnabled = edit };
+        var audioCues = new CheckBox { Content = "Start / stop sounds", IsChecked = v.AudioCuesEnabled, IsEnabled = edit };
+        var audioPing = new CheckBox { Content = "Ping every 2 minutes while LIVE", IsChecked = v.AudioPingWhileLive, IsEnabled = edit };
+        var stopOnClose = new CheckBox
+        {
+            Content = "Stop streams when Video Console closes",
+            IsChecked = v.StopStreamsWhenConsoleCloses,
+            IsEnabled = edit,
+        };
+        panel.Children.Add(Label("Global hotkey (e.g. Ctrl+Shift+V)")); panel.Children.Add(hotkey);
+        panel.Children.Add(audioCues);
+        panel.Children.Add(audioPing);
+        panel.Children.Add(stopOnClose);
+
+        panel.Children.Add(SectionHeader("Recording"));
+        var recEnable = new CheckBox { Content = "Record while streaming (5‑minute segments)", IsChecked = v.RecordingEnabled, IsEnabled = edit };
+        var recFolder = new TextBox { Text = v.RecordingFolder ?? "", IsEnabled = edit };
+        var recMax = new TextBox { Text = v.RecordingMaxFolderMb.ToString(), IsEnabled = edit };
+        var recPolicy = new ComboBox
+        {
+            ItemsSource = new[] { "DeleteOldest", "StopRecording" },
+            SelectedItem = v.RecordingOverLimitPolicy,
+            IsEnabled = edit,
+        };
+        panel.Children.Add(recEnable);
+        panel.Children.Add(Label("Recording folder")); panel.Children.Add(recFolder);
+        panel.Children.Add(Label("Max folder size (MB)")); panel.Children.Add(recMax);
+        panel.Children.Add(Label("When over limit")); panel.Children.Add(recPolicy);
+        panel.Children.Add(Blurb(
+            "Each segment writes three files: .mp4, .sha256, and .kml (GPS every 5s). " +
+            "Filename: YYYY-MMDD_HHmmssZ_HHmmss_Computer_Callsign_User[_tag]."));
+
+        void SaveVideo()
+        {
+            if (!CanEdit) return;
+            var f = selectedFeed ?? v.Feeds[0];
+            f.Enabled = true;
+            f.CameraName = cam.Text.Trim();
+            f.Tag = string.IsNullOrWhiteSpace(tag.Text) ? "cam1" : tag.Text.Trim();
+            v.Transport = transport.SelectedItem?.ToString() ?? "OnDeviceRtsp";
+            v.PushUrl = string.IsNullOrWhiteSpace(pushUrl.Text) ? null : pushUrl.Text.Trim();
+            v.PushUsername = string.IsNullOrWhiteSpace(pushUser.Text) ? null : pushUser.Text.Trim();
+            if (!string.IsNullOrEmpty(pushPass.Password))
+            {
+                v.PushPasswordBlobName ??= "video-push-password";
+                _host.ConfigStore.WriteSecret(v.PushPasswordBlobName, pushPass.Password);
+            }
+            var mp = mcast.Text.Split(':');
+            if (mp.Length >= 1) v.MulticastAddress = mp[0].Trim();
+            if (mp.Length >= 2 && int.TryParse(mp[1], out var port)) v.MulticastPort = port;
+            if (int.TryParse(rtspPort.Text, out var rp)) v.RtspListenPort = rp;
+            v.NetworkInterface = nic.SelectedItem?.ToString() ?? "Auto";
+            v.FfmpegPath = string.IsNullOrWhiteSpace(ffmpeg.Text) ? null : ffmpeg.Text.Trim();
+            var resText = resolution.SelectedItem?.ToString() ?? resolution.Text ?? "1280x720";
+            var parts = resText.Split('x', 'X');
+            if (parts.Length == 2 && int.TryParse(parts[0], out var w) && int.TryParse(parts[1], out var h))
+            {
+                v.Width = w;
+                v.Height = h;
+            }
+            if (int.TryParse(fps.Text, out var fp)) v.Fps = Math.Clamp(fp, 1, 60);
+            if (int.TryParse(bitrate.Text, out var br)) v.BitrateKbps = br;
+            v.StreamAudio = streamAudio.IsChecked == true;
+            if (double.TryParse(courseOffset.Text, out var co)) _host.Config.Gps.CourseOffsetDegrees = co;
+            if (double.TryParse(hfov.Text, out var hv)) f.HfovDegrees = hv;
+            if (double.TryParse(range.Text, out var rg)) f.RangeMeters = rg;
+            if (double.TryParse(camAz.Text, out var az)) f.AzimuthOffsetDegrees = az;
+            v.SendFovSensorMarker = sendFov.IsChecked == true;
+            v.Hotkey = string.IsNullOrWhiteSpace(hotkey.Text) ? null : hotkey.Text.Trim();
+            v.AudioCuesEnabled = audioCues.IsChecked == true;
+            v.AudioPingWhileLive = audioPing.IsChecked == true;
+            v.StopStreamsWhenConsoleCloses = stopOnClose.IsChecked == true;
+            v.RecordingEnabled = recEnable.IsChecked == true;
+            v.RecordingFolder = string.IsNullOrWhiteSpace(recFolder.Text) ? null : recFolder.Text.Trim();
+            if (int.TryParse(recMax.Text, out var mb)) v.RecordingMaxFolderMb = mb;
+            v.RecordingOverLimitPolicy = recPolicy.SelectedItem?.ToString() ?? "DeleteOldest";
+            Persist();
+            _host.Video.EnsureWorkersForConfig();
+            VideoHotkeyService.Register(_host);
+            RefreshFov();
+            _ = _host.Video.PushAnnounceAsync();
+        }
+
+        foreach (var c in new System.Windows.Controls.Control[]
+                 {
+                     cam, tag, transport, pushUrl, pushUser, mcast, rtspPort, nic, ffmpeg, resolution, fps, bitrate,
+                     courseOffset, hfov, range, camAz, hotkey, recFolder, recMax, recPolicy,
+                 })
+            BindPersistText(c, SaveVideo);
+        pushPass.PasswordChanged += (_, _) => SaveVideo();
+        foreach (var cb in new[] { audioCues, audioPing, recEnable, streamAudio, sendFov, stopOnClose })
+        {
+            cb.Checked += (_, _) => SaveVideo();
+            cb.Unchecked += (_, _) => SaveVideo();
+        }
+
+        panel.Children.Add(Chip("Persisted", "Video settings save when you change a field."));
+        return panel;
+    }
+
     private UIElement BuildGps()
     {
         var panel = new StackPanel();
@@ -1378,11 +1669,20 @@ public partial class SettingsWindow : Window
             Margin = new Thickness(0, 8, 0, 8),
             IsEnabled = edit,
         };
+        var courseOffset = new TextBox
+        {
+            Text = _host.Config.Gps.CourseOffsetDegrees.ToString("0.###"),
+            IsEnabled = edit,
+        };
         panel.Children.Add(Label("COM port")); panel.Children.Add(port);
         panel.Children.Add(Label("Baud")); panel.Children.Add(baud);
         panel.Children.Add(Label("Source priority")); panel.Children.Add(priority);
         panel.Children.Add(Label("Last-fix hold (seconds)")); panel.Children.Add(hold);
         panel.Children.Add(network);
+        panel.Children.Add(Label("Course offset (°) — also used for video FOV aim"));
+        panel.Children.Add(courseOffset);
+        panel.Children.Add(Blurb(
+            "Added to GPS course for CoT track@course and video sensor azimuth. Same value as Settings → Video."));
         var permRow = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 4, 0, 8) };
         permRow.Children.Add(Btn("Request Windows Location permission", async () =>
         {
@@ -1411,16 +1711,20 @@ public partial class SettingsWindow : Window
             _host.Config.Gps.SourcePriority = priority.SelectedItem?.ToString() ?? "NmeaThenWindows";
             _host.Config.Gps.LastFixHoldSeconds = int.TryParse(hold.Text, out var h) ? h : 30;
             _host.Config.Gps.EnableNetworkFallback = network.IsChecked == true;
+            if (double.TryParse(courseOffset.Text, out var co))
+                _host.Config.Gps.CourseOffsetDegrees = co;
             Persist();
             if (_host.AttachedToService)
                 await _host.ReloadConnectionsAsync();
             else
                 await _host.Gps.ApplySettingsAsync(_host.Config.Gps);
+            _ = _host.Video.PushAnnounceAsync();
         }
 
         BindPersistText(port, () => _ = SaveGpsAsync());
         BindPersistText(baud, () => _ = SaveGpsAsync());
         BindPersistText(hold, () => _ = SaveGpsAsync());
+        BindPersistText(courseOffset, () => _ = SaveGpsAsync());
         priority.SelectionChanged += (_, _) => _ = SaveGpsAsync();
         network.Checked += (_, _) => _ = SaveGpsAsync();
         network.Unchecked += (_, _) => _ = SaveGpsAsync();

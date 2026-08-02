@@ -16,6 +16,7 @@ Windows TAK PLI tracker: tray UI plus optional always-on **Windows Service**. Re
 
 - [Features](features.md) — what ships today and what is planned
 - [Changelog](changelog.md) — release history (Keep a Changelog)
+- [Video streaming](video-streaming.md) — ICU-inspired camera streams, Video Console, FOV CoT, recording
 - [Code signing](code-signing.md) — SmartScreen / SAC, workarounds, Azure Trusted Signing & CI secrets
 - [Always-on / Windows Service](windows-service.md) — service install, IPC, computer vs per-user callsign
 - [Managed devices (TAK Server / Portal)](managed-devices.md) — how PLI identifies WinTAKTracker vs ATAK/CloudTAK

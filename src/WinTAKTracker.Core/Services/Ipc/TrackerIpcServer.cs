@@ -26,6 +26,7 @@ public sealed class TrackerIpcServer : IAsyncDisposable
         nameof(IpcMethod.ClearGpsFix),
         nameof(IpcMethod.UnlockSettings),
         nameof(IpcMethod.LockSettings),
+        nameof(IpcMethod.SetVideoAnnounce),
     };
 
     /// <summary>
@@ -198,6 +199,7 @@ public sealed class TrackerIpcServer : IAsyncDisposable
                 nameof(IpcMethod.ClearGpsFix) => ClearGpsFix(),
                 nameof(IpcMethod.UnlockSettings) => UnlockSettings(request.Payload),
                 nameof(IpcMethod.LockSettings) => LockSettings(),
+                nameof(IpcMethod.SetVideoAnnounce) => SetVideoAnnounce(request.Payload),
                 _ => throw new InvalidOperationException($"Unknown method '{method}'."),
             };
 
@@ -261,6 +263,13 @@ public sealed class TrackerIpcServer : IAsyncDisposable
     {
         var dto = DeserializePayload<SessionUpdateDto>(payload);
         _host.SetActiveSession(dto.LoggedOn ? dto.UserSid : null, dto.UserName);
+        return _host.GetStatus();
+    }
+
+    private object SetVideoAnnounce(JsonElement? payload)
+    {
+        var dto = DeserializePayload<VideoAnnounceDto>(payload);
+        _host.SetVideoAnnounce(dto.ToState());
         return _host.GetStatus();
     }
 

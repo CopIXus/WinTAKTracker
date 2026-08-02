@@ -80,11 +80,32 @@ flowchart TD
 
 Details: [docs/windows-service.md](docs/windows-service.md#identity-rules).
 
+## Video streaming (ICU-inspired)
+
+Laptop or USB cameras can stream live video and advertise it over TAK CoT so **ATAK**, **CloudTAK**, and **TAK Aware** can open the feed (ICU-style discovery). Setup stays in **Settings → Video**; ops use a separate **Video Console** window.
+
+![Video settings with FOV aim viewer (illustrative)](docs/images/video-icu-settings.png)
+
+![Video Console with previews and Start/Stop (illustrative)](docs/images/video-console.png)
+
+### How it works
+
+1. **Configure** under Settings → Video: pick a camera, short tag, transport (on-device RTSP, push to a restreamer such as MediaMTX, or UDP MPEG-TS multicast), encode bitrate, FOV range/HFOV, and optional recording folder.
+2. **Aim** with the FOV viewer (wedges relative to GPS course + shared course offset). The same course offset appears under GPS settings.
+3. **Open Video Console** (tray menu, or auto-open on startup when enabled). Use Stay on top, Start/Stop per feed or Start all. Closing the Console does not stop streams by default.
+4. While LIVE, WinTAKTracker merges `<__video>` + `ConnectionEntry` + `<sensor>` into outbound self-SA (and optional FOV sensor markers) so peers can play the URL.
+5. Optional **recording** writes 5‑minute segments as three files each: `.mp4`, `.sha256`, and `.kml` (GPS samples every 5s).
+
+**Requires FFmpeg** on PATH, beside the EXE, or a path set in Settings → Video. Video is **session-bound** (interactive tray); it does not run from the Windows Service after logoff. The tray icon shows a small camera badge when video is configured, and a LIVE accent while streaming.
+
+Details: [docs/video-streaming.md](docs/video-streaming.md).
+
 ## Features
 
 - **Multi-server TAK** — enroll several profiles, enable/disable per server, TLS (`ssl`) or cleartext TCP, auto-reconnect
 - **Mesh SA** — ATAK-default UDP multicast (`239.2.3.1:6969`), always-on or only when disconnected
-- **GPS** — USB NMEA serial, Windows Location, last-fix hold, and **network/IP geolocation** fallback (approximate)
+- **Video** — ICU-inspired camera streaming + CoT discovery; Video Console; FOV aim; optional recording (needs FFmpeg)
+- **GPS** — USB NMEA serial, Windows Location, last-fix hold, network/IP fallback, course offset
 - **Identity** — per-user callsign while logged in; **sticky last-user callsign after logoff** by default (optional Identity setting reverts to computer name); computer callsign defaults to the Windows PC name
 - **Remote config** — Portal / OpenTAK device-profile prefs and preference URLs apply callsign (with **`.wtt`** suffix) and team color ([docs/remote-config.md](docs/remote-config.md))
 - **Windows Service** (optional) — always-on PLI from Session 0; tray attaches via named-pipe IPC

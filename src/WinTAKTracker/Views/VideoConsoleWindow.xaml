@@ -1,0 +1,38 @@
+<Window x:Class="WinTAKTracker.Views.VideoConsoleWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Style="{DynamicResource AppWindow}"
+        Title="WinTAKTracker — Video Console"
+        Height="520" Width="840"
+        MinHeight="360" MinWidth="560"
+        WindowStartupLocation="CenterScreen"
+        Icon="pack://application:,,,/Assets/WinTAKTrackerLogo.ico">
+    <DockPanel Margin="16">
+        <DockPanel DockPanel.Dock="Top" Margin="0,0,0,12" LastChildFill="False">
+            <TextBlock Text="Video Console"
+                       FontSize="18" FontWeight="SemiBold"
+                       VerticalAlignment="Center"
+                       Foreground="{DynamicResource TextPrimaryBrush}"/>
+            <CheckBox x:Name="StayOnTopCheck"
+                      Content="Stay on top"
+                      Margin="16,0,0,0"
+                      VerticalAlignment="Center"
+                      Checked="StayOnTop_Changed"
+                      Unchecked="StayOnTop_Changed"/>
+            <StackPanel Orientation="Horizontal" DockPanel.Dock="Right" HorizontalAlignment="Right">
+                <Button Content="Start all" Style="{DynamicResource PrimaryButton}"
+                        Margin="0,0,8,0" Click="StartAll_Click"/>
+                <Button Content="Stop all" Style="{DynamicResource SecondaryButton}"
+                        Click="StopAll_Click"/>
+            </StackPanel>
+        </DockPanel>
+        <TextBlock x:Name="StatusLine"
+                   DockPanel.Dock="Bottom"
+                   Margin="0,8,0,0"
+                   Style="{DynamicResource HelperText}"
+                   Text="Configure cameras under Settings → Video."/>
+        <ScrollViewer VerticalScrollBarVisibility="Auto">
+            <UniformGrid x:Name="FeedGrid" Columns="2"/>
+        </ScrollViewer>
+    </DockPanel>
+</Window>

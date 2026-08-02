@@ -47,7 +47,11 @@ public partial class App : Application
             _host = new AppHost();
             await _host.StartAsync();
             MaybePromptCallsignSetup(_host);
-            _host.Tray.ShowSettings();
+            Services.Video.VideoHotkeyService.Register(_host);
+            if (_host.Config.Video.OpenConsoleOnStartup && _host.Config.Video.IsConfigured)
+                _host.Tray.ShowVideoConsole();
+            else
+                _host.Tray.ShowSettings();
         }
         catch (Exception ex)
         {

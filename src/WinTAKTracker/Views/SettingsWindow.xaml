@@ -36,6 +36,7 @@
                     <ListBoxItem Content="Servers" Tag="Servers"/>
                     <ListBoxItem Content="Identity" Tag="Identity"/>
                     <ListBoxItem Content="GPS" Tag="Gps"/>
+                    <ListBoxItem Content="Video" Tag="Video"/>
                     <ListBoxItem Content="Reporting" Tag="Reporting"/>
                     <ListBoxItem Content="Mesh SA" Tag="MeshSa"/>
                     <ListBoxItem Content="Companion apps" Tag="Companions"/>

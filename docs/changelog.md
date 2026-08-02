@@ -22,6 +22,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Optional Authenticode signing in release CI when secrets are set; [Code signing](code-signing.md) for SmartScreen / Smart App Control
 - Status Mode badge (Windows Service vs Standalone); system light/dark theme
 
+### Added
+
+- **ICU-inspired video streaming** — Settings → Video + Video Console, FFmpeg RTSP/push/UDP, `__video`/FOV CoT, FOV aim viewer, course offset, hotkey/audio cues, 5‑min MP4+SHA-256+KML recording ([Video streaming](video-streaming.md))
+
 ### Changed
 
 - **Identity after logoff** — default keeps the last logged-in user’s callsign; Identity setting “On logoff, use computer callsign” restores the old computer-name fallback ([Windows Service](windows-service.md))

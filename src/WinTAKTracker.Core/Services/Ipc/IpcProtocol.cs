@@ -2,6 +2,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using WinTAKTracker.Services.Config;
 using WinTAKTracker.Services.Identity;
+using WinTAKTracker.Services.Reporting;
 using WinTAKTracker.Services.Tray;
 
 namespace WinTAKTracker.Services.Ipc;
@@ -33,6 +34,8 @@ public enum IpcMethod
     UnlockSettings,
     /// <summary>Re-lock settings on the service.</summary>
     LockSettings,
+    /// <summary>Tray pushes live video announce state (URLs / FOV) for CoT merge.</summary>
+    SetVideoAnnounce,
 }
 
 public sealed class UnlockSettingsDto
@@ -147,6 +150,66 @@ public sealed class SessionUpdateDto
     public string? UserSid { get; set; }
     public string? UserName { get; set; }
     public bool LoggedOn { get; set; }
+}
+
+/// <summary>IPC payload for <see cref="IpcMethod.SetVideoAnnounce"/> (same shape as Core state).</summary>
+public sealed class VideoAnnounceDto
+{
+    public bool Active { get; set; }
+    public bool SendFovSensorMarker { get; set; } = true;
+    public List<VideoFeedAnnounceDto> Feeds { get; set; } = [];
+
+    public VideoAnnounceState ToState() => new()
+    {
+        Active = Active,
+        SendFovSensorMarker = SendFovSensorMarker,
+        Feeds = Feeds.Select(f => new VideoFeedAnnounce
+        {
+            FeedId = f.FeedId,
+            Tag = f.Tag,
+            StreamUrl = f.StreamUrl,
+            Alias = f.Alias,
+            VideoUid = f.VideoUid,
+            HfovDegrees = f.HfovDegrees,
+            VfovDegrees = f.VfovDegrees,
+            RangeMeters = f.RangeMeters,
+            AzimuthDegrees = f.AzimuthDegrees,
+            ElevationDegrees = f.ElevationDegrees,
+        }).ToList(),
+    };
+
+    public static VideoAnnounceDto From(VideoAnnounceState state) => new()
+    {
+        Active = state.Active,
+        SendFovSensorMarker = state.SendFovSensorMarker,
+        Feeds = state.Feeds.Select(f => new VideoFeedAnnounceDto
+        {
+            FeedId = f.FeedId,
+            Tag = f.Tag,
+            StreamUrl = f.StreamUrl,
+            Alias = f.Alias,
+            VideoUid = f.VideoUid,
+            HfovDegrees = f.HfovDegrees,
+            VfovDegrees = f.VfovDegrees,
+            RangeMeters = f.RangeMeters,
+            AzimuthDegrees = f.AzimuthDegrees,
+            ElevationDegrees = f.ElevationDegrees,
+        }).ToList(),
+    };
+}
+
+public sealed class VideoFeedAnnounceDto
+{
+    public string FeedId { get; set; } = "";
+    public string Tag { get; set; } = "cam1";
+    public string StreamUrl { get; set; } = "";
+    public string Alias { get; set; } = "";
+    public string VideoUid { get; set; } = "";
+    public double HfovDegrees { get; set; } = 60;
+    public double VfovDegrees { get; set; } = 34;
+    public double RangeMeters { get; set; } = 100;
+    public double AzimuthDegrees { get; set; }
+    public double ElevationDegrees { get; set; }
 }
 
 public static class IpcJson

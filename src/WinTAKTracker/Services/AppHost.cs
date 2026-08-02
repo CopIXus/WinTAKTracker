@@ -10,6 +10,7 @@ using WinTAKTracker.Services.Startup;
 using WinTAKTracker.Services.Tak;
 using WinTAKTracker.Services.Tray;
 using WinTAKTracker.Services.Update;
+using WinTAKTracker.Services.Video;
 
 namespace WinTAKTracker.Services;
 
@@ -38,6 +39,7 @@ public sealed class AppHost : IDisposable
     public IUpdateService Updates => Core.Updates;
     public PowerService Power => Core.Power;
     public TrayIconService Tray { get; }
+    public VideoService Video { get; }
 
     public TrackerStatusDto? LastServiceStatus { get; private set; }
 
@@ -63,6 +65,13 @@ public sealed class AppHost : IDisposable
             Core = new TrackingHost(AppConfigStore.ForUser(), serviceMode: false);
 
         Tray = new TrayIconService(this);
+        Video = new VideoService(this);
+        if (Config.Video.Feeds.Count == 0)
+        {
+            Config.Video.Feeds.Add(new VideoFeedSettings());
+        }
+
+        Video.StateChanged += (_, _) => Tray.RefreshTooltip();
     }
 
     public async Task StartAsync()
@@ -589,6 +598,7 @@ public sealed class AppHost : IDisposable
         }
         if (ServiceClient is not null)
             ServiceClient.DisposeAsync().AsTask().GetAwaiter().GetResult();
+        Video.Dispose();
         Tray.Dispose();
         Core.Dispose();
     }

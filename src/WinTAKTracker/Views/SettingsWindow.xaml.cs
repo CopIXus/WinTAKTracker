@@ -31,6 +31,8 @@ public partial class SettingsWindow : Window
     private UpdateCheckResult? _lastUpdateCheck;
     private string? _updateProgress;
     private readonly List<Action> _serverCardRefreshers = [];
+    private string? _videoExpandedFeedId;
+    private string? _videoSelectedFeedId;
 
     private bool CanEdit => _host.SettingsLock.IsUnlocked;
 
@@ -317,6 +319,7 @@ public partial class SettingsWindow : Window
         ("Position", "IconPosition"),
         ("Motion", "IconMotion"),
         ("Servers", "IconServers"),
+        ("Video", "IconVideo"),
         ("Mesh", "IconMesh"),
         ("Last PLI", "IconClock"),
         ("Callsign", "IconCallsign"),
@@ -698,6 +701,9 @@ public partial class SettingsWindow : Window
             string.IsNullOrEmpty(servers) || servers == "None" ? null : servers,
             connectedCount > 0 ? "ok" : "neutral");
 
+        var (videoValue, videoDetail, videoTone) = FormatVideoStatusSummary();
+        SetStatusTile("Video", videoValue, videoDetail, videoTone);
+
         SetStatusTile("Mesh",
             meshReady ? "Ready" : (_host.Config.MeshSa.Enabled ? "Not ready" : "Off"),
             meshReady ? null : meshDetail,
@@ -728,6 +734,43 @@ public partial class SettingsWindow : Window
             };
             return $"{s.DisplayName}: {label}";
         }));
+    }
+
+    private (string Value, string? Detail, string Tone) FormatVideoStatusSummary()
+    {
+        var cfg = _host.Config.Video;
+        if (!cfg.Enabled && !cfg.IsConfigured && _host.Video.LiveCount == 0)
+            return ("Off", null, "neutral");
+
+        var feeds = cfg.Feeds.Where(f => f.Enabled).ToList();
+        var runtimes = _host.Video.SnapshotRuntimes()
+            .ToDictionary(r => r.FeedId, StringComparer.OrdinalIgnoreCase);
+        var liveCount = _host.Video.LiveCount;
+
+        if (feeds.Count == 0)
+            return ("None", "No enabled camera feeds", "neutral");
+
+        var lines = feeds.Select(f =>
+        {
+            runtimes.TryGetValue(f.Id, out var rt);
+            var name = string.IsNullOrWhiteSpace(f.Tag) ? (f.CameraName ?? f.Id) : f.Tag;
+            if (rt?.IsLive == true)
+                return $"{name}: LIVE";
+            if (!string.IsNullOrWhiteSpace(rt?.LastError))
+                return $"{name}: Error";
+            return $"{name}: Idle";
+        }).ToList();
+
+        var value = liveCount > 0
+            ? (feeds.Count > 1 ? $"LIVE ×{liveCount}/{feeds.Count}" : "LIVE ×1")
+            : (feeds.Count == 1 ? "Idle" : $"{feeds.Count} streams");
+        var detail = string.Join("; ", lines);
+        var tone = liveCount > 0
+            ? "ok"
+            : lines.Any(l => l.Contains("Error", StringComparison.Ordinal))
+                ? "warn"
+                : "neutral";
+        return (value, detail, tone);
     }
 
     private UIElement BuildServers()
@@ -1383,45 +1426,93 @@ public partial class SettingsWindow : Window
         panel.Children.Add(Btn("Open Video Console", () => _host.Tray.ShowVideoConsole()));
 
         panel.Children.Add(SectionHeader("Camera feeds"));
-        var feed = v.Feeds[0];
-        VideoFeedSettings? selectedFeed = feed;
-        var devices = Services.Video.CameraEnumerator.ListDevices(v.FfmpegPath);
+        panel.Children.Add(Blurb(
+            "Each card is one camera feed (tag + device + FOV). Enable the feeds you will use; expand Edit to change settings. " +
+            "Up to 2 concurrent streams recommended."));
+
+        var devices = CameraEnumerator.ListDevices(v.FfmpegPath);
         var camNames = devices.Select(d => d.Name).ToList();
-        if (feed.CameraName is { Length: > 0 } && !camNames.Contains(feed.CameraName))
-            camNames.Insert(0, feed.CameraName);
-        var feedPicker = new ComboBox
+        if (_videoSelectedFeedId is null || v.Feeds.All(f => f.Id != _videoSelectedFeedId))
+            _videoSelectedFeedId = v.Feeds.FirstOrDefault()?.Id;
+        if (_videoExpandedFeedId is not null && v.Feeds.All(f => f.Id != _videoExpandedFeedId))
+            _videoExpandedFeedId = null;
+
+        Action? refreshFovRef = null;
+
+        if (v.Feeds.Count == 0)
         {
-            ItemsSource = v.Feeds.Select(f => $"{f.Tag} ({f.Id})").ToList(),
-            SelectedIndex = 0,
-            IsEnabled = edit,
-            Margin = new Thickness(0, 0, 0, 6),
-        };
-        var cam = new ComboBox
+            panel.Children.Add(Blurb("No camera feeds yet. Add one below."));
+        }
+        else
         {
-            ItemsSource = camNames,
-            Text = feed.CameraName ?? camNames.FirstOrDefault() ?? "",
-            IsEnabled = edit,
-            IsEditable = true,
-        };
-        var tag = new TextBox { Text = feed.Tag, IsEnabled = edit };
-        panel.Children.Add(Label("Selected feed")); panel.Children.Add(feedPicker);
-        panel.Children.Add(Label("Camera")); panel.Children.Add(cam);
-        panel.Children.Add(Label("Short tag (multi-cam alias suffix)")); panel.Children.Add(tag);
+            foreach (var feed in v.Feeds.ToList())
+            {
+                if (feed.CameraName is { Length: > 0 } && !camNames.Contains(feed.CameraName))
+                    camNames.Insert(0, feed.CameraName);
+                panel.Children.Add(BuildVideoFeedCard(
+                    feed, camNames, edit,
+                    isExpanded: string.Equals(feed.Id, _videoExpandedFeedId, StringComparison.OrdinalIgnoreCase),
+                    isSelected: string.Equals(feed.Id, _videoSelectedFeedId, StringComparison.OrdinalIgnoreCase),
+                    onToggleExpand: id =>
+                    {
+                        _videoExpandedFeedId = string.Equals(_videoExpandedFeedId, id, StringComparison.OrdinalIgnoreCase)
+                            ? null
+                            : id;
+                        _videoSelectedFeedId = id;
+                        ShowSection("Video");
+                    },
+                    onSelected: id =>
+                    {
+                        _videoSelectedFeedId = id;
+                        refreshFovRef?.Invoke();
+                    },
+                    onChanged: () =>
+                    {
+                        Persist();
+                        _host.Video.EnsureWorkersForConfig();
+                        refreshFovRef?.Invoke();
+                        _ = _host.Video.PushAnnounceAsync();
+                    },
+                    onDeleted: id =>
+                    {
+                        if (!EnsureEditable()) return;
+                        var target = v.Feeds.FirstOrDefault(f => f.Id == id);
+                        if (target is null) return;
+                        var label = string.IsNullOrWhiteSpace(target.Tag) ? target.Id : target.Tag;
+                        if (AppDialog.Show(this, $"Remove camera feed \"{label}\"?", "Remove feed",
+                                MessageBoxButton.YesNo, dangerPrimary: true) != MessageBoxResult.Yes) return;
+                        v.Feeds.Remove(target);
+                        if (string.Equals(_videoExpandedFeedId, id, StringComparison.OrdinalIgnoreCase))
+                            _videoExpandedFeedId = null;
+                        if (string.Equals(_videoSelectedFeedId, id, StringComparison.OrdinalIgnoreCase))
+                            _videoSelectedFeedId = v.Feeds.FirstOrDefault()?.Id;
+                        Persist();
+                        _host.Video.EnsureWorkersForConfig();
+                        ShowSection("Video");
+                    }));
+            }
+        }
+
         if (edit)
         {
             panel.Children.Add(Btn("Add camera feed", () =>
             {
+                if (!EnsureEditable()) return;
                 if (v.Feeds.Count >= 2)
                 {
-                    Msg("Phase 1 supports up to 2 concurrent feeds (CPU/GPU load).", MessageBoxImage.Information);
-                    return;
+                    Msg("Up to 2 concurrent feeds recommended (CPU/GPU load).", MessageBoxImage.Information);
+                    if (v.Feeds.Count >= 4) return;
                 }
 
                 var n = v.Feeds.Count + 1;
-                v.Feeds.Add(new VideoFeedSettings { Tag = $"cam{n}", Enabled = true });
+                var added = new VideoFeedSettings { Tag = $"cam{n}", Enabled = true };
+                v.Feeds.Add(added);
                 Persist();
+                _videoExpandedFeedId = added.Id;
+                _videoSelectedFeedId = added.Id;
+                _host.Video.EnsureWorkersForConfig();
                 ShowSection("Video");
-            }));
+            }, edit, primary: true));
         }
 
         panel.Children.Add(SectionHeader("Transport"));
@@ -1450,9 +1541,11 @@ public partial class SettingsWindow : Window
         panel.Children.Add(Label("Push password (optional, stored via DPAPI)")); panel.Children.Add(pushPass);
         panel.Children.Add(Label("UDP multicast host:port")); panel.Children.Add(mcast);
         panel.Children.Add(Label("On-device RTSP listen port")); panel.Children.Add(rtspPort);
-        panel.Children.Add(Label("Advertise NIC (LAN IP in CoT)")); panel.Children.Add(nic);
+        panel.Children.Add(Label("Advertise NIC (LAN IP in CoT for On-device RTSP)")); panel.Children.Add(nic);
         panel.Children.Add(Blurb(
-            "On-device RTSP needs an inbound firewall allow for the listen port. Prefer push to MediaMTX for WAN."));
+            "On-device RTSP: CoT URL is rtsp://YOUR-PC-IP:port/live-tag (Auto prefers Wi‑Fi/Ethernet, skips Tailscale/VPN). " +
+            "UDP multicast: CoT URL is the media group (e.g. udp://239.2.3.2:5004), not your PC IP. " +
+            "On-device RTSP needs an inbound firewall allow; prefer push to MediaMTX for WAN."));
 
         panel.Children.Add(SectionHeader("Encode"));
         panel.Children.Add(Blurb(
@@ -1520,10 +1613,10 @@ public partial class SettingsWindow : Window
         panel.Children.Add(streamAudio);
 
         panel.Children.Add(SectionHeader("FOV / aim"));
+        panel.Children.Add(Blurb(
+            "Per-camera HFOV, range, and azimuth offset are edited on each feed card above. " +
+            "Course offset is shared with GPS. Click a wedge/legend to select a feed."));
         var courseOffset = new TextBox { Text = _host.Config.Gps.CourseOffsetDegrees.ToString("0.###"), IsEnabled = edit };
-        var hfov = new TextBox { Text = feed.HfovDegrees.ToString("0.###"), IsEnabled = edit };
-        var range = new TextBox { Text = feed.RangeMeters.ToString("0.###"), IsEnabled = edit };
-        var camAz = new TextBox { Text = feed.AzimuthOffsetDegrees.ToString("0.###"), IsEnabled = edit };
         var sendFov = new CheckBox
         {
             Content = "Send FOV sensor marker (b-m-p-s-p-loc)",
@@ -1531,53 +1624,93 @@ public partial class SettingsWindow : Window
             IsEnabled = edit,
         };
         panel.Children.Add(Label("GPS / course offset (°) — shared with GPS settings")); panel.Children.Add(courseOffset);
-        panel.Children.Add(Label("Camera azimuth offset (°)")); panel.Children.Add(camAz);
-        panel.Children.Add(Label("HFOV (°)")); panel.Children.Add(hfov);
-        panel.Children.Add(Label("FOV range / depth (m)")); panel.Children.Add(range);
         panel.Children.Add(sendFov);
 
         var fovViewer = new FovCotViewerControl { Margin = new Thickness(0, 8, 0, 8) };
         void RefreshFov()
         {
-            var f = selectedFeed ?? v.Feeds[0];
             var fix = _host.AttachedToService
                 ? null
                 : _host.Gps.CurrentFix;
             fovViewer.Update(
                 _host.Config,
-                f.Id,
+                _videoSelectedFeedId ?? v.Feeds.FirstOrDefault()?.Id,
                 fix?.Latitude ?? _host.LastServiceStatus?.Latitude,
                 fix?.Longitude ?? _host.LastServiceStatus?.Longitude,
                 fix?.CourseDegrees ?? _host.LastServiceStatus?.CourseDegrees);
         }
+        refreshFovRef = RefreshFov;
         fovViewer.FeedSelected += (_, id) =>
         {
-            selectedFeed = v.Feeds.FirstOrDefault(x => x.Id == id) ?? v.Feeds[0];
-            var idx = v.Feeds.IndexOf(selectedFeed);
-            if (idx >= 0) feedPicker.SelectedIndex = idx;
-            cam.Text = selectedFeed.CameraName ?? "";
-            tag.Text = selectedFeed.Tag;
-            hfov.Text = selectedFeed.HfovDegrees.ToString("0.###");
-            range.Text = selectedFeed.RangeMeters.ToString("0.###");
-            camAz.Text = selectedFeed.AzimuthOffsetDegrees.ToString("0.###");
-            RefreshFov();
-        };
-        feedPicker.SelectionChanged += (_, _) =>
-        {
-            if (feedPicker.SelectedIndex < 0 || feedPicker.SelectedIndex >= v.Feeds.Count) return;
-            selectedFeed = v.Feeds[feedPicker.SelectedIndex];
-            cam.Text = selectedFeed.CameraName ?? "";
-            tag.Text = selectedFeed.Tag;
-            hfov.Text = selectedFeed.HfovDegrees.ToString("0.###");
-            range.Text = selectedFeed.RangeMeters.ToString("0.###");
-            camAz.Text = selectedFeed.AzimuthOffsetDegrees.ToString("0.###");
-            RefreshFov();
+            _videoSelectedFeedId = id;
+            _videoExpandedFeedId = id;
+            ShowSection("Video");
         };
         panel.Children.Add(fovViewer);
         RefreshFov();
 
         panel.Children.Add(SectionHeader("Hotkey & audio"));
-        var hotkey = new TextBox { Text = v.Hotkey ?? "", IsEnabled = edit };
+        var hotkey = new TextBox
+        {
+            Text = v.Hotkey ?? "",
+            IsEnabled = edit,
+            IsReadOnly = true,
+            ToolTip = "Use Capture to record a keystroke, or Clear to remove.",
+        };
+        var hotkeyWarn = new TextBlock
+        {
+            Style = TryStyle("HelperText"),
+            TextWrapping = TextWrapping.Wrap,
+            Margin = new Thickness(0, 4, 0, 0),
+            Visibility = Visibility.Collapsed,
+        };
+        SetTheme(hotkeyWarn, TextBlock.ForegroundProperty, "StatusWarnFgBrush");
+        void RefreshHotkeyWarn()
+        {
+            var conflict = VideoHotkeyService.DescribeWindowsConflict(hotkey.Text);
+            if (conflict is null)
+            {
+                hotkeyWarn.Text = "";
+                hotkeyWarn.Visibility = Visibility.Collapsed;
+            }
+            else
+            {
+                hotkeyWarn.Text = "Warning: " + conflict;
+                hotkeyWarn.Visibility = Visibility.Visible;
+            }
+        }
+        RefreshHotkeyWarn();
+
+        var hotkeyRow = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 0, 0, 4) };
+        hotkey.MinWidth = 180;
+        hotkey.Margin = new Thickness(0, 0, 8, 0);
+        hotkeyRow.Children.Add(hotkey);
+        void PersistHotkeyOnly()
+        {
+            if (!CanEdit) return;
+            v.Hotkey = string.IsNullOrWhiteSpace(hotkey.Text) ? null : hotkey.Text.Trim();
+            Persist();
+            VideoHotkeyService.Register(_host);
+            RefreshHotkeyWarn();
+        }
+
+        hotkeyRow.Children.Add(Btn("Capture…", () =>
+        {
+            if (!EnsureEditable()) return;
+            var dlg = new HotkeyCaptureWindow { Owner = this };
+            if (dlg.ShowDialog() != true) return;
+            // Empty string from Clear in dialog; Cancel leaves DialogResult false.
+            hotkey.Text = dlg.CapturedHotkey ?? "";
+            PersistHotkeyOnly();
+        }, edit, primary: true));
+        hotkeyRow.Children.Add(new Border { Width = 8 });
+        hotkeyRow.Children.Add(Btn("Clear", () =>
+        {
+            if (!EnsureEditable()) return;
+            hotkey.Text = "";
+            PersistHotkeyOnly();
+        }, edit));
+
         var audioCues = new CheckBox { Content = "Start / stop sounds", IsChecked = v.AudioCuesEnabled, IsEnabled = edit };
         var audioPing = new CheckBox { Content = "Ping every 2 minutes while LIVE", IsChecked = v.AudioPingWhileLive, IsEnabled = edit };
         var stopOnClose = new CheckBox
@@ -1586,7 +1719,10 @@ public partial class SettingsWindow : Window
             IsChecked = v.StopStreamsWhenConsoleCloses,
             IsEnabled = edit,
         };
-        panel.Children.Add(Label("Global hotkey (e.g. Ctrl+Shift+V)")); panel.Children.Add(hotkey);
+        panel.Children.Add(Label("Global hotkey (start/stop primary feed)"));
+        panel.Children.Add(hotkeyRow);
+        panel.Children.Add(hotkeyWarn);
+        panel.Children.Add(Blurb("Capture listens for your keystroke. Common Windows shortcuts show a warning before accept."));
         panel.Children.Add(audioCues);
         panel.Children.Add(audioPing);
         panel.Children.Add(stopOnClose);
@@ -1612,10 +1748,6 @@ public partial class SettingsWindow : Window
         void SaveVideo()
         {
             if (!CanEdit) return;
-            var f = selectedFeed ?? v.Feeds[0];
-            f.Enabled = true;
-            f.CameraName = cam.Text.Trim();
-            f.Tag = string.IsNullOrWhiteSpace(tag.Text) ? "cam1" : tag.Text.Trim();
             v.Transport = transport.SelectedItem?.ToString() ?? "OnDeviceRtsp";
             v.PushUrl = string.IsNullOrWhiteSpace(pushUrl.Text) ? null : pushUrl.Text.Trim();
             v.PushUsername = string.IsNullOrWhiteSpace(pushUser.Text) ? null : pushUser.Text.Trim();
@@ -1643,9 +1775,6 @@ public partial class SettingsWindow : Window
             if (int.TryParse(bitrate.Text, out var br)) v.BitrateKbps = br;
             v.StreamAudio = streamAudio.IsChecked == true;
             if (double.TryParse(courseOffset.Text, out var co)) _host.Config.Gps.CourseOffsetDegrees = co;
-            if (double.TryParse(hfov.Text, out var hv)) f.HfovDegrees = hv;
-            if (double.TryParse(range.Text, out var rg)) f.RangeMeters = rg;
-            if (double.TryParse(camAz.Text, out var az)) f.AzimuthOffsetDegrees = az;
             v.SendFovSensorMarker = sendFov.IsChecked == true;
             v.Hotkey = string.IsNullOrWhiteSpace(hotkey.Text) ? null : hotkey.Text.Trim();
             v.AudioCuesEnabled = audioCues.IsChecked == true;
@@ -1664,8 +1793,8 @@ public partial class SettingsWindow : Window
 
         foreach (var c in new System.Windows.Controls.Control[]
                  {
-                     cam, tag, transport, pushUrl, pushUser, mcast, rtspPort, nic, ffmpeg, resolution, fps, bitrate,
-                     courseOffset, hfov, range, camAz, hotkey, recFolder, recMax, recPolicy,
+                     transport, pushUrl, pushUser, mcast, rtspPort, nic, ffmpeg, resolution, fps, bitrate,
+                     courseOffset, hotkey, recFolder, recMax, recPolicy,
                  })
             BindPersistText(c, SaveVideo);
         pushPass.PasswordChanged += (_, _) => SaveVideo();
@@ -1677,6 +1806,161 @@ public partial class SettingsWindow : Window
 
         panel.Children.Add(Chip("Persisted", "Video settings save when you change a field."));
         return panel;
+    }
+
+    private UIElement BuildVideoFeedCard(
+        VideoFeedSettings feed,
+        IReadOnlyList<string> camNames,
+        bool edit,
+        bool isExpanded,
+        bool isSelected,
+        Action<string> onToggleExpand,
+        Action<string> onSelected,
+        Action onChanged,
+        Action<string> onDeleted)
+    {
+        var card = new Border
+        {
+            Style = TryStyle("ServerCard"),
+            Margin = new Thickness(0, 0, 0, 6),
+        };
+        if (isSelected)
+            card.BorderThickness = new Thickness(2);
+
+        var root = new StackPanel();
+
+        var header = new DockPanel { LastChildFill = true };
+        var actions = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            VerticalAlignment = VerticalAlignment.Center,
+            Margin = new Thickness(8, 0, 0, 0),
+        };
+        DockPanel.SetDock(actions, Dock.Right);
+
+        var editBtn = CompactBtn(isExpanded ? "Done" : "Edit", () => onToggleExpand(feed.Id), edit);
+        editBtn.Margin = new Thickness(0, 0, 4, 0);
+
+        var trashIcon = UiIcons.Create("IconTrash", 1.6, "DangerBrush");
+        var removeBtn = new Button
+        {
+            Content = new Viewbox
+            {
+                Width = 14,
+                Height = 14,
+                Child = trashIcon,
+                HorizontalAlignment = WpfHAlign.Center,
+                VerticalAlignment = VerticalAlignment.Center,
+            },
+            Style = TryStyle("DangerIconButton") ?? TryStyle("IconButton"),
+            ToolTip = "Remove camera feed",
+            IsEnabled = edit,
+        };
+        removeBtn.Click += (_, _) => onDeleted(feed.Id);
+        actions.Children.Add(editBtn);
+        actions.Children.Add(removeBtn);
+        header.Children.Add(actions);
+
+        var primary = new DockPanel { LastChildFill = true, VerticalAlignment = VerticalAlignment.Center };
+        var enableCheck = new CheckBox
+        {
+            Content = "Enable",
+            Margin = new Thickness(0, 0, 10, 0),
+            VerticalAlignment = VerticalAlignment.Center,
+            IsEnabled = edit,
+            IsChecked = feed.Enabled,
+        };
+        DockPanel.SetDock(enableCheck, Dock.Left);
+
+        var camLabel = string.IsNullOrWhiteSpace(feed.CameraName) ? "(no camera)" : feed.CameraName!;
+        var title = new TextBlock
+        {
+            Text = $"{feed.Tag}  ·  {camLabel}",
+            FontWeight = FontWeights.SemiBold,
+            FontSize = 13,
+            VerticalAlignment = VerticalAlignment.Center,
+            TextTrimming = TextTrimming.CharacterEllipsis,
+            ToolTip = $"Feed {feed.Id}\nCamera: {camLabel}\nHFOV {feed.HfovDegrees:0.#}° · range {feed.RangeMeters:0.#} m · az offset {feed.AzimuthOffsetDegrees:0.#}°",
+            Cursor = System.Windows.Input.Cursors.Hand,
+        };
+        SetTheme(title, TextBlock.ForegroundProperty, "TextPrimaryBrush");
+        title.MouseLeftButtonUp += (_, _) =>
+        {
+            onSelected(feed.Id);
+            if (!isExpanded) onToggleExpand(feed.Id);
+        };
+
+        primary.Children.Add(enableCheck);
+        primary.Children.Add(title);
+        header.Children.Add(primary);
+        root.Children.Add(header);
+
+        var suppressing = false;
+        void OnEnableChanged(object? s, RoutedEventArgs e)
+        {
+            if (suppressing || !EnsureEditable()) return;
+            feed.Enabled = enableCheck.IsChecked == true;
+            onChanged();
+        }
+        enableCheck.Checked += OnEnableChanged;
+        enableCheck.Unchecked += OnEnableChanged;
+
+        if (isExpanded)
+        {
+            var detail = new StackPanel { Margin = new Thickness(0, 10, 0, 0) };
+            var names = camNames.ToList();
+            if (feed.CameraName is { Length: > 0 } && !names.Contains(feed.CameraName))
+                names.Insert(0, feed.CameraName);
+
+            var cam = new ComboBox
+            {
+                ItemsSource = names,
+                Text = feed.CameraName ?? names.FirstOrDefault() ?? "",
+                IsEnabled = edit,
+                IsEditable = true,
+            };
+            var tag = new TextBox { Text = feed.Tag, IsEnabled = edit };
+            var camAz = new TextBox { Text = feed.AzimuthOffsetDegrees.ToString("0.###"), IsEnabled = edit };
+            var hfov = new TextBox { Text = feed.HfovDegrees.ToString("0.###"), IsEnabled = edit };
+            var range = new TextBox { Text = feed.RangeMeters.ToString("0.###"), IsEnabled = edit };
+            var elev = new TextBox { Text = feed.ElevationDegrees.ToString("0.###"), IsEnabled = edit };
+
+            detail.Children.Add(Label("Camera device"));
+            detail.Children.Add(cam);
+            detail.Children.Add(Label("Short tag (alias / path suffix)"));
+            detail.Children.Add(tag);
+            detail.Children.Add(Label("Camera azimuth offset (°)"));
+            detail.Children.Add(camAz);
+            detail.Children.Add(Label("HFOV (°)"));
+            detail.Children.Add(hfov);
+            detail.Children.Add(Label("FOV range / depth (m)"));
+            detail.Children.Add(range);
+            detail.Children.Add(Label("Elevation / pitch (°) — CoT only"));
+            detail.Children.Add(elev);
+
+            void SaveFeed()
+            {
+                if (!CanEdit) return;
+                feed.CameraName = cam.Text.Trim();
+                feed.Tag = string.IsNullOrWhiteSpace(tag.Text) ? "cam1" : tag.Text.Trim();
+                if (double.TryParse(camAz.Text, out var az)) feed.AzimuthOffsetDegrees = az;
+                if (double.TryParse(hfov.Text, out var hv)) feed.HfovDegrees = hv;
+                if (double.TryParse(range.Text, out var rg)) feed.RangeMeters = rg;
+                if (double.TryParse(elev.Text, out var el)) feed.ElevationDegrees = el;
+                title.Text = $"{feed.Tag}  ·  {(string.IsNullOrWhiteSpace(feed.CameraName) ? "(no camera)" : feed.CameraName)}";
+                title.ToolTip =
+                    $"Feed {feed.Id}\nCamera: {feed.CameraName ?? "(none)"}\nHFOV {feed.HfovDegrees:0.#}° · range {feed.RangeMeters:0.#} m · az offset {feed.AzimuthOffsetDegrees:0.#}°";
+                onChanged();
+            }
+
+            foreach (var c in new System.Windows.Controls.Control[] { cam, tag, camAz, hfov, range, elev })
+                BindPersistText(c, SaveFeed);
+
+            root.Children.Add(detail);
+        }
+
+        card.Child = root;
+        return card;
     }
 
     private UIElement BuildGps()

@@ -1,0 +1,62 @@
+<Window x:Class="WinTAKTracker.Views.HotkeyCaptureWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Style="{DynamicResource AppWindow}"
+        Title="Capture hotkey"
+        Width="420"
+        SizeToContent="Height"
+        MinWidth="360"
+        WindowStartupLocation="CenterOwner"
+        ResizeMode="NoResize"
+        ShowInTaskbar="False"
+        PreviewKeyDown="Window_PreviewKeyDown">
+    <Grid Margin="24">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+        <TextBlock Grid.Row="0"
+                   Text="Press the key combination you want for start/stop video."
+                   Style="{DynamicResource BlurbText}"
+                   Margin="0,0,0,12"
+                   TextWrapping="Wrap"/>
+        <Border Grid.Row="1"
+                Style="{DynamicResource InfoChip}"
+                Padding="14,12"
+                Margin="0,0,0,10"
+                HorizontalAlignment="Stretch">
+            <TextBlock x:Name="CapturedText"
+                       Text="Waiting for keys…"
+                       FontSize="18"
+                       FontWeight="SemiBold"
+                       HorizontalAlignment="Center"
+                       Foreground="{DynamicResource TextPrimaryBrush}"/>
+        </Border>
+        <TextBlock x:Name="HintText"
+                   Grid.Row="2"
+                   Style="{DynamicResource HelperText}"
+                   Text="Esc cancels. Modifier-only keys are ignored until you press a letter or function key."
+                   TextWrapping="Wrap"
+                   Margin="0,0,0,8"/>
+        <Border x:Name="WarnBanner"
+                Grid.Row="3"
+                Visibility="Collapsed"
+                Background="{DynamicResource DangerBrush}"
+                CornerRadius="8"
+                Padding="12,10"
+                Margin="0,0,0,12">
+            <TextBlock x:Name="WarnText"
+                       TextWrapping="Wrap"
+                       Foreground="{DynamicResource OnAccentBrush}"
+                       FontSize="13"/>
+        </Border>
+        <StackPanel Grid.Row="4" Orientation="Horizontal" HorizontalAlignment="Right">
+            <Button x:Name="ClearBtn" Content="Clear" Style="{DynamicResource SecondaryButton}" Margin="0,0,8,0" Click="Clear_Click"/>
+            <Button Content="Cancel" Style="{DynamicResource SecondaryButton}" Margin="0,0,8,0" IsCancel="True" Click="Cancel_Click"/>
+            <Button x:Name="AcceptBtn" Content="Use this hotkey" Style="{DynamicResource PrimaryButton}" IsEnabled="False" Click="Accept_Click"/>
+        </StackPanel>
+    </Grid>
+</Window>

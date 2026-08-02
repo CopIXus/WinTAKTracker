@@ -157,6 +157,11 @@ public partial class VideoConsoleWindow : Window
         if (feeds.Count == 0)
             StatusLine.Text = "No enabled camera feeds. Open Settings → Video to configure.";
         else if (_host.Video.LiveCount > 0)
-            StatusLine.Text = $"LIVE ×{_host.Video.LiveCount}";
+        {
+            var live = runtimes.Values.FirstOrDefault(r => r.IsLive && !string.IsNullOrWhiteSpace(r.StreamUrl));
+            StatusLine.Text = live?.StreamUrl is { } url
+                ? $"LIVE ×{_host.Video.LiveCount} — {url}"
+                : $"LIVE ×{_host.Video.LiveCount}";
+        }
     }
 }

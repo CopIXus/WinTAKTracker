@@ -146,6 +146,16 @@ public sealed class MeshSaBroadcaster : IDisposable
             .ToList();
     }
 
+    /// <summary>
+    /// IPv4 for CoT/advertise URLs. Auto prefers Ethernet/Wi‑Fi and skips Tailscale/VPN tunnels
+    /// (same rules as Mesh SA), so ATAK peers get a reachable LAN address when possible.
+    /// </summary>
+    public static string? TryResolveAdvertiseIpv4(string? preference)
+    {
+        var sel = SelectInterface(preference ?? "Auto");
+        return sel.Ipv4?.ToString();
+    }
+
     private readonly record struct InterfaceSelection(
         NetworkInterface? Nic,
         IPAddress? Ipv4,

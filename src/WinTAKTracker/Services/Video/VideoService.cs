@@ -7,6 +7,7 @@ using OpenCvSharp.WpfExtensions;
 using WinTAKTracker.Services.Config;
 using WinTAKTracker.Services.Ipc;
 using WinTAKTracker.Services.Reporting;
+using WinTAKTracker.Services.Tak;
 
 namespace WinTAKTracker.Services.Video;
 
@@ -111,8 +112,16 @@ public sealed class VideoService : IDisposable
             throw;
         }
 
-        worker.StartProcess(ffmpeg, args, url);
-        worker.OpenPreview(camIndex);
+        // DirectShow cameras are usually exclusive — release OpenCv preview before FFmpeg grabs the device.
+        worker.ClosePreview();
+        var started = await worker.StartProcessAsync(ffmpeg, args, url).ConfigureAwait(false);
+        if (!started)
+        {
+            worker.OpenPreview(camIndex);
+            StateChanged?.Invoke(this, EventArgs.Empty);
+            throw new InvalidOperationException(worker.LastError ?? "FFmpeg failed to open the camera.");
+        }
+
         VideoAudioCues.PlayStart(cfg.AudioCuesEnabled);
         await PushAnnounceAsync().ConfigureAwait(false);
         StateChanged?.Invoke(this, EventArgs.Empty);
@@ -123,7 +132,11 @@ public sealed class VideoService : IDisposable
         FeedWorker? worker;
         lock (_gate) _workers.TryGetValue(feedId, out worker);
         if (worker is null) return;
+        var camIndex = CameraEnumerator.ResolveIndex(
+            _host.Config.Video.Feeds.FirstOrDefault(f => f.Id == feedId)?.CameraName,
+            _host.Config.Video.FfmpegPath);
         await worker.StopAsync().ConfigureAwait(false);
+        worker.OpenPreview(camIndex);
         VideoAudioCues.PlayStop(_host.Config.Video.AudioCuesEnabled);
         await PushAnnounceAsync().ConfigureAwait(false);
         StateChanged?.Invoke(this, EventArgs.Empty);
@@ -208,10 +221,20 @@ public sealed class VideoService : IDisposable
         {
             foreach (var feed in _host.Config.Video.Feeds.Where(f => f.Enabled))
             {
-                if (!_workers.ContainsKey(feed.Id))
-                    _workers[feed.Id] = new FeedWorker(feed.Id, feed.Tag);
+                if (!_workers.TryGetValue(feed.Id, out var worker))
+                {
+                    worker = new FeedWorker(feed.Id, feed.Tag);
+                    _workers[feed.Id] = worker;
+                }
                 else
-                    _workers[feed.Id].Tag = feed.Tag;
+                    worker.Tag = feed.Tag;
+
+                // Idle preview only — never hold the camera while FFmpeg is LIVE.
+                if (!worker.IsLive)
+                {
+                    var idx = CameraEnumerator.ResolveIndex(feed.CameraName, _host.Config.Video.FfmpegPath);
+                    worker.OpenPreview(idx);
+                }
             }
         }
 
@@ -222,7 +245,7 @@ public sealed class VideoService : IDisposable
     {
         lock (_gate)
         {
-            foreach (var w in _workers.Values)
+            foreach (var w in _workers.Values.Where(x => !x.IsLive))
                 w.GrabPreviewFrame();
         }
 
@@ -271,7 +294,9 @@ public sealed class VideoService : IDisposable
         {
             "Push" when !string.IsNullOrWhiteSpace(cfg.PushUrl) =>
                 InjectPushCredentials(AppendPath(cfg.PushUrl!, tag), cfg),
+            // Multicast CoT URL is the media group, not the PC's unicast IP.
             "UdpMulticast" => $"udp://{cfg.MulticastAddress}:{cfg.MulticastPort}",
+            // On-device RTSP: advertise this PC's LAN IP so ATAK can pull the stream.
             _ => $"rtsp://{GetLanIpv4(cfg.NetworkInterface)}:{cfg.RtspListenPort}{path}",
         };
     }
@@ -314,26 +339,24 @@ public sealed class VideoService : IDisposable
         var videoEsc = EscapeDshow(dshowVideoName);
         string input;
         string enc;
+        // Do not force -video_size on dshow (many webcams return I/O error); scale after capture.
+        var scale = $"-vf scale={cfg.Width}:{cfg.Height}";
         if (cfg.StreamAudio)
         {
             var audio = CameraEnumerator.ResolveDshowAudioName(cfg.FfmpegPath);
             input = audio is null
-                ? $"-f dshow -rtbufsize 100M -framerate {cfg.Fps} -video_size {cfg.Width}x{cfg.Height} " +
-                  $"-i video=\"{videoEsc}\""
-                : $"-f dshow -rtbufsize 100M -framerate {cfg.Fps} -video_size {cfg.Width}x{cfg.Height} " +
-                  $"-i video=\"{videoEsc}\":audio=\"{EscapeDshow(audio)}\"";
+                ? $"-f dshow -rtbufsize 100M -framerate {cfg.Fps} -i video=\"{videoEsc}\""
+                : $"-f dshow -rtbufsize 100M -framerate {cfg.Fps} -i video=\"{videoEsc}\":audio=\"{EscapeDshow(audio)}\"";
             enc = audio is null
-                ? $"-c:v libx264 -preset veryfast -tune zerolatency -b:v {cfg.BitrateKbps}k -g {gop} -pix_fmt yuv420p -an"
-                : $"-c:v libx264 -preset veryfast -tune zerolatency -b:v {cfg.BitrateKbps}k -g {gop} -pix_fmt yuv420p " +
+                ? $"{scale} -c:v libx264 -preset veryfast -tune zerolatency -b:v {cfg.BitrateKbps}k -g {gop} -pix_fmt yuv420p -an"
+                : $"{scale} -c:v libx264 -preset veryfast -tune zerolatency -b:v {cfg.BitrateKbps}k -g {gop} -pix_fmt yuv420p " +
                   "-c:a aac -b:a 128k -ac 1";
         }
         else
         {
-            input =
-                $"-f dshow -rtbufsize 100M -framerate {cfg.Fps} -video_size {cfg.Width}x{cfg.Height} " +
-                $"-i video=\"{videoEsc}\"";
+            input = $"-f dshow -rtbufsize 100M -framerate {cfg.Fps} -i video=\"{videoEsc}\"";
             enc =
-                $"-c:v libx264 -preset veryfast -tune zerolatency -b:v {cfg.BitrateKbps}k -g {gop} -pix_fmt yuv420p -an";
+                $"{scale} -c:v libx264 -preset veryfast -tune zerolatency -b:v {cfg.BitrateKbps}k -g {gop} -pix_fmt yuv420p -an";
         }
 
         string netOut;
@@ -386,49 +409,8 @@ public sealed class VideoService : IDisposable
             "WinTAKTracker");
     }
 
-    private static string GetLanIpv4(string? preferredNic)
-    {
-        try
-        {
-            var nics = NetworkInterface.GetAllNetworkInterfaces()
-                .Where(ni => ni.OperationalStatus == OperationalStatus.Up &&
-                             ni.NetworkInterfaceType is not NetworkInterfaceType.Loopback)
-                .ToList();
-
-            if (!string.IsNullOrWhiteSpace(preferredNic) &&
-                !preferredNic.Equals("Auto", StringComparison.OrdinalIgnoreCase))
-            {
-                var match = nics.FirstOrDefault(n =>
-                    string.Equals(n.Name, preferredNic, StringComparison.OrdinalIgnoreCase) ||
-                    string.Equals(n.Description, preferredNic, StringComparison.OrdinalIgnoreCase));
-                if (match is not null)
-                {
-                    var ip = PrimaryIpv4(match);
-                    if (ip is not null) return ip;
-                }
-            }
-
-            foreach (var ni in nics)
-            {
-                var ip = PrimaryIpv4(ni);
-                if (ip is not null) return ip;
-            }
-        }
-        catch { /* ignore */ }
-
-        return "127.0.0.1";
-    }
-
-    private static string? PrimaryIpv4(NetworkInterface ni)
-    {
-        foreach (var addr in ni.GetIPProperties().UnicastAddresses)
-        {
-            if (addr.Address.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork)
-                return addr.Address.ToString();
-        }
-
-        return null;
-    }
+    private static string GetLanIpv4(string? preferredNic) =>
+        MeshSaBroadcaster.TryResolveAdvertiseIpv4(preferredNic) ?? "127.0.0.1";
 
     public void Dispose()
     {
@@ -467,10 +449,11 @@ public sealed class VideoService : IDisposable
             Tag = tag;
         }
 
-        public void StartProcess(string ffmpeg, string args, string url)
+        public async Task<bool> StartProcessAsync(string ffmpeg, string args, string url)
         {
             StopProcess();
             StreamUrl = url;
+            LastError = null;
             var psi = new ProcessStartInfo
             {
                 FileName = ffmpeg,
@@ -485,30 +468,77 @@ public sealed class VideoService : IDisposable
             {
                 LastError = "Failed to start FFmpeg.";
                 IsLive = false;
-                return;
+                return false;
             }
 
-            _ = Task.Run(() =>
+            var errBuf = new System.Text.StringBuilder();
+            var errTask = Task.Run(() =>
             {
                 try
                 {
-                    var err = _process.StandardError.ReadToEnd();
-                    if (!string.IsNullOrWhiteSpace(err) && err.Contains("error", StringComparison.OrdinalIgnoreCase))
-                        LastError = err.Split('\n').LastOrDefault(l => l.Contains("error", StringComparison.OrdinalIgnoreCase))?.Trim();
+                    while (_process is { HasExited: false } || errBuf.Length == 0)
+                    {
+                        var line = _process?.StandardError.ReadLine();
+                        if (line is null) break;
+                        errBuf.AppendLine(line);
+                        if (line.Contains("error", StringComparison.OrdinalIgnoreCase))
+                            LastError = line.Trim();
+                    }
                 }
                 catch { /* ignore */ }
             });
 
+            // Give FFmpeg a moment to open dshow / bind RTSP before declaring LIVE.
+            await Task.Delay(1200).ConfigureAwait(false);
+            if (_process.HasExited)
+            {
+                try { await errTask.WaitAsync(TimeSpan.FromSeconds(2)).ConfigureAwait(false); } catch { /* ignore */ }
+                LastError ??= "FFmpeg exited immediately. Check camera name / FFmpeg path.";
+                if (errBuf.Length > 0 && LastError.Contains("exited", StringComparison.OrdinalIgnoreCase))
+                {
+                    var line = errBuf.ToString().Split('\n')
+                        .LastOrDefault(l => l.Contains("error", StringComparison.OrdinalIgnoreCase))?.Trim();
+                    if (!string.IsNullOrWhiteSpace(line)) LastError = line;
+                }
+
+                IsLive = false;
+                StreamUrl = null;
+                return false;
+            }
+
+            if (!string.IsNullOrWhiteSpace(LastError) &&
+                LastError.Contains("error", StringComparison.OrdinalIgnoreCase))
+            {
+                StopProcess();
+                IsLive = false;
+                StreamUrl = null;
+                return false;
+            }
+
             IsLive = true;
-            LastError = null;
+            return true;
         }
 
-        public void OpenPreview(int index)
+        public void ClosePreview()
         {
             try
             {
                 _preview?.Release();
                 _preview?.Dispose();
+            }
+            catch { /* ignore */ }
+            finally
+            {
+                _preview = null;
+            }
+        }
+
+        public void OpenPreview(int index)
+        {
+            if (IsLive) return; // camera owned by FFmpeg
+            try
+            {
+                ClosePreview();
                 _preview = new VideoCapture(index, VideoCaptureAPIs.DSHOW);
             }
             catch (Exception ex)

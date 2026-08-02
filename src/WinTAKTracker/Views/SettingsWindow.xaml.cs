@@ -1437,6 +1437,32 @@ public partial class SettingsWindow : Window
 
         var devices = CameraEnumerator.ListDevices(v.FfmpegPath);
         var camNames = devices.Select(d => d.Name).ToList();
+        var openCvList = CameraEnumerator.UsedOpenCvFallback(v.FfmpegPath);
+        if (openCvList)
+        {
+            panel.Children.Add(Blurb(
+                "FFmpeg could not list DirectShow devices. Camera labels like \"Camera 0\" will not stream until FFmpeg can enumerate devices."));
+        }
+        else
+        {
+            // Repair OpenCV-style labels saved before the FFmpeg device-list parser understood newer builds.
+            var repaired = false;
+            foreach (var feed in v.Feeds)
+            {
+                if (!CameraEnumerator.IsOpenCvStyleLabel(feed.CameraName)) continue;
+                var resolved = CameraEnumerator.ResolveDshowVideoName(feed.CameraName, v.FfmpegPath);
+                if (string.IsNullOrWhiteSpace(resolved) ||
+                    string.Equals(resolved, feed.CameraName, StringComparison.Ordinal))
+                    continue;
+                _host.Log.Info("Video",
+                    $"Settings repaired camera \"{feed.CameraName}\" → \"{resolved}\" for feed '{feed.Tag}'");
+                feed.CameraName = resolved;
+                repaired = true;
+            }
+
+            if (repaired) Persist();
+        }
+
         if (_videoSelectedFeedId is null || v.Feeds.All(f => f.Id != _videoSelectedFeedId))
             _videoSelectedFeedId = v.Feeds.FirstOrDefault()?.Id;
         if (_videoExpandedFeedId is not null && v.Feeds.All(f => f.Id != _videoExpandedFeedId))

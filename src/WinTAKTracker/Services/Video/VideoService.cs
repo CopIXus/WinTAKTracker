@@ -30,6 +30,7 @@ public sealed class VideoService : IDisposable
     private readonly object _gate = new();
     private readonly Dictionary<string, FeedWorker> _workers = new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<string> _startingFeeds = new(StringComparer.OrdinalIgnoreCase);
+    private int _previewSuspendDepth;
     private readonly DispatcherTimer _previewTimer;
     private readonly DispatcherTimer _pingTimer;
     private readonly DispatcherTimer _gpsSampleTimer;
@@ -101,102 +102,185 @@ public sealed class VideoService : IDisposable
             _startingFeeds.Add(feedId);
         }
 
+        SuspendPreviews();
         try
         {
-        var (advertiseUrl, ffmpegUrl) = BuildStreamUrls(cfg, feed);
-        var camIndex = CameraEnumerator.ResolveIndex(feed.CameraName, cfg.FfmpegPath);
-        var dshowName = CameraEnumerator.ResolveDshowVideoName(feed.CameraName, cfg.FfmpegPath);
-        var dshowAlt = CameraEnumerator.ResolveDshowVideoAlternativeName(feed.CameraName, cfg.FfmpegPath);
-        try
-        {
-            VideoRecordingHelper.EnforceFolderLimit(
-                ResolveRecordingFolder(cfg), cfg.RecordingMaxFolderMb, cfg.RecordingOverLimitPolicy);
-        }
-        catch (InvalidOperationException ex)
-        {
-            worker.LastError = ex.Message;
-            StateChanged?.Invoke(this, EventArgs.Empty);
-            throw;
-        }
+            var (advertiseUrl, ffmpegUrl) = BuildStreamUrls(cfg, feed);
+            var dshowName = CameraEnumerator.ResolveDshowVideoName(feed.CameraName, cfg.FfmpegPath);
+            var dshowAlt = CameraEnumerator.ResolveDshowVideoAlternativeName(feed.CameraName, cfg.FfmpegPath);
+            var devices = CameraEnumerator.ListDevices(cfg.FfmpegPath);
+            var openCvFallback = CameraEnumerator.UsedOpenCvFallback(cfg.FfmpegPath);
 
-        // DirectShow cameras are exclusive — release every OpenCv preview before FFmpeg opens.
-        CloseAllPreviews();
-        GC.Collect();
-        GC.WaitForPendingFinalizers();
-        await Task.Delay(900).ConfigureAwait(false);
-
-        var attempts = new List<(string Label, string Device, bool StreamAudio)>
-        {
-            ("friendly", dshowName, cfg.StreamAudio),
-        };
-        if (!string.IsNullOrWhiteSpace(dshowAlt) &&
-            !string.Equals(dshowAlt, dshowName, StringComparison.OrdinalIgnoreCase))
-            attempts.Add(("alternative", dshowAlt!, cfg.StreamAudio));
-        if (cfg.StreamAudio)
-        {
-            attempts.Add(("friendly-video-only", dshowName, false));
-            if (!string.IsNullOrWhiteSpace(dshowAlt))
-                attempts.Add(("alternative-video-only", dshowAlt!, false));
-        }
-
-        var started = false;
-        string? lastTried = dshowName;
-        foreach (var (label, device, streamAudio) in attempts)
-        {
-            lastTried = device;
             _host.Log.Info("Video",
-                $"Starting feed '{feed.Tag}' dshow[{label}]=\"{device}\" advertise={advertiseUrl}");
-            var args = BuildFfmpegArgs(cfg, feed, device, ffmpegUrl, worker, streamAudio);
-            started = await worker.StartProcessAsync(ffmpeg, args, advertiseUrl).ConfigureAwait(false);
-            if (started) break;
-            _host.Log.Warn("Video", $"FFmpeg open failed ({label}): {worker.LastError}");
-            await Task.Delay(400).ConfigureAwait(false);
-        }
+                $"Start feed '{feed.Tag}' id={feedId} configuredCamera=\"{feed.CameraName}\" " +
+                $"resolvedDshow=\"{dshowName}\" alt={(dshowAlt ?? "(none)")} " +
+                $"transport={cfg.Transport} ffmpeg=\"{ffmpeg}\" " +
+                $"deviceList={(openCvFallback ? "OpenCV-fallback" : "FFmpeg")} count={devices.Count} " +
+                $"advertise={advertiseUrl}");
 
-        if (!started)
-        {
-            worker.CancelPreparedRecording();
-            worker.OpenPreview(camIndex);
+            if (openCvFallback)
+            {
+                _host.Log.Warn("Video",
+                    "FFmpeg did not list DirectShow devices; camera labels like \"Camera 0\" will fail. " +
+                    "Confirm ffmpeg.exe can run -list_devices.");
+            }
+
+            // Persist real DirectShow friendly name so Settings/Console stop showing "Camera 0".
+            if (!string.IsNullOrWhiteSpace(dshowName) &&
+                !string.Equals(feed.CameraName, dshowName, StringComparison.Ordinal) &&
+                !CameraEnumerator.IsOpenCvStyleLabel(dshowName))
+            {
+                _host.Log.Info("Video",
+                    $"Updating feed camera name \"{feed.CameraName}\" → \"{dshowName}\"");
+                feed.CameraName = dshowName;
+                _ = _host.SaveConfigAsync();
+            }
+
+            try
+            {
+                VideoRecordingHelper.EnforceFolderLimit(
+                    ResolveRecordingFolder(cfg), cfg.RecordingMaxFolderMb, cfg.RecordingOverLimitPolicy);
+            }
+            catch (InvalidOperationException ex)
+            {
+                worker.LastError = ex.Message;
+                _host.Log.Error("Video", ex.Message, ex);
+                StateChanged?.Invoke(this, EventArgs.Empty);
+                throw;
+            }
+
+            // DirectShow cameras are exclusive — release every OpenCv preview before FFmpeg opens.
+            CloseAllPreviews();
+            GC.Collect();
+            GC.WaitForPendingFinalizers();
+            await Task.Delay(1200).ConfigureAwait(false);
+
+            var attempts = new List<(string Label, string Device, bool StreamAudio)>
+            {
+                ("friendly", dshowName, cfg.StreamAudio),
+            };
+            if (!string.IsNullOrWhiteSpace(dshowAlt) &&
+                !string.Equals(dshowAlt, dshowName, StringComparison.OrdinalIgnoreCase))
+                attempts.Add(("alternative", dshowAlt!, cfg.StreamAudio));
+            if (cfg.StreamAudio)
+            {
+                attempts.Add(("friendly-video-only", dshowName, false));
+                if (!string.IsNullOrWhiteSpace(dshowAlt))
+                    attempts.Add(("alternative-video-only", dshowAlt!, false));
+            }
+
+            var started = false;
+            string? lastTried = dshowName;
+            string? lastStderr = null;
+            foreach (var (label, device, streamAudio) in attempts)
+            {
+                lastTried = device;
+                var args = BuildFfmpegArgs(cfg, feed, device, ffmpegUrl, worker, streamAudio);
+                _host.Log.Info("Video",
+                    $"FFmpeg attempt [{label}] device=\"{device}\" audio={streamAudio} args={FormatArgsForLog(args)}");
+                started = await worker.StartProcessAsync(
+                    ffmpeg, args, advertiseUrl,
+                    line =>
+                    {
+                        if (line.Contains("Error", StringComparison.OrdinalIgnoreCase) ||
+                            line.Contains("Could not", StringComparison.OrdinalIgnoreCase) ||
+                            line.Contains("Input #", StringComparison.OrdinalIgnoreCase) ||
+                            line.Contains("Opening", StringComparison.OrdinalIgnoreCase))
+                            _host.Log.Info("Video", "FFmpeg: " + line.Trim());
+                    }).ConfigureAwait(false);
+                lastStderr = worker.LastStderrTail;
+                if (started)
+                {
+                    _host.Log.Info("Video", $"Feed '{feed.Tag}' LIVE url={advertiseUrl}");
+                    break;
+                }
+
+                _host.Log.Warn("Video",
+                    $"FFmpeg open failed ({label}): {worker.LastError}");
+                if (!string.IsNullOrWhiteSpace(lastStderr))
+                    _host.Log.Warn("Video", "FFmpeg stderr tail:\n" + lastStderr);
+                await Task.Delay(400).ConfigureAwait(false);
+            }
+
+            if (!started)
+            {
+                worker.CancelPreparedRecording();
+                var msg = worker.LastError ??
+                          $"FFmpeg failed to open camera \"{lastTried}\". Pick the device again under Settings → Video.";
+                _host.Log.Error("Video",
+                    $"Feed '{feed.Tag}' failed to start. configured=\"{feed.CameraName}\" tried=\"{lastTried}\". {msg}");
+                if (!string.IsNullOrWhiteSpace(lastStderr))
+                    _host.Log.Error("Video", "FFmpeg stderr tail:\n" + lastStderr);
+                StateChanged?.Invoke(this, EventArgs.Empty);
+                throw new InvalidOperationException(msg);
+            }
+
+            if (cfg.RecordingEnabled)
+                worker.BeginPreparedRecording(TimeSpan.FromMinutes(Math.Max(1, cfg.RecordingSegmentMinutes)));
+
+            VideoAudioCues.PlayStart(cfg.AudioCuesEnabled);
+            await PushAnnounceAsync().ConfigureAwait(false);
             StateChanged?.Invoke(this, EventArgs.Empty);
-            throw new InvalidOperationException(
-                worker.LastError ??
-                $"FFmpeg failed to open camera \"{lastTried}\". Pick the device again under Settings → Video.");
-        }
-
-        if (cfg.RecordingEnabled)
-            worker.BeginPreparedRecording(TimeSpan.FromMinutes(Math.Max(1, cfg.RecordingSegmentMinutes)));
-
-        VideoAudioCues.PlayStart(cfg.AudioCuesEnabled);
-        await PushAnnounceAsync().ConfigureAwait(false);
-        StateChanged?.Invoke(this, EventArgs.Empty);
         }
         finally
         {
+            ResumePreviews();
             lock (_gate) _startingFeeds.Remove(feedId);
+            // Restore idle preview only when start failed (LIVE keeps camera for FFmpeg).
+            if (!worker.IsLive)
+            {
+                var idx = CameraEnumerator.ResolveIndex(feed.CameraName, cfg.FfmpegPath);
+                worker.OpenPreview(idx);
+            }
+        }
+    }
+
+    private void SuspendPreviews()
+    {
+        lock (_gate)
+        {
+            _previewSuspendDepth++;
+            CloseAllPreviewsUnlocked();
+        }
+    }
+
+    private void ResumePreviews()
+    {
+        lock (_gate)
+        {
+            if (_previewSuspendDepth > 0)
+                _previewSuspendDepth--;
         }
     }
 
     private void CloseAllPreviews()
     {
-        lock (_gate)
-        {
-            foreach (var w in _workers.Values)
-                w.ClosePreview();
-        }
+        lock (_gate) CloseAllPreviewsUnlocked();
     }
+
+    private void CloseAllPreviewsUnlocked()
+    {
+        foreach (var w in _workers.Values)
+            w.ClosePreview();
+    }
+
+    private static string FormatArgsForLog(IReadOnlyList<string> args) =>
+        string.Join(' ', args.Select(a => a.Contains(' ') || a.Contains('"') ? $"\"{a.Replace("\"", "'")}\"" : a));
 
     public async Task StopFeedAsync(string feedId)
     {
         FeedWorker? worker;
         lock (_gate) _workers.TryGetValue(feedId, out worker);
         if (worker is null) return;
-        var camIndex = CameraEnumerator.ResolveIndex(
-            _host.Config.Video.Feeds.FirstOrDefault(f => f.Id == feedId)?.CameraName,
-            _host.Config.Video.FfmpegPath);
+        var feed = _host.Config.Video.Feeds.FirstOrDefault(f => f.Id == feedId);
+        _host.Log.Info("Video", $"Stopping feed '{worker.Tag}' id={feedId}");
+        var camIndex = CameraEnumerator.ResolveIndex(feed?.CameraName, _host.Config.Video.FfmpegPath);
         await worker.StopAsync().ConfigureAwait(false);
-        worker.OpenPreview(camIndex);
+        if (_previewSuspendDepth == 0)
+            worker.OpenPreview(camIndex);
         VideoAudioCues.PlayStop(_host.Config.Video.AudioCuesEnabled);
         await PushAnnounceAsync().ConfigureAwait(false);
+        _host.Log.Info("Video", $"Feed '{worker.Tag}' stopped");
         StateChanged?.Invoke(this, EventArgs.Empty);
     }
 
@@ -288,8 +372,10 @@ public sealed class VideoService : IDisposable
                 else
                     worker.Tag = feed.Tag;
 
-                // Idle preview only — never hold the camera while FFmpeg is LIVE or starting.
-                if (!worker.IsLive && !_startingFeeds.Contains(feed.Id))
+                // Idle preview only — never hold the camera while FFmpeg is LIVE / starting / suspended.
+                if (_previewSuspendDepth == 0 &&
+                    !worker.IsLive &&
+                    !_startingFeeds.Contains(feed.Id))
                 {
                     var idx = CameraEnumerator.ResolveIndex(feed.CameraName, _host.Config.Video.FfmpegPath);
                     worker.OpenPreview(idx);
@@ -310,11 +396,12 @@ public sealed class VideoService : IDisposable
                 if (w.IsLive && w.ProcessExited)
                 {
                     w.MarkDead("Stream process exited.");
+                    _host.Log.Warn("Video", $"Feed '{w.Tag}' stream process exited.");
                     lostLive = true;
                     continue;
                 }
 
-                if (!w.IsLive)
+                if (_previewSuspendDepth == 0 && !w.IsLive)
                     w.GrabPreviewFrame();
             }
         }
@@ -411,7 +498,7 @@ public sealed class VideoService : IDisposable
         return baseUrl.TrimEnd('/') + "-" + tag;
     }
 
-    private string BuildFfmpegArgs(
+    private List<string> BuildFfmpegArgs(
         VideoSettings cfg,
         VideoFeedSettings feed,
         string dshowVideoName,
@@ -421,46 +508,50 @@ public sealed class VideoService : IDisposable
     {
         var gop = Math.Max(1, cfg.Fps * Math.Max(1, cfg.KeyframeSeconds));
         var videoEsc = EscapeDshow(dshowVideoName);
-        string input;
-        string enc;
-        // Avoid -video_size / -framerate on dshow input (common I/O error sources); scale + -r on encode.
-        var scale = $"-vf scale={cfg.Width}:{cfg.Height} -r {cfg.Fps}";
-        if (streamAudio)
+        var args = new List<string>
         {
-            var audio = CameraEnumerator.ResolveDshowAudioName(cfg.FfmpegPath);
-            input = audio is null
-                ? $"-f dshow -rtbufsize 100M -i video=\"{videoEsc}\""
-                : $"-f dshow -rtbufsize 100M -i video=\"{videoEsc}\":audio=\"{EscapeDshow(audio)}\"";
-            enc = audio is null
-                ? $"{scale} -c:v libx264 -preset veryfast -tune zerolatency -b:v {cfg.BitrateKbps}k -g {gop} -pix_fmt yuv420p -an"
-                : $"{scale} -c:v libx264 -preset veryfast -tune zerolatency -b:v {cfg.BitrateKbps}k -g {gop} -pix_fmt yuv420p " +
-                  "-c:a aac -b:a 128k -ac 1";
-        }
-        else
-        {
-            input = $"-f dshow -rtbufsize 100M -i video=\"{videoEsc}\"";
-            enc =
-                $"{scale} -c:v libx264 -preset veryfast -tune zerolatency -b:v {cfg.BitrateKbps}k -g {gop} -pix_fmt yuv420p -an";
-        }
+            "-hide_banner",
+            "-loglevel", "info",
+            "-f", "dshow",
+            "-rtbufsize", "100M",
+        };
 
-        string netOut;
-        if (cfg.Transport.Equals("UdpMulticast", StringComparison.OrdinalIgnoreCase))
-            netOut = $"-f mpegts \"{streamUrl}\"";
-        else if (cfg.Transport.Equals("Push", StringComparison.OrdinalIgnoreCase) &&
-                 streamUrl.StartsWith("rtmp", StringComparison.OrdinalIgnoreCase))
-            netOut = $"-f flv \"{streamUrl}\"";
-        else if (cfg.Transport.Equals("OnDeviceRtsp", StringComparison.OrdinalIgnoreCase))
-            netOut = $"-f rtsp -rtsp_flags listen \"{streamUrl}\"";
+        // Avoid -video_size / -framerate on dshow input (common I/O error sources); scale + -r on encode.
+        // ArgumentList keeps spaces in device names intact (no brittle Windows argv quoting).
+        string? audio = null;
+        if (streamAudio)
+            audio = CameraEnumerator.ResolveDshowAudioName(cfg.FfmpegPath);
+
+        args.Add("-i");
+        args.Add(audio is null
+            ? $"video={videoEsc}"
+            : $"video={videoEsc}:audio={EscapeDshow(audio)}");
+
+        args.AddRange([
+            "-vf", $"scale={cfg.Width}:{cfg.Height}",
+            "-r", cfg.Fps.ToString(),
+            "-c:v", "libx264",
+            "-preset", "veryfast",
+            "-tune", "zerolatency",
+            "-b:v", $"{cfg.BitrateKbps}k",
+            "-g", gop.ToString(),
+            "-pix_fmt", "yuv420p",
+        ]);
+
+        if (audio is not null)
+            args.AddRange(["-c:a", "aac", "-b:a", "128k", "-ac", "1"]);
         else
-            netOut = $"-f rtsp -rtsp_transport tcp \"{streamUrl}\"";
+            args.Add("-an");
 
         if (!cfg.RecordingEnabled)
-            return $"{input} {enc} {netOut}";
+        {
+            AppendNetworkOutput(args, cfg, streamUrl);
+            return args;
+        }
 
         var folder = ResolveRecordingFolder(cfg);
         Directory.CreateDirectory(folder);
         var identity = _host.Core.GetActiveIdentity();
-        // Stable base for this start attempt; BeginRecording runs only after FFmpeg is healthy.
         var baseName = worker.RecordingBaseName ?? VideoRecordingHelper.BuildSegmentBaseName(
             DateTimeOffset.UtcNow, DateTimeOffset.Now,
             Environment.MachineName, identity.Callsign,
@@ -469,18 +560,42 @@ public sealed class VideoService : IDisposable
         var pattern = Path.Combine(folder, baseName + "_%03d.mp4").Replace('\\', '/');
         var segSec = Math.Max(1, cfg.RecordingSegmentMinutes) * 60;
 
-        // Tee: network + segmented MP4 from one encode.
-        var tee =
-            $"[f=mpegts]{streamUrl}|[f=segment:segment_time={segSec}:reset_timestamps=1]{pattern}";
-        if (!cfg.Transport.Equals("UdpMulticast", StringComparison.OrdinalIgnoreCase))
+        if (cfg.Transport.Equals("UdpMulticast", StringComparison.OrdinalIgnoreCase))
         {
-            // Dual encode: network mux + segmented MP4 (tee is awkward for RTSP listen).
-            return $"{input} {enc} {netOut} " +
-                   $"-c:v libx264 -preset veryfast -b:v {cfg.BitrateKbps}k -g {gop} -pix_fmt yuv420p -an " +
-                   $"-f segment -segment_time {segSec} -reset_timestamps 1 \"{pattern}\"";
+            var tee =
+                $"[f=mpegts]{streamUrl}|[f=segment:segment_time={segSec}:reset_timestamps=1]{pattern}";
+            args.AddRange(["-f", "tee", tee]);
+            return args;
         }
 
-        return $"{input} {enc} -f tee \"{tee}\"";
+        // Dual encode: network mux + segmented MP4 (tee is awkward for RTSP listen).
+        AppendNetworkOutput(args, cfg, streamUrl);
+        args.AddRange([
+            "-c:v", "libx264",
+            "-preset", "veryfast",
+            "-b:v", $"{cfg.BitrateKbps}k",
+            "-g", gop.ToString(),
+            "-pix_fmt", "yuv420p",
+            "-an",
+            "-f", "segment",
+            "-segment_time", segSec.ToString(),
+            "-reset_timestamps", "1",
+            pattern,
+        ]);
+        return args;
+    }
+
+    private static void AppendNetworkOutput(List<string> args, VideoSettings cfg, string streamUrl)
+    {
+        if (cfg.Transport.Equals("UdpMulticast", StringComparison.OrdinalIgnoreCase))
+            args.AddRange(["-f", "mpegts", streamUrl]);
+        else if (cfg.Transport.Equals("Push", StringComparison.OrdinalIgnoreCase) &&
+                 streamUrl.StartsWith("rtmp", StringComparison.OrdinalIgnoreCase))
+            args.AddRange(["-f", "flv", streamUrl]);
+        else if (cfg.Transport.Equals("OnDeviceRtsp", StringComparison.OrdinalIgnoreCase))
+            args.AddRange(["-f", "rtsp", "-rtsp_flags", "listen", streamUrl]);
+        else
+            args.AddRange(["-f", "rtsp", "-rtsp_transport", "tcp", streamUrl]);
     }
 
     private static string EscapeDshow(string s) => s.Replace("\"", "");
@@ -524,6 +639,7 @@ public sealed class VideoService : IDisposable
         public bool ProcessExited => IsLive && (_process is null || _process.HasExited);
         public string? StreamUrl { get; private set; }
         public string? LastError { get; set; }
+        public string? LastStderrTail { get; private set; }
         public BitmapSource? LastPreview { get; private set; }
         public bool Recording => _recording;
         public string? RecordingBaseName => _recordingBase;
@@ -541,20 +657,27 @@ public sealed class VideoService : IDisposable
             Tag = tag;
         }
 
-        public async Task<bool> StartProcessAsync(string ffmpeg, string args, string url)
+        public async Task<bool> StartProcessAsync(
+            string ffmpeg,
+            IReadOnlyList<string> args,
+            string url,
+            Action<string>? onStderrLine = null)
         {
             StopProcess();
             StreamUrl = url;
             LastError = null;
+            LastStderrTail = null;
             var psi = new ProcessStartInfo
             {
                 FileName = ffmpeg,
-                Arguments = args,
                 UseShellExecute = false,
                 RedirectStandardError = true,
                 RedirectStandardOutput = true,
                 CreateNoWindow = true,
             };
+            foreach (var a in args)
+                psi.ArgumentList.Add(a);
+
             _process = Process.Start(psi);
             if (_process is null)
             {
@@ -564,6 +687,7 @@ public sealed class VideoService : IDisposable
             }
 
             var errBuf = new System.Text.StringBuilder();
+            var inputOpened = false;
             _ = Task.Run(() =>
             {
                 try
@@ -573,6 +697,10 @@ public sealed class VideoService : IDisposable
                         var line = _process.StandardError.ReadLine();
                         if (line is null) break;
                         errBuf.AppendLine(line);
+                        onStderrLine?.Invoke(line);
+                        if (line.Contains("Input #0", StringComparison.OrdinalIgnoreCase) ||
+                            line.Contains("Press [q]", StringComparison.OrdinalIgnoreCase))
+                            inputOpened = true;
                         if (IsHardFfmpegError(line))
                             LastError = line.Trim();
                     }
@@ -580,22 +708,27 @@ public sealed class VideoService : IDisposable
                 catch { /* ignore */ }
             });
 
-            // Wait for dshow open / RTSP listen; hard errors usually appear quickly.
-            for (var i = 0; i < 20; i++)
+            // Wait for dshow open / muxer start; hard errors usually appear quickly.
+            for (var i = 0; i < 40; i++)
             {
                 await Task.Delay(150).ConfigureAwait(false);
                 if (_process.HasExited) break;
                 if (IsHardFfmpegError(LastError)) break;
+                if (inputOpened) break;
             }
+
+            LastStderrTail = Tail(errBuf.ToString(), 40);
 
             if (_process.HasExited || IsHardFfmpegError(LastError))
             {
                 await Task.Delay(200).ConfigureAwait(false);
+                LastStderrTail = Tail(errBuf.ToString(), 40);
                 if (string.IsNullOrWhiteSpace(LastError))
                 {
                     var line = errBuf.ToString().Split('\n')
                         .LastOrDefault(l => IsHardFfmpegError(l))?.Trim();
-                    LastError = line ?? "FFmpeg exited. Check camera name under Settings → Video (use FFmpeg device list).";
+                    LastError = line ??
+                                "FFmpeg exited. Check camera name under Settings → Video (use FFmpeg device list).";
                 }
 
                 StopProcess();
@@ -608,10 +741,19 @@ public sealed class VideoService : IDisposable
             return true;
         }
 
+        private static string Tail(string text, int maxLines)
+        {
+            if (string.IsNullOrWhiteSpace(text)) return "";
+            var lines = text.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries);
+            if (lines.Length <= maxLines) return string.Join(Environment.NewLine, lines);
+            return string.Join(Environment.NewLine, lines.TakeLast(maxLines));
+        }
+
         private static bool IsHardFfmpegError(string? line)
         {
             if (string.IsNullOrWhiteSpace(line)) return false;
             return line.Contains("Error opening input", StringComparison.OrdinalIgnoreCase)
+                   || line.Contains("Error opening input files", StringComparison.OrdinalIgnoreCase)
                    || line.Contains("I/O error", StringComparison.OrdinalIgnoreCase)
                    || line.Contains("Could not find video device", StringComparison.OrdinalIgnoreCase)
                    || line.Contains("Could not open video device", StringComparison.OrdinalIgnoreCase)
@@ -639,7 +781,14 @@ public sealed class VideoService : IDisposable
             try
             {
                 ClosePreview();
-                _preview = new VideoCapture(index, VideoCaptureAPIs.DSHOW);
+                // Prefer MSMF for idle preview so FFmpeg's dshow open is less likely to fight the same graph.
+                _preview = new VideoCapture(index, VideoCaptureAPIs.MSMF);
+                if (!_preview.IsOpened())
+                {
+                    _preview.Release();
+                    _preview.Dispose();
+                    _preview = new VideoCapture(index, VideoCaptureAPIs.DSHOW);
+                }
             }
             catch (Exception ex)
             {

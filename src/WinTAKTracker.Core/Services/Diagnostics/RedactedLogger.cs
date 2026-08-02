@@ -92,7 +92,18 @@ public sealed class RedactedLogger : IRedactedLogger, IDisposable
 
     private void Write(LogLevel level, string category, string message)
     {
-        if (level < _min) return;
+        // Video ops always keep Information+ so stream start/stop/FFmpeg failures are diagnosable
+        // even when Diagnostics.LogLevel is Error.
+        var videoOps = string.Equals(category, "Video", StringComparison.OrdinalIgnoreCase);
+        if (videoOps)
+        {
+            if (level < LogLevel.Information) return;
+        }
+        else if (level < _min)
+        {
+            return;
+        }
+
         var redacted = Redact(message);
         var line = $"{DateTimeOffset.Now:yyyy-MM-dd HH:mm:ss.fff zzz} [{level}] {category}: {redacted}";
         lock (_gate)

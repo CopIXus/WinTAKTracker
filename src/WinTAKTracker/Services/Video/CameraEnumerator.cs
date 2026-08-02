@@ -9,7 +9,12 @@ public sealed record CameraDevice(int Index, string Name, string? AlternativeNam
 public static class CameraEnumerator
 {
     private static readonly Regex QuotedName = new("\"([^\"]+)\"", RegexOptions.Compiled);
-    private static readonly Regex CameraIndexLabel = new(@"^Camera\s+(\d+)\b", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+    private static readonly Regex TypedDevice = new(
+        "\"([^\"]+)\"\\s*\\((video|audio)\\)",
+        RegexOptions.IgnoreCase | RegexOptions.Compiled);
+    private static readonly Regex CameraIndexLabel = new(
+        @"^Camera\s+(\d+)\b",
+        RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
     /// <summary>
     /// Prefer FFmpeg DirectShow friendly names; fall back to OpenCvSharp index probes.
@@ -21,6 +26,9 @@ public static class CameraEnumerator
         return ListViaOpenCv();
     }
 
+    public static bool UsedOpenCvFallback(string? ffmpegPath = null) =>
+        ListViaFfmpeg(ffmpegPath).Count == 0;
+
     public static int ResolveIndex(string? cameraName, string? ffmpegPath = null)
     {
         if (string.IsNullOrWhiteSpace(cameraName)) return 0;
@@ -29,25 +37,32 @@ public static class CameraEnumerator
         if (m.Success && int.TryParse(m.Groups[1].Value, out idx)) return idx;
 
         var devices = ListDevices(ffmpegPath);
-        var match = FindDevice(devices, cameraName);
+        var match = FindDevice(devices, cameraName, allowIndexFallback: false);
         return match?.Index ?? 0;
     }
 
-    /// <summary>DirectShow device string for FFmpeg <c>-i video="…"</c> (friendly name, not "Camera 0").</summary>
+    /// <summary>DirectShow device string for FFmpeg <c>-i video=…</c> (friendly name, not "Camera 0").</summary>
     public static string ResolveDshowVideoName(string? cameraName, string? ffmpegPath = null)
     {
-        var devices = ListDevices(ffmpegPath);
-        if (devices.Count == 0) return cameraName?.Trim() ?? "0";
+        var ffmpegDevices = ListViaFfmpeg(ffmpegPath);
+        if (ffmpegDevices.Count > 0)
+        {
+            var match = FindDevice(ffmpegDevices, cameraName, allowIndexFallback: true);
+            if (match is not null) return match.Name;
+            return ffmpegDevices[0].Name;
+        }
 
-        var match = FindDevice(devices, cameraName);
-        return match?.Name ?? devices[0].Name;
+        // OpenCV-only listing — "Camera N" is not a valid dshow friendly name for FFmpeg.
+        if (string.IsNullOrWhiteSpace(cameraName))
+            return "0";
+        return cameraName.Trim();
     }
 
-    /// <summary>FFmpeg alternative name (<c>@device_…</c>) when available — often more reliable than the friendly name.</summary>
+    /// <summary>FFmpeg alternative name (<c>@device_…</c>) when available.</summary>
     public static string? ResolveDshowVideoAlternativeName(string? cameraName, string? ffmpegPath = null)
     {
-        var devices = ListDevices(ffmpegPath);
-        var match = FindDevice(devices, cameraName);
+        var devices = ListViaFfmpeg(ffmpegPath);
+        var match = FindDevice(devices, cameraName, allowIndexFallback: true);
         return match?.AlternativeName;
     }
 
@@ -66,10 +81,22 @@ public static class CameraEnumerator
         }
     }
 
-    private static CameraDevice? FindDevice(IReadOnlyList<CameraDevice> devices, string? cameraName)
+    /// <summary>True when <paramref name="cameraName"/> is an OpenCV-style label FFmpeg cannot open directly.</summary>
+    public static bool IsOpenCvStyleLabel(string? cameraName)
+    {
+        if (string.IsNullOrWhiteSpace(cameraName)) return false;
+        var t = cameraName.Trim();
+        return int.TryParse(t, out _) || CameraIndexLabel.IsMatch(t);
+    }
+
+    private static CameraDevice? FindDevice(
+        IReadOnlyList<CameraDevice> devices,
+        string? cameraName,
+        bool allowIndexFallback)
     {
         if (devices.Count == 0) return null;
-        if (string.IsNullOrWhiteSpace(cameraName)) return devices[0];
+        if (string.IsNullOrWhiteSpace(cameraName))
+            return allowIndexFallback ? devices[0] : null;
 
         var trimmed = cameraName.Trim();
         if (int.TryParse(trimmed, out var idx) ||
@@ -77,6 +104,7 @@ public static class CameraEnumerator
         {
             var byIndex = devices.FirstOrDefault(d => d.Index == idx);
             if (byIndex is not null) return byIndex;
+            return allowIndexFallback ? devices[0] : null;
         }
 
         var exact = devices.FirstOrDefault(d =>
@@ -84,10 +112,9 @@ public static class CameraEnumerator
             string.Equals(d.AlternativeName, trimmed, StringComparison.OrdinalIgnoreCase));
         if (exact is not null) return exact;
 
-        var partial = devices.FirstOrDefault(d =>
+        return devices.FirstOrDefault(d =>
             d.Name.Contains(trimmed, StringComparison.OrdinalIgnoreCase) ||
             trimmed.Contains(d.Name, StringComparison.OrdinalIgnoreCase));
-        return partial ?? devices[0];
     }
 
     private static List<CameraDevice> ListViaFfmpeg(string? ffmpegPath)
@@ -150,15 +177,21 @@ public static class CameraEnumerator
         return list;
     }
 
-    private static IEnumerable<(string Name, string? Alt)> ParseVideoDevices(string stderr)
+    /// <summary>
+    /// Supports classic dshow banners and newer FFmpeg lines like
+    /// <c>"Name" (video)</c> / <c>Alternative name "…"</c>.
+    /// </summary>
+    internal static IEnumerable<(string Name, string? Alt)> ParseVideoDevices(string stderr)
     {
-        var inVideo = false;
+        var inLegacyVideo = false;
         string? pendingName = null;
+
         foreach (var raw in stderr.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries))
         {
             var line = raw;
-            if (line.Contains("DirectShow video devices", StringComparison.OrdinalIgnoreCase) ||
-                line.Contains("video devices", StringComparison.OrdinalIgnoreCase))
+
+            var typed = TypedDevice.Match(line);
+            if (typed.Success)
             {
                 if (pendingName is not null)
                 {
@@ -166,19 +199,34 @@ public static class CameraEnumerator
                     pendingName = null;
                 }
 
-                inVideo = true;
+                if (typed.Groups[2].Value.Equals("video", StringComparison.OrdinalIgnoreCase))
+                    pendingName = typed.Groups[1].Value;
+                // audio lines end the pending video without an alt name
+                continue;
+            }
+
+            if (line.Contains("DirectShow video devices", StringComparison.OrdinalIgnoreCase) ||
+                (line.Contains("video devices", StringComparison.OrdinalIgnoreCase) &&
+                 !line.Contains("(video)", StringComparison.OrdinalIgnoreCase)))
+            {
+                if (pendingName is not null)
+                {
+                    yield return (pendingName, null);
+                    pendingName = null;
+                }
+
+                inLegacyVideo = true;
                 continue;
             }
 
             if (line.Contains("DirectShow audio devices", StringComparison.OrdinalIgnoreCase) ||
-                line.Contains("audio devices", StringComparison.OrdinalIgnoreCase))
+                (line.Contains("audio devices", StringComparison.OrdinalIgnoreCase) &&
+                 !line.Contains("(audio)", StringComparison.OrdinalIgnoreCase)))
             {
                 if (pendingName is not null)
                     yield return (pendingName, null);
                 yield break;
             }
-
-            if (!inVideo) continue;
 
             if (line.Contains("Alternative name", StringComparison.OrdinalIgnoreCase))
             {
@@ -191,6 +239,9 @@ public static class CameraEnumerator
 
                 continue;
             }
+
+            if (!inLegacyVideo) continue;
+            if (line.Contains("Alternative name", StringComparison.OrdinalIgnoreCase)) continue;
 
             var m = QuotedName.Match(line);
             if (!m.Success) continue;
@@ -205,12 +256,21 @@ public static class CameraEnumerator
 
     private static string? ParseFirstAudio(string stderr)
     {
+        foreach (var raw in stderr.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries))
+        {
+            var typed = TypedDevice.Match(raw);
+            if (typed.Success &&
+                typed.Groups[2].Value.Equals("audio", StringComparison.OrdinalIgnoreCase))
+                return typed.Groups[1].Value;
+        }
+
         var inAudio = false;
         foreach (var raw in stderr.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries))
         {
             var line = raw;
             if (line.Contains("DirectShow audio devices", StringComparison.OrdinalIgnoreCase) ||
-                line.Contains("audio devices", StringComparison.OrdinalIgnoreCase))
+                (line.Contains("audio devices", StringComparison.OrdinalIgnoreCase) &&
+                 !line.Contains("(audio)", StringComparison.OrdinalIgnoreCase)))
             {
                 inAudio = true;
                 continue;

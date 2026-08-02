@@ -750,22 +750,27 @@ public partial class SettingsWindow : Window
         if (feeds.Count == 0)
             return ("None", "No enabled camera feeds", "neutral");
 
+        var playableCount = runtimes.Values.Count(r => r.IsPlayable);
         var lines = feeds.Select(f =>
         {
             runtimes.TryGetValue(f.Id, out var rt);
             var name = string.IsNullOrWhiteSpace(f.Tag) ? (f.CameraName ?? f.Id) : f.Tag;
-            if (rt?.IsLive == true)
+            if (rt?.IsPlayable == true)
                 return $"{name}: LIVE";
+            if (rt?.IsLive == true)
+                return $"{name}: Starting";
             if (!string.IsNullOrWhiteSpace(rt?.LastError))
                 return $"{name}: Error";
             return $"{name}: Idle";
         }).ToList();
 
-        var value = liveCount > 0
-            ? (feeds.Count > 1 ? $"LIVE ×{liveCount}/{feeds.Count}" : "LIVE ×1")
-            : (feeds.Count == 1 ? "Idle" : $"{feeds.Count} streams");
+        var value = playableCount > 0
+            ? (feeds.Count > 1 ? $"LIVE ×{playableCount}/{feeds.Count}" : "LIVE ×1")
+            : liveCount > 0
+                ? "Starting…"
+                : (feeds.Count == 1 ? "Idle" : $"{feeds.Count} streams");
         var detail = string.Join("; ", lines);
-        var tone = liveCount > 0
+        var tone = playableCount > 0
             ? "ok"
             : lines.Any(l => l.Contains("Error", StringComparison.Ordinal))
                 ? "warn"

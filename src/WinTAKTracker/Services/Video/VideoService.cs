@@ -16,6 +16,8 @@ public sealed class VideoFeedRuntime
     public required string FeedId { get; init; }
     public required string Tag { get; init; }
     public bool IsLive { get; set; }
+    /// <summary>LIVE and FFmpeg still healthy — safe to advertise CoT / FOV.</summary>
+    public bool IsPlayable { get; set; }
     public string? StreamUrl { get; set; }
     public string? LastError { get; set; }
     public BitmapSource? PreviewFrame { get; set; }
@@ -27,6 +29,7 @@ public sealed class VideoService : IDisposable
     private readonly AppHost _host;
     private readonly object _gate = new();
     private readonly Dictionary<string, FeedWorker> _workers = new(StringComparer.OrdinalIgnoreCase);
+    private readonly HashSet<string> _startingFeeds = new(StringComparer.OrdinalIgnoreCase);
     private readonly DispatcherTimer _previewTimer;
     private readonly DispatcherTimer _pingTimer;
     private readonly DispatcherTimer _gpsSampleTimer;
@@ -66,6 +69,7 @@ public sealed class VideoService : IDisposable
                 FeedId = w.FeedId,
                 Tag = w.Tag,
                 IsLive = w.IsLive,
+                IsPlayable = w.IsPlayable,
                 StreamUrl = w.StreamUrl,
                 LastError = w.LastError,
                 PreviewFrame = w.LastPreview,
@@ -94,12 +98,15 @@ public sealed class VideoService : IDisposable
             }
 
             if (worker.IsLive) return;
+            _startingFeeds.Add(feedId);
         }
 
-        var url = BuildStreamUrl(cfg, feed);
+        try
+        {
+        var (advertiseUrl, ffmpegUrl) = BuildStreamUrls(cfg, feed);
         var camIndex = CameraEnumerator.ResolveIndex(feed.CameraName, cfg.FfmpegPath);
         var dshowName = CameraEnumerator.ResolveDshowVideoName(feed.CameraName, cfg.FfmpegPath);
-        var args = BuildFfmpegArgs(cfg, feed, dshowName, url, worker);
+        var dshowAlt = CameraEnumerator.ResolveDshowVideoAlternativeName(feed.CameraName, cfg.FfmpegPath);
         try
         {
             VideoRecordingHelper.EnforceFolderLimit(
@@ -112,19 +119,70 @@ public sealed class VideoService : IDisposable
             throw;
         }
 
-        // DirectShow cameras are usually exclusive — release OpenCv preview before FFmpeg grabs the device.
-        worker.ClosePreview();
-        var started = await worker.StartProcessAsync(ffmpeg, args, url).ConfigureAwait(false);
+        // DirectShow cameras are exclusive — release every OpenCv preview before FFmpeg opens.
+        CloseAllPreviews();
+        GC.Collect();
+        GC.WaitForPendingFinalizers();
+        await Task.Delay(900).ConfigureAwait(false);
+
+        var attempts = new List<(string Label, string Device, bool StreamAudio)>
+        {
+            ("friendly", dshowName, cfg.StreamAudio),
+        };
+        if (!string.IsNullOrWhiteSpace(dshowAlt) &&
+            !string.Equals(dshowAlt, dshowName, StringComparison.OrdinalIgnoreCase))
+            attempts.Add(("alternative", dshowAlt!, cfg.StreamAudio));
+        if (cfg.StreamAudio)
+        {
+            attempts.Add(("friendly-video-only", dshowName, false));
+            if (!string.IsNullOrWhiteSpace(dshowAlt))
+                attempts.Add(("alternative-video-only", dshowAlt!, false));
+        }
+
+        var started = false;
+        string? lastTried = dshowName;
+        foreach (var (label, device, streamAudio) in attempts)
+        {
+            lastTried = device;
+            _host.Log.Info("Video",
+                $"Starting feed '{feed.Tag}' dshow[{label}]=\"{device}\" advertise={advertiseUrl}");
+            var args = BuildFfmpegArgs(cfg, feed, device, ffmpegUrl, worker, streamAudio);
+            started = await worker.StartProcessAsync(ffmpeg, args, advertiseUrl).ConfigureAwait(false);
+            if (started) break;
+            _host.Log.Warn("Video", $"FFmpeg open failed ({label}): {worker.LastError}");
+            await Task.Delay(400).ConfigureAwait(false);
+        }
+
         if (!started)
         {
+            worker.CancelPreparedRecording();
             worker.OpenPreview(camIndex);
             StateChanged?.Invoke(this, EventArgs.Empty);
-            throw new InvalidOperationException(worker.LastError ?? "FFmpeg failed to open the camera.");
+            throw new InvalidOperationException(
+                worker.LastError ??
+                $"FFmpeg failed to open camera \"{lastTried}\". Pick the device again under Settings → Video.");
         }
+
+        if (cfg.RecordingEnabled)
+            worker.BeginPreparedRecording(TimeSpan.FromMinutes(Math.Max(1, cfg.RecordingSegmentMinutes)));
 
         VideoAudioCues.PlayStart(cfg.AudioCuesEnabled);
         await PushAnnounceAsync().ConfigureAwait(false);
         StateChanged?.Invoke(this, EventArgs.Empty);
+        }
+        finally
+        {
+            lock (_gate) _startingFeeds.Remove(feedId);
+        }
+    }
+
+    private void CloseAllPreviews()
+    {
+        lock (_gate)
+        {
+            foreach (var w in _workers.Values)
+                w.ClosePreview();
+        }
     }
 
     public async Task StopFeedAsync(string feedId)
@@ -172,7 +230,8 @@ public sealed class VideoService : IDisposable
         List<VideoFeedAnnounce> feeds;
         lock (_gate)
         {
-            feeds = _workers.Values.Where(w => w.IsLive && !string.IsNullOrWhiteSpace(w.StreamUrl))
+            // CoT / FOV only for playable LIVE feeds (FFmpeg still running, URL set, no hard error).
+            feeds = _workers.Values.Where(w => w.IsPlayable)
                 .Select(w =>
                 {
                     var feedCfg = cfg.Video.Feeds.FirstOrDefault(f => f.Id == w.FeedId)
@@ -196,7 +255,7 @@ public sealed class VideoService : IDisposable
         var state = new VideoAnnounceState
         {
             Active = feeds.Count > 0,
-            SendFovSensorMarker = cfg.Video.SendFovSensorMarker,
+            SendFovSensorMarker = cfg.Video.SendFovSensorMarker && feeds.Count > 0,
             Feeds = feeds,
         };
 
@@ -229,8 +288,8 @@ public sealed class VideoService : IDisposable
                 else
                     worker.Tag = feed.Tag;
 
-                // Idle preview only — never hold the camera while FFmpeg is LIVE.
-                if (!worker.IsLive)
+                // Idle preview only — never hold the camera while FFmpeg is LIVE or starting.
+                if (!worker.IsLive && !_startingFeeds.Contains(feed.Id))
                 {
                     var idx = CameraEnumerator.ResolveIndex(feed.CameraName, _host.Config.Video.FfmpegPath);
                     worker.OpenPreview(idx);
@@ -243,11 +302,25 @@ public sealed class VideoService : IDisposable
 
     private void TickPreview()
     {
+        var lostLive = false;
         lock (_gate)
         {
-            foreach (var w in _workers.Values.Where(x => !x.IsLive))
-                w.GrabPreviewFrame();
+            foreach (var w in _workers.Values)
+            {
+                if (w.IsLive && w.ProcessExited)
+                {
+                    w.MarkDead("Stream process exited.");
+                    lostLive = true;
+                    continue;
+                }
+
+                if (!w.IsLive)
+                    w.GrabPreviewFrame();
+            }
         }
+
+        if (lostLive)
+            _ = PushAnnounceAsync();
 
         StateChanged?.Invoke(this, EventArgs.Empty);
     }
@@ -286,19 +359,29 @@ public sealed class VideoService : IDisposable
         }
     }
 
-    private string BuildStreamUrl(VideoSettings cfg, VideoFeedSettings feed)
+    /// <summary>Returns (advertiseUrl for CoT, ffmpegUrl for process args).</summary>
+    private (string Advertise, string Ffmpeg) BuildStreamUrls(VideoSettings cfg, VideoFeedSettings feed)
     {
         var tag = CotVideoBuilder.Sanitize(feed.Tag);
         var path = $"/live-{tag}";
-        return cfg.Transport switch
+        if (cfg.Transport.Equals("Push", StringComparison.OrdinalIgnoreCase) &&
+            !string.IsNullOrWhiteSpace(cfg.PushUrl))
         {
-            "Push" when !string.IsNullOrWhiteSpace(cfg.PushUrl) =>
-                InjectPushCredentials(AppendPath(cfg.PushUrl!, tag), cfg),
-            // Multicast CoT URL is the media group, not the PC's unicast IP.
-            "UdpMulticast" => $"udp://{cfg.MulticastAddress}:{cfg.MulticastPort}",
-            // On-device RTSP: advertise this PC's LAN IP so ATAK can pull the stream.
-            _ => $"rtsp://{GetLanIpv4(cfg.NetworkInterface)}:{cfg.RtspListenPort}{path}",
-        };
+            var u = InjectPushCredentials(AppendPath(cfg.PushUrl!, tag), cfg);
+            return (u, u);
+        }
+
+        if (cfg.Transport.Equals("UdpMulticast", StringComparison.OrdinalIgnoreCase))
+        {
+            var u = $"udp://{cfg.MulticastAddress}:{cfg.MulticastPort}";
+            return (u, u);
+        }
+
+        // Listen on all interfaces; advertise the preferred LAN IP in CoT.
+        var lan = GetLanIpv4(cfg.NetworkInterface);
+        var advertise = $"rtsp://{lan}:{cfg.RtspListenPort}{path}";
+        var listen = $"rtsp://0.0.0.0:{cfg.RtspListenPort}{path}";
+        return (advertise, listen);
     }
 
     private string InjectPushCredentials(string url, VideoSettings cfg)
@@ -333,20 +416,21 @@ public sealed class VideoService : IDisposable
         VideoFeedSettings feed,
         string dshowVideoName,
         string streamUrl,
-        FeedWorker worker)
+        FeedWorker worker,
+        bool streamAudio)
     {
         var gop = Math.Max(1, cfg.Fps * Math.Max(1, cfg.KeyframeSeconds));
         var videoEsc = EscapeDshow(dshowVideoName);
         string input;
         string enc;
-        // Do not force -video_size on dshow (many webcams return I/O error); scale after capture.
-        var scale = $"-vf scale={cfg.Width}:{cfg.Height}";
-        if (cfg.StreamAudio)
+        // Avoid -video_size / -framerate on dshow input (common I/O error sources); scale + -r on encode.
+        var scale = $"-vf scale={cfg.Width}:{cfg.Height} -r {cfg.Fps}";
+        if (streamAudio)
         {
             var audio = CameraEnumerator.ResolveDshowAudioName(cfg.FfmpegPath);
             input = audio is null
-                ? $"-f dshow -rtbufsize 100M -framerate {cfg.Fps} -i video=\"{videoEsc}\""
-                : $"-f dshow -rtbufsize 100M -framerate {cfg.Fps} -i video=\"{videoEsc}\":audio=\"{EscapeDshow(audio)}\"";
+                ? $"-f dshow -rtbufsize 100M -i video=\"{videoEsc}\""
+                : $"-f dshow -rtbufsize 100M -i video=\"{videoEsc}\":audio=\"{EscapeDshow(audio)}\"";
             enc = audio is null
                 ? $"{scale} -c:v libx264 -preset veryfast -tune zerolatency -b:v {cfg.BitrateKbps}k -g {gop} -pix_fmt yuv420p -an"
                 : $"{scale} -c:v libx264 -preset veryfast -tune zerolatency -b:v {cfg.BitrateKbps}k -g {gop} -pix_fmt yuv420p " +
@@ -354,7 +438,7 @@ public sealed class VideoService : IDisposable
         }
         else
         {
-            input = $"-f dshow -rtbufsize 100M -framerate {cfg.Fps} -i video=\"{videoEsc}\"";
+            input = $"-f dshow -rtbufsize 100M -i video=\"{videoEsc}\"";
             enc =
                 $"{scale} -c:v libx264 -preset veryfast -tune zerolatency -b:v {cfg.BitrateKbps}k -g {gop} -pix_fmt yuv420p -an";
         }
@@ -376,13 +460,14 @@ public sealed class VideoService : IDisposable
         var folder = ResolveRecordingFolder(cfg);
         Directory.CreateDirectory(folder);
         var identity = _host.Core.GetActiveIdentity();
-        var baseName = VideoRecordingHelper.BuildSegmentBaseName(
+        // Stable base for this start attempt; BeginRecording runs only after FFmpeg is healthy.
+        var baseName = worker.RecordingBaseName ?? VideoRecordingHelper.BuildSegmentBaseName(
             DateTimeOffset.UtcNow, DateTimeOffset.Now,
             Environment.MachineName, identity.Callsign,
             Environment.UserName, feed.Tag);
+        worker.PrepareRecording(folder, baseName);
         var pattern = Path.Combine(folder, baseName + "_%03d.mp4").Replace('\\', '/');
         var segSec = Math.Max(1, cfg.RecordingSegmentMinutes) * 60;
-        worker.BeginRecording(folder, baseName, TimeSpan.FromMinutes(Math.Max(1, cfg.RecordingSegmentMinutes)));
 
         // Tee: network + segmented MP4 from one encode.
         var tee =
@@ -431,10 +516,17 @@ public sealed class VideoService : IDisposable
         public string FeedId { get; }
         public string Tag { get; set; }
         public bool IsLive { get; private set; }
+        public bool IsPlayable =>
+            IsLive &&
+            _process is { HasExited: false } &&
+            !string.IsNullOrWhiteSpace(StreamUrl) &&
+            !IsHardFfmpegError(LastError);
+        public bool ProcessExited => IsLive && (_process is null || _process.HasExited);
         public string? StreamUrl { get; private set; }
         public string? LastError { get; set; }
         public BitmapSource? LastPreview { get; private set; }
         public bool Recording => _recording;
+        public string? RecordingBaseName => _recordingBase;
         private Process? _process;
         private VideoCapture? _preview;
         private bool _recording;
@@ -472,43 +564,40 @@ public sealed class VideoService : IDisposable
             }
 
             var errBuf = new System.Text.StringBuilder();
-            var errTask = Task.Run(() =>
+            _ = Task.Run(() =>
             {
                 try
                 {
-                    while (_process is { HasExited: false } || errBuf.Length == 0)
+                    while (_process is { HasExited: false })
                     {
-                        var line = _process?.StandardError.ReadLine();
+                        var line = _process.StandardError.ReadLine();
                         if (line is null) break;
                         errBuf.AppendLine(line);
-                        if (line.Contains("error", StringComparison.OrdinalIgnoreCase))
+                        if (IsHardFfmpegError(line))
                             LastError = line.Trim();
                     }
                 }
                 catch { /* ignore */ }
             });
 
-            // Give FFmpeg a moment to open dshow / bind RTSP before declaring LIVE.
-            await Task.Delay(1200).ConfigureAwait(false);
-            if (_process.HasExited)
+            // Wait for dshow open / RTSP listen; hard errors usually appear quickly.
+            for (var i = 0; i < 20; i++)
             {
-                try { await errTask.WaitAsync(TimeSpan.FromSeconds(2)).ConfigureAwait(false); } catch { /* ignore */ }
-                LastError ??= "FFmpeg exited immediately. Check camera name / FFmpeg path.";
-                if (errBuf.Length > 0 && LastError.Contains("exited", StringComparison.OrdinalIgnoreCase))
-                {
-                    var line = errBuf.ToString().Split('\n')
-                        .LastOrDefault(l => l.Contains("error", StringComparison.OrdinalIgnoreCase))?.Trim();
-                    if (!string.IsNullOrWhiteSpace(line)) LastError = line;
-                }
-
-                IsLive = false;
-                StreamUrl = null;
-                return false;
+                await Task.Delay(150).ConfigureAwait(false);
+                if (_process.HasExited) break;
+                if (IsHardFfmpegError(LastError)) break;
             }
 
-            if (!string.IsNullOrWhiteSpace(LastError) &&
-                LastError.Contains("error", StringComparison.OrdinalIgnoreCase))
+            if (_process.HasExited || IsHardFfmpegError(LastError))
             {
+                await Task.Delay(200).ConfigureAwait(false);
+                if (string.IsNullOrWhiteSpace(LastError))
+                {
+                    var line = errBuf.ToString().Split('\n')
+                        .LastOrDefault(l => IsHardFfmpegError(l))?.Trim();
+                    LastError = line ?? "FFmpeg exited. Check camera name under Settings → Video (use FFmpeg device list).";
+                }
+
                 StopProcess();
                 IsLive = false;
                 StreamUrl = null;
@@ -517,6 +606,17 @@ public sealed class VideoService : IDisposable
 
             IsLive = true;
             return true;
+        }
+
+        private static bool IsHardFfmpegError(string? line)
+        {
+            if (string.IsNullOrWhiteSpace(line)) return false;
+            return line.Contains("Error opening input", StringComparison.OrdinalIgnoreCase)
+                   || line.Contains("I/O error", StringComparison.OrdinalIgnoreCase)
+                   || line.Contains("Could not find video device", StringComparison.OrdinalIgnoreCase)
+                   || line.Contains("Could not open video device", StringComparison.OrdinalIgnoreCase)
+                   || line.Contains("No such device", StringComparison.OrdinalIgnoreCase)
+                   || line.Contains("Immediate exit requested", StringComparison.OrdinalIgnoreCase);
         }
 
         public void ClosePreview()
@@ -560,16 +660,28 @@ public sealed class VideoService : IDisposable
             catch { /* ignore */ }
         }
 
-        public void BeginRecording(string folder, string baseName, TimeSpan segment)
+        public void PrepareRecording(string folder, string baseName)
         {
-            _recording = true;
             _recordingFolder = folder;
             _recordingBase = baseName;
+        }
+
+        public void CancelPreparedRecording()
+        {
+            if (_recording) return;
+            _recordingFolder = null;
+            _recordingBase = null;
+        }
+
+        public void BeginPreparedRecording(TimeSpan segment)
+        {
+            if (string.IsNullOrWhiteSpace(_recordingFolder) || string.IsNullOrWhiteSpace(_recordingBase))
+                return;
+            _recording = true;
             _samples.Clear();
             _closedSegments.Clear();
             _ = Task.Run(async () =>
             {
-                // Poll for completed segment files and hash/kml them.
                 while (_recording)
                 {
                     await Task.Delay(segment + TimeSpan.FromSeconds(2)).ConfigureAwait(false);
@@ -623,6 +735,16 @@ public sealed class VideoService : IDisposable
             IsLive = false;
             StreamUrl = null;
             await Task.CompletedTask;
+        }
+
+        public void MarkDead(string reason)
+        {
+            _recording = false;
+            FinalizeNewSegments();
+            StopProcess();
+            IsLive = false;
+            StreamUrl = null;
+            LastError = reason;
         }
 
         private void StopProcess()

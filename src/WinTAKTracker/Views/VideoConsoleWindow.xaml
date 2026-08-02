@@ -3,7 +3,7 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Style="{DynamicResource AppWindow}"
         Title="WinTAKTracker — Video Console"
-        Height="520" Width="840"
+        Height="560" Width="900"
         MinHeight="360" MinWidth="560"
         WindowStartupLocation="CenterScreen"
         Icon="pack://application:,,,/Assets/WinTAKTrackerLogo.ico">
@@ -20,7 +20,7 @@
                       Checked="StayOnTop_Changed"
                       Unchecked="StayOnTop_Changed"/>
             <StackPanel Orientation="Horizontal" DockPanel.Dock="Right" HorizontalAlignment="Right">
-                <Button Content="Start all" Style="{DynamicResource PrimaryButton}"
+                <Button Content="Start all" Style="{DynamicResource SecondaryButton}"
                         Margin="0,0,8,0" Click="StartAll_Click"/>
                 <Button Content="Stop all" Style="{DynamicResource SecondaryButton}"
                         Click="StopAll_Click"/>
@@ -30,9 +30,7 @@
                    DockPanel.Dock="Bottom"
                    Margin="0,8,0,0"
                    Style="{DynamicResource HelperText}"
-                   Text="Configure cameras under Settings → Video."/>
-        <ScrollViewer VerticalScrollBarVisibility="Auto">
-            <UniformGrid x:Name="FeedGrid" Columns="2"/>
-        </ScrollViewer>
+                   Text="Configure cameras under Settings → Video. Click Go LIVE / LIVE to toggle."/>
+        <Grid x:Name="FeedGrid"/>
     </DockPanel>
 </Window>

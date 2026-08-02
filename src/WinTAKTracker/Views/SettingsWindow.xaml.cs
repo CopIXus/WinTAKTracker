@@ -8,7 +8,6 @@ using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using System.Windows.Threading;
 using WpfShape = System.Windows.Shapes.Shape;
-using WpfPath = System.Windows.Shapes.Path;
 using WinTAKTracker.Services;
 using WinTAKTracker.Services.Config;
 using WinTAKTracker.Services.Gps;
@@ -87,17 +86,11 @@ public partial class SettingsWindow : Window
             if (item.Tag is not string tag || !map.TryGetValue(tag, out var iconKey))
                 continue;
             var label = item.Content as string ?? tag;
-            var icon = CreateIconPath(iconKey, 16);
-            SetTheme(icon, WpfShape.StrokeProperty, "SidebarTextBrush");
             var row = new StackPanel { Orientation = Orientation.Horizontal };
-            row.Children.Add(new Viewbox
-            {
-                Width = 16,
-                Height = 16,
-                Margin = new Thickness(0, 0, 10, 0),
-                VerticalAlignment = VerticalAlignment.Center,
-                Child = icon,
-            });
+            var boxed = UiIcons.Boxed(iconKey, 16, 1.8, "SidebarTextBrush");
+            boxed.Margin = new Thickness(0, 0, 10, 0);
+            boxed.VerticalAlignment = VerticalAlignment.Center;
+            row.Children.Add(boxed);
             row.Children.Add(new TextBlock
             {
                 Text = label,
@@ -108,36 +101,13 @@ public partial class SettingsWindow : Window
         }
     }
 
-    private static WpfPath CreateIconPath(string geometryKey, double thickness = 1.6)
-    {
-        var geo = Application.Current.TryFindResource(geometryKey) as Geometry
-                  ?? Geometry.Parse("M12,3 L12,21");
-        return new WpfPath
-        {
-            Data = geo,
-            StrokeThickness = thickness,
-            StrokeStartLineCap = PenLineCap.Round,
-            StrokeEndLineCap = PenLineCap.Round,
-            StrokeLineJoin = PenLineJoin.Round,
-            Stretch = Stretch.Uniform,
-            Width = 24,
-            Height = 24,
-        };
-    }
-
     private Button IconBtn(string iconKey, string text, Action action, bool primary = false)
     {
-        var icon = CreateIconPath(iconKey, 1.5);
-        SetTheme(icon, WpfShape.StrokeProperty, primary ? "OnAccentBrush" : "TextPrimaryBrush");
         var content = new StackPanel { Orientation = Orientation.Horizontal };
-        content.Children.Add(new Viewbox
-        {
-            Width = 14,
-            Height = 14,
-            Margin = new Thickness(0, 0, 8, 0),
-            VerticalAlignment = VerticalAlignment.Center,
-            Child = icon,
-        });
+        var boxed = UiIcons.Boxed(iconKey, 14, 1.6, primary ? "OnAccentBrush" : "TextPrimaryBrush");
+        boxed.Margin = new Thickness(0, 0, 8, 0);
+        boxed.VerticalAlignment = VerticalAlignment.Center;
+        content.Children.Add(boxed);
         content.Children.Add(new TextBlock
         {
             Text = text,
@@ -154,17 +124,11 @@ public partial class SettingsWindow : Window
 
     private Button IconBtn(string iconKey, string text, Func<Task> action, bool primary = false)
     {
-        var icon = CreateIconPath(iconKey, 1.5);
-        SetTheme(icon, WpfShape.StrokeProperty, primary ? "OnAccentBrush" : "TextPrimaryBrush");
         var content = new StackPanel { Orientation = Orientation.Horizontal };
-        content.Children.Add(new Viewbox
-        {
-            Width = 14,
-            Height = 14,
-            Margin = new Thickness(0, 0, 8, 0),
-            VerticalAlignment = VerticalAlignment.Center,
-            Child = icon,
-        });
+        var boxed = UiIcons.Boxed(iconKey, 14, 1.6, primary ? "OnAccentBrush" : "TextPrimaryBrush");
+        boxed.Margin = new Thickness(0, 0, 8, 0);
+        boxed.VerticalAlignment = VerticalAlignment.Center;
+        content.Children.Add(boxed);
         content.Children.Add(new TextBlock
         {
             Text = text,
@@ -342,16 +306,16 @@ public partial class SettingsWindow : Window
     private readonly Dictionary<string, WpfShape> _statusTileIcons = new(StringComparer.Ordinal);
     private readonly Dictionary<string, Border> _statusTileIconCircles = new(StringComparer.Ordinal);
 
-    private static readonly (string Key, string IconKey, int Index)[] StatusTileDefs =
+    private static readonly (string Key, string IconKey)[] StatusTileDefs =
     [
-        ("Tracking", "IconTracking", 1),
-        ("GPS", "IconGps", 2),
-        ("Position", "IconPosition", 3),
-        ("Motion", "IconMotion", 4),
-        ("Servers", "IconServers", 5),
-        ("Mesh", "IconMesh", 6),
-        ("Last PLI", "IconClock", 7),
-        ("Callsign", "IconCallsign", 8),
+        ("Tracking", "IconTracking"),
+        ("GPS", "IconGps"),
+        ("Position", "IconPosition"),
+        ("Motion", "IconMotion"),
+        ("Servers", "IconServers"),
+        ("Mesh", "IconMesh"),
+        ("Last PLI", "IconClock"),
+        ("Callsign", "IconCallsign"),
     ];
 
     private UIElement BuildStatus()
@@ -371,7 +335,7 @@ public partial class SettingsWindow : Window
             Margin = new Thickness(0, 0, -8, 4),
         };
         foreach (var def in StatusTileDefs)
-            grid.Children.Add(CreateStatusTile(def.Key, def.IconKey, def.Index));
+            grid.Children.Add(CreateStatusTile(def.Key, def.IconKey));
         _statusPanel.Children.Add(grid);
 
         _statusPanel.Children.Add(new TextBlock
@@ -451,25 +415,25 @@ public partial class SettingsWindow : Window
         return _statusPanel;
     }
 
-    private Border CreateStatusTile(string key, string iconKey, int index)
+    private Border CreateStatusTile(string key, string iconKey)
     {
-        var icon = CreateIconPath(iconKey, 18);
-        var iconCircle = new Border
+        var icon = UiIcons.Create(iconKey, 1.9, "TextMutedBrush");
+        var iconHost = new Grid { Width = 38, Height = 38 };
+        var iconCircle = new Border { Style = TryStyle("StatusIconCircle") };
+        var boxed = new Viewbox
         {
-            Style = TryStyle("StatusIconCircle"),
-            Child = new Viewbox
-            {
-                Width = 18,
-                Height = 18,
-                Child = icon,
-                HorizontalAlignment = WpfHAlign.Center,
-                VerticalAlignment = VerticalAlignment.Center,
-            },
+            Width = 20,
+            Height = 20,
+            HorizontalAlignment = WpfHAlign.Center,
+            VerticalAlignment = VerticalAlignment.Center,
+            Child = icon,
         };
+        iconHost.Children.Add(iconCircle);
+        iconHost.Children.Add(boxed);
 
-        var label = new TextBlock { Text = $"{index}  {key}", Style = TryStyle("StatusTileLabel") };
+        var label = new TextBlock { Text = key, Style = TryStyle("StatusTileLabel") };
         var left = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
-        left.Children.Add(iconCircle);
+        left.Children.Add(iconHost);
         left.Children.Add(label);
 
         var value = new TextBlock { Text = "—", Style = TryStyle("StatusTileValue") };
@@ -599,8 +563,7 @@ public partial class SettingsWindow : Window
                 ? "In-process tracking · service installed but not attached"
                 : "In-process tracking · Windows Service not installed");
 
-        var icon = CreateIconPath(service ? "IconServers" : "IconChip", 20);
-        SetTheme(icon, WpfShape.StrokeProperty, "StatusOkFgBrush");
+        var icon = UiIcons.Create(service ? "IconServers" : "IconChip", 1.9, "StatusOkFgBrush");
         var iconCircle = new Border
         {
             Style = TryStyle("StatusIconCircle"),
@@ -659,7 +622,10 @@ public partial class SettingsWindow : Window
             _host.RefreshTray();
 
         var fix = GetEffectiveFix();
-        var servers = FormatServerStatusSummary(_host.GetServerStatuses());
+        var serverStatuses = _host.GetServerStatuses();
+        var servers = FormatServerStatusSummary(serverStatuses);
+        var connectedCount = serverStatuses.Count(s => s.Enabled && s.State == TakConnectionState.Connected);
+        var enabledCount = serverStatuses.Count(s => s.Enabled);
         var paused = _host.AttachedToService
             ? _host.LastServiceStatus?.Paused == true
             : _host.Pause.IsPaused;
@@ -718,11 +684,15 @@ public partial class SettingsWindow : Window
                 fix.Source == GpsSourceKind.NetworkIp ? "info" : "ok");
         }
 
-        var anyConnected = _host.GetServerStatuses().Any(s => s.State == TakConnectionState.Connected);
+        var serverValue = enabledCount == 0
+            ? "None"
+            : connectedCount > 0
+                ? (enabledCount > 1 ? $"{connectedCount}/{enabledCount} up" : "Connected")
+                : "Not connected";
         SetStatusTile("Servers",
-            string.IsNullOrEmpty(servers) || servers == "None" ? "None" : (anyConnected ? "Connected" : "Not connected"),
-            string.IsNullOrEmpty(servers) ? null : servers,
-            anyConnected ? "ok" : "neutral");
+            serverValue,
+            string.IsNullOrEmpty(servers) || servers == "None" ? null : servers,
+            connectedCount > 0 ? "ok" : "neutral");
 
         SetStatusTile("Mesh",
             meshReady ? "Ready" : (_host.Config.MeshSa.Enabled ? "Not ready" : "Off"),
@@ -897,11 +867,19 @@ public partial class SettingsWindow : Window
         }, edit);
         testBtn.Margin = new Thickness(0, 0, 4, 0);
 
+        var trashIcon = UiIcons.Create("IconTrash", 1.6, "DangerBrush");
         var removeBtn = new Button
         {
-            Content = "✕",
+            Content = new Viewbox
+            {
+                Width = 14,
+                Height = 14,
+                Child = trashIcon,
+                HorizontalAlignment = WpfHAlign.Center,
+                VerticalAlignment = VerticalAlignment.Center,
+            },
             Style = TryStyle("DangerIconButton") ?? TryStyle("IconButton"),
-            ToolTip = "Remove profile",
+            ToolTip = "Delete server profile",
             IsEnabled = edit,
         };
         removeBtn.Click += (_, _) =>

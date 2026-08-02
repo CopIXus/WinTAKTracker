@@ -30,6 +30,7 @@ public sealed class VideoFeedAnnounce
 /// <summary>ICU-inspired <c>__video</c> / <c>sensor</c> CoT fragments for ATAK / CloudTAK / TAK Aware.</summary>
 public static class CotVideoBuilder
 {
+    /// <summary>Self-SA decoration only while feeds are LIVE with a playable URL.</summary>
     public static IEnumerable<XElement> BuildSelfDetailFragments(VideoAnnounceState state)
     {
         if (!state.Active) yield break;
@@ -43,18 +44,45 @@ public static class CotVideoBuilder
         }
     }
 
+    /// <summary>
+    /// One-shot self-SA clear: zero FOV / no <c>__video</c> so peers drop the cone without keeping a play URL.
+    /// </summary>
+    public static IEnumerable<XElement> BuildSelfClearFragments(IEnumerable<VideoFeedAnnounce> feeds)
+    {
+        foreach (var feed in feeds)
+        {
+            yield return BuildSensorElement(new VideoFeedAnnounce
+            {
+                AzimuthDegrees = feed.AzimuthDegrees,
+                ElevationDegrees = feed.ElevationDegrees,
+                HfovDegrees = 0,
+                VfovDegrees = 0,
+                RangeMeters = 0,
+            });
+            yield return BuildDeviceElement(feed);
+        }
+    }
+
     public static string BuildSensorMarkerEvent(
         VideoFeedAnnounce feed,
         GpsFix fix,
         string deviceUid,
-        TimeSpan stale)
+        TimeSpan stale,
+        bool includeVideo = true)
     {
         var now = DateTimeOffset.UtcNow;
-        var uid = string.IsNullOrWhiteSpace(feed.VideoUid)
-            ? $"{deviceUid}-SENSOR-{Sanitize(feed.Tag)}"
-            : feed.VideoUid.Replace("-VIDEO", "-SENSOR", StringComparison.OrdinalIgnoreCase);
-        if (!uid.Contains("SENSOR", StringComparison.OrdinalIgnoreCase))
-            uid = $"{uid}-SENSOR";
+        var uid = SensorUid(feed, deviceUid);
+        var detail = new XElement("detail",
+            new XElement("contact", new XAttribute("callsign", feed.Alias)));
+        if (includeVideo && !string.IsNullOrWhiteSpace(feed.StreamUrl))
+        {
+            detail.Add(BuildVideoElement(feed));
+            detail.Add(BuildConnectionEntry(feed));
+        }
+
+        detail.Add(BuildDeviceElement(feed));
+        detail.Add(BuildSensorElement(feed));
+
         var evt = new XElement("event",
             new XAttribute("version", "2.0"),
             new XAttribute("uid", uid),
@@ -69,30 +97,64 @@ public static class CotVideoBuilder
                 new XAttribute("hae", CotEventBuilder.F(fix.AltitudeMeters ?? 0)),
                 new XAttribute("ce", "9999999"),
                 new XAttribute("le", "9999999")),
-            new XElement("detail",
-                new XElement("contact", new XAttribute("callsign", feed.Alias)),
-                BuildVideoElement(feed),
-                BuildConnectionEntry(feed),
-                BuildDeviceElement(feed),
-                BuildSensorElement(feed)));
+            detail);
         return CotEventBuilder.Finalize(evt);
     }
 
+    /// <summary>Collapse FOV and drop video URL; short stale so the marker leaves the COP quickly.</summary>
     public static string BuildCollapsedSensorEvent(VideoFeedAnnounce feed, GpsFix fix, string deviceUid)
     {
         var collapsed = new VideoFeedAnnounce
         {
             FeedId = feed.FeedId,
             Tag = feed.Tag,
-            StreamUrl = feed.StreamUrl,
+            StreamUrl = "",
             Alias = feed.Alias,
             VideoUid = feed.VideoUid,
             HfovDegrees = 0,
+            VfovDegrees = 0,
             RangeMeters = 0,
             AzimuthDegrees = feed.AzimuthDegrees,
             ElevationDegrees = feed.ElevationDegrees,
         };
-        return BuildSensorMarkerEvent(collapsed, fix, deviceUid, TimeSpan.FromSeconds(15));
+        return BuildSensorMarkerEvent(collapsed, fix, deviceUid, TimeSpan.FromSeconds(3), includeVideo: false);
+    }
+
+    /// <summary>Immediate expire (stale already in the past) so ATAK drops the sensor marker.</summary>
+    public static string BuildExpiredSensorEvent(VideoFeedAnnounce feed, GpsFix fix, string deviceUid)
+    {
+        var now = DateTimeOffset.UtcNow;
+        var uid = SensorUid(feed, deviceUid);
+        var evt = new XElement("event",
+            new XAttribute("version", "2.0"),
+            new XAttribute("uid", uid),
+            new XAttribute("type", "b-m-p-s-p-loc"),
+            new XAttribute("how", "h-e"),
+            new XAttribute("time", CotEventBuilder.FormatTakTime(now)),
+            new XAttribute("start", CotEventBuilder.FormatTakTime(now)),
+            new XAttribute("stale", CotEventBuilder.FormatTakTime(now.AddSeconds(-1))),
+            new XElement("point",
+                new XAttribute("lat", CotEventBuilder.F(fix.Latitude)),
+                new XAttribute("lon", CotEventBuilder.F(fix.Longitude)),
+                new XAttribute("hae", CotEventBuilder.F(fix.AltitudeMeters ?? 0)),
+                new XAttribute("ce", "9999999"),
+                new XAttribute("le", "9999999")),
+            new XElement("detail",
+                new XElement("contact", new XAttribute("callsign", feed.Alias)),
+                BuildSensorElement(new VideoFeedAnnounce
+                {
+                    AzimuthDegrees = feed.AzimuthDegrees,
+                    HfovDegrees = 0,
+                    RangeMeters = 0,
+                })));
+        return CotEventBuilder.Finalize(evt);
+    }
+
+    public static TimeSpan LiveSensorStale(int fovRefreshSeconds)
+    {
+        // Keep marker only slightly longer than refresh so stop clears quickly.
+        var refresh = Math.Clamp(fovRefreshSeconds, 3, 15);
+        return TimeSpan.FromSeconds(refresh * 2);
     }
 
     public static double ResolveAzimuth(AppConfig config, VideoFeedSettings feed, double? courseDegrees)
@@ -111,6 +173,16 @@ public static class CotVideoBuilder
         if (string.IsNullOrWhiteSpace(t) || t.Equals("cam1", StringComparison.OrdinalIgnoreCase))
             return callsign;
         return $"{callsign}-{t}";
+    }
+
+    private static string SensorUid(VideoFeedAnnounce feed, string deviceUid)
+    {
+        var uid = string.IsNullOrWhiteSpace(feed.VideoUid)
+            ? $"{deviceUid}-SENSOR-{Sanitize(feed.Tag)}"
+            : feed.VideoUid.Replace("-VIDEO", "-SENSOR", StringComparison.OrdinalIgnoreCase);
+        if (!uid.Contains("SENSOR", StringComparison.OrdinalIgnoreCase))
+            uid = $"{uid}-SENSOR";
+        return uid;
     }
 
     private static XElement BuildVideoElement(VideoFeedAnnounce feed) =>

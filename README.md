@@ -82,18 +82,20 @@ Details: [docs/windows-service.md](docs/windows-service.md#identity-rules).
 
 ## Video streaming (ICU-inspired)
 
-Laptop or USB cameras can stream live video and advertise it over TAK CoT so **ATAK**, **CloudTAK**, and **TAK Aware** can open the feed (ICU-style discovery). Setup stays in **Settings → Video**; ops use a separate **Video Console** window.
+Stream a **vehicle dashcam** (or any USB/laptop camera) and advertise it over TAK CoT so **ATAK**, **CloudTAK**, and **TAK Aware** can open the feed (ICU-style discovery). Setup stays in **Settings → Video**; ops use a separate **Video Console** window. Peers see your track plus an FOV cone aimed with course offset—useful when the laptop rides in a vehicle and the camera looks down the road.
 
-![Video settings with FOV aim viewer (illustrative)](docs/images/video-icu-settings.png)
+![Video settings with FOV aim for a dashcam feed (illustrative)](docs/images/video-icu-settings.png)
 
-![Video Console with previews and Start/Stop (illustrative)](docs/images/video-console.png)
+![Video Console LIVE with vehicle dashcam preview (illustrative)](docs/images/video-console.png)
+
+*Illustrative dashcam demo — not an operational capture. Use fictional hosts such as `192.0.2.10` in docs and screenshots.*
 
 ### How it works
 
-1. **Configure** under Settings → Video: pick a camera, short tag, transport (on-device RTSP, push to a restreamer such as MediaMTX, or UDP MPEG-TS multicast), encode bitrate, FOV range/HFOV, and optional recording folder.
-2. **Aim** with the FOV viewer (wedges relative to GPS course + shared course offset). The same course offset appears under GPS settings.
+1. **Configure** under Settings → Video: pick the dashcam (or USB camera), short tag (e.g. `dashcam`), transport (on-device RTSP, push to a restreamer such as MediaMTX, or UDP MPEG-TS multicast), encode bitrate, FOV range/HFOV, and optional recording folder.
+2. **Aim** with the FOV viewer (wedges relative to GPS course + shared course offset) so the cone matches the camera’s view down-track. The same course offset appears under GPS settings.
 3. **Open Video Console** (tray menu, or auto-open on startup when enabled). Use Stay on top, Start/Stop per feed or Start all. Closing the Console does not stop streams by default.
-4. While LIVE, WinTAKTracker merges `<__video>` + `ConnectionEntry` + `<sensor>` into outbound self-SA (and optional FOV sensor markers) so peers can play the URL.
+4. While LIVE, WinTAKTracker merges `<__video>` + `ConnectionEntry` + `<sensor>` into outbound self-SA (and optional FOV sensor markers) so peers can play the URL. When you Stop, video/FOV CoT clears quickly.
 5. Optional **recording** writes 5‑minute segments as three files each: `.mp4`, `.sha256`, and `.kml` (GPS samples every 5s).
 
 **Requires FFmpeg** (external encoder). Setup releases bundle `ffmpeg.exe` when CI can fetch it; otherwise use Settings → Video (**Download FFmpeg…** / **winget install…**), PATH, or a path beside the EXE. Video is **session-bound** (interactive tray); it does not run from the Windows Service after logoff. The tray icon shows a small camera badge when video is configured, and a LIVE accent while streaming.

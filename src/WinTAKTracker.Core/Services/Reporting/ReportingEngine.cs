@@ -37,6 +37,8 @@ public sealed class ReportingEngine : IDisposable
     private VideoAnnounceState _video = new();
     private DateTimeOffset _lastSensorMarker = DateTimeOffset.MinValue;
     private readonly List<VideoFeedAnnounce> _pendingCollapse = [];
+    /// <summary>One-shot zero-FOV self-SA decoration after streams stop (then omitted).</summary>
+    private readonly List<VideoFeedAnnounce> _pendingPliClear = [];
 
     public DateTimeOffset? LastPliSentUtc { get; private set; }
     public VideoAnnounceState VideoAnnounce
@@ -71,17 +73,15 @@ public sealed class ReportingEngine : IDisposable
                     }).ToList(),
                 };
 
-            // Collapse FOV cones for feeds that stop so peers clear the wedge.
-            if (_video.SendFovSensorMarker || next.SendFovSensorMarker)
+            // When a feed stops (or all video goes idle): expire sensor markers and clear self-SA FOV/video.
+            var nextIds = next.Active
+                ? next.Feeds.Select(f => f.FeedId).ToHashSet(StringComparer.OrdinalIgnoreCase)
+                : new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var old in _video.Feeds)
             {
-                var nextIds = next.Active
-                    ? next.Feeds.Select(f => f.FeedId).ToHashSet(StringComparer.OrdinalIgnoreCase)
-                    : new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-                foreach (var old in _video.Feeds)
-                {
-                    if (!nextIds.Contains(old.FeedId))
-                        _pendingCollapse.Add(CloneFeed(old));
-                }
+                if (nextIds.Contains(old.FeedId)) continue;
+                _pendingCollapse.Add(CloneFeed(old));
+                _pendingPliClear.Add(CloneFeed(old));
             }
 
             _video = next;
@@ -253,7 +253,7 @@ public sealed class ReportingEngine : IDisposable
             ? CotEventBuilder.FromActiveIdentity(config, active, battery: battery)
             : CotEventBuilder.FromConfig(config, battery: battery);
         var stale = rate.GetStale(TimeSpan.FromSeconds(Math.Max(config.Reporting.ReliableMinSeconds, 30)));
-        var cot = BuildCot(fix, identity, stale, config, video);
+        var cot = BuildCot(fix, identity, stale, config, video, pliClear: null);
 
         try
         {
@@ -305,9 +305,23 @@ public sealed class ReportingEngine : IDisposable
             _pendingCollapse.Clear();
         }
 
+        List<VideoFeedAnnounce> pliClear;
+        lock (_gate)
+        {
+            pliClear = _pendingPliClear.ToList();
+        }
+
         var sensorDue = video.Active && video.SendFovSensorMarker &&
                         DateTimeOffset.UtcNow - _lastSensorMarker >=
-                        TimeSpan.FromSeconds(Math.Clamp(config.Video.FovRefreshSeconds, 3, 30));
+                        TimeSpan.FromSeconds(Math.Clamp(config.Video.FovRefreshSeconds, 3, 15));
+
+        // Force an ASAP PLI when clearing video so self-SA drops __video/FOV immediately.
+        var clearingVideo = !video.Active && pliClear.Count > 0;
+        if (clearingVideo)
+        {
+            reliableDue = true;
+            unreliableDue = true;
+        }
 
         if (!reliableDue && !unreliableDue && !sensorDue && collapse.Count == 0) return;
 
@@ -317,7 +331,7 @@ public sealed class ReportingEngine : IDisposable
             ? CotEventBuilder.FromActiveIdentity(config, active, battery: battery)
             : CotEventBuilder.FromConfig(config, battery: battery);
         var stale = rate.GetStale(rate.GetInterval(ReportingPath.Reliable, speed));
-        var cot = BuildCot(fix, identity, stale, config, video);
+        var cot = BuildCot(fix, identity, stale, config, video, pliClear);
 
         if (reliableDue && _tak.AnyConnected)
         {
@@ -348,9 +362,11 @@ public sealed class ReportingEngine : IDisposable
             var deviceUid = config.DeviceUid ?? ("WIN-" + Environment.MachineName.Replace(" ", ""));
             if (sensorDue)
             {
+                var sensorStale = CotVideoBuilder.LiveSensorStale(config.Video.FovRefreshSeconds);
                 foreach (var feed in video.Feeds)
                 {
-                    var marker = CotVideoBuilder.BuildSensorMarkerEvent(feed, fix, deviceUid, TimeSpan.FromSeconds(60));
+                    // Only while LIVE — video.Feeds is already live-only from tray announce.
+                    var marker = CotVideoBuilder.BuildSensorMarkerEvent(feed, fix, deviceUid, sensorStale);
                     await SendSensorCotAsync(marker, config).ConfigureAwait(false);
                 }
 
@@ -359,13 +375,18 @@ public sealed class ReportingEngine : IDisposable
 
             foreach (var feed in collapse)
             {
-                var marker = CotVideoBuilder.BuildCollapsedSensorEvent(feed, fix, deviceUid);
-                await SendSensorCotAsync(marker, config).ConfigureAwait(false);
+                // Collapse (no stream URL) then expire so ATAK drops the marker quickly.
+                await SendSensorCotAsync(
+                    CotVideoBuilder.BuildCollapsedSensorEvent(feed, fix, deviceUid), config).ConfigureAwait(false);
+                await SendSensorCotAsync(
+                    CotVideoBuilder.BuildExpiredSensorEvent(feed, fix, deviceUid), config).ConfigureAwait(false);
             }
         }
 
         lock (_gate)
         {
+            if (clearingVideo || (reliableDue || unreliableDue))
+                _pendingPliClear.Clear();
             _prevAlt = fix.AltitudeMeters;
             _prevSpeedMph = speed;
             _asap = false;
@@ -399,11 +420,18 @@ public sealed class ReportingEngine : IDisposable
         CotIdentity identity,
         TimeSpan stale,
         AppConfig config,
-        VideoAnnounceState video)
+        VideoAnnounceState video,
+        IReadOnlyList<VideoFeedAnnounce>? pliClear)
     {
         var cot = CotEventBuilder.Build(fix, identity, stale, config.Gps.CourseOffsetDegrees);
-        if (!video.Active || video.Feeds.Count == 0) return cot;
-        return CotEventBuilder.MergeDetailChildren(cot, CotVideoBuilder.BuildSelfDetailFragments(video));
+        if (video.Active && video.Feeds.Count > 0)
+            return CotEventBuilder.MergeDetailChildren(cot, CotVideoBuilder.BuildSelfDetailFragments(video));
+
+        // After stop: one PLI with zero FOV (no __video) so peers clear the cone immediately.
+        if (pliClear is { Count: > 0 })
+            return CotEventBuilder.MergeDetailChildren(cot, CotVideoBuilder.BuildSelfClearFragments(pliClear));
+
+        return cot;
     }
 
     private bool ShouldSendMesh(AppConfig config)

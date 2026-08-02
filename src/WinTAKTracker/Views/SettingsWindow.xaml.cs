@@ -1615,11 +1615,12 @@ public partial class SettingsWindow : Window
         panel.Children.Add(SectionHeader("FOV / aim"));
         panel.Children.Add(Blurb(
             "Per-camera HFOV, range, and azimuth offset are edited on each feed card above. " +
-            "Course offset is shared with GPS. Click a wedge/legend to select a feed."));
+            "Course offset is shared with GPS. Click a wedge/legend to select a feed. " +
+            "TAK only receives __video / FOV while a feed is LIVE; stopping clears markers quickly."));
         var courseOffset = new TextBox { Text = _host.Config.Gps.CourseOffsetDegrees.ToString("0.###"), IsEnabled = edit };
         var sendFov = new CheckBox
         {
-            Content = "Send FOV sensor marker (b-m-p-s-p-loc)",
+            Content = "Send FOV sensor marker while LIVE (b-m-p-s-p-loc)",
             IsChecked = v.SendFovSensorMarker,
             IsEnabled = edit,
         };

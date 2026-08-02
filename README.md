@@ -96,7 +96,7 @@ Laptop or USB cameras can stream live video and advertise it over TAK CoT so **A
 4. While LIVE, WinTAKTracker merges `<__video>` + `ConnectionEntry` + `<sensor>` into outbound self-SA (and optional FOV sensor markers) so peers can play the URL.
 5. Optional **recording** writes 5‑minute segments as three files each: `.mp4`, `.sha256`, and `.kml` (GPS samples every 5s).
 
-**Requires FFmpeg** on PATH, beside the EXE, or a path set in Settings → Video. Video is **session-bound** (interactive tray); it does not run from the Windows Service after logoff. The tray icon shows a small camera badge when video is configured, and a LIVE accent while streaming.
+**Requires FFmpeg** (external encoder). Setup releases bundle `ffmpeg.exe` when CI can fetch it; otherwise use Settings → Video (**Download FFmpeg…** / **winget install…**), PATH, or a path beside the EXE. Video is **session-bound** (interactive tray); it does not run from the Windows Service after logoff. The tray icon shows a small camera badge when video is configured, and a LIVE accent while streaming.
 
 Details: [docs/video-streaming.md](docs/video-streaming.md).
 

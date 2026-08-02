@@ -1355,7 +1355,8 @@ public partial class SettingsWindow : Window
 
         panel.Children.Add(Blurb(
             "ICU-inspired camera streaming (session-bound). Configure feeds here; use Video Console for live preview and Start/Stop. " +
-            "Requires FFmpeg on PATH or a path below. Streams advertise via CoT so ATAK / CloudTAK / TAK Aware can open the feed."));
+            "Requires FFmpeg (bundled in Setup when available, or install via the Encode section). " +
+            "Streams advertise via CoT so ATAK / CloudTAK / TAK Aware can open the feed."));
 
         var enabled = new CheckBox
         {
@@ -1454,7 +1455,49 @@ public partial class SettingsWindow : Window
             "On-device RTSP needs an inbound firewall allow for the listen port. Prefer push to MediaMTX for WAN."));
 
         panel.Children.Add(SectionHeader("Encode"));
+        panel.Children.Add(Blurb(
+            "FFmpeg is a separate encoder (external program). Setup installs may bundle ffmpeg.exe beside WinTAKTracker; " +
+            "otherwise install it once, or browse to ffmpeg.exe below."));
         var ffmpeg = new TextBox { Text = v.FfmpegPath ?? "", IsEnabled = edit };
+        var ffmpegStatus = Chip("FFmpeg", FfmpegLocator.DescribeStatus(v.FfmpegPath));
+        var ffmpegRow = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 0, 0, 8) };
+        ffmpegRow.Children.Add(Btn("Browse…", () =>
+        {
+            if (!CanEdit) return;
+            var dlg = new OpenFileDialog
+            {
+                Filter = "FFmpeg|ffmpeg.exe|Executables|*.exe|All files|*.*",
+                FileName = "ffmpeg.exe",
+                CheckFileExists = true,
+            };
+            if (dlg.ShowDialog() == true)
+            {
+                ffmpeg.Text = dlg.FileName;
+                v.FfmpegPath = dlg.FileName;
+                Persist();
+                if (ffmpegStatus.Child is TextBlock tb)
+                    tb.Text = "FFmpeg: " + FfmpegLocator.DescribeStatus(v.FfmpegPath);
+            }
+        }, edit));
+        ffmpegRow.Children.Add(new Border { Width = 8 });
+        ffmpegRow.Children.Add(Btn("Download FFmpeg…", () => OpenUrl(FfmpegLocator.DownloadBuildsUrl)));
+        ffmpegRow.Children.Add(new Border { Width = 8 });
+        ffmpegRow.Children.Add(Btn("winget install…", () =>
+        {
+            try
+            {
+                Process.Start(new ProcessStartInfo
+                {
+                    FileName = "winget",
+                    Arguments = "install --id Gyan.FFmpeg -e --accept-package-agreements --accept-source-agreements",
+                    UseShellExecute = true,
+                });
+            }
+            catch
+            {
+                OpenUrl(FfmpegLocator.DownloadBuildsUrl);
+            }
+        }));
         var resolution = new ComboBox
         {
             ItemsSource = new[] { "1280x720", "1920x1080", "640x480" },
@@ -1465,14 +1508,16 @@ public partial class SettingsWindow : Window
         var fps = new TextBox { Text = v.Fps.ToString(), IsEnabled = edit };
         var bitrate = new TextBox { Text = v.BitrateKbps.ToString(), IsEnabled = edit };
         var streamAudio = new CheckBox { Content = "Stream microphone audio (AAC)", IsChecked = v.StreamAudio, IsEnabled = edit };
-        panel.Children.Add(Label("FFmpeg path (optional if on PATH)")); panel.Children.Add(ffmpeg);
+        panel.Children.Add(Label("FFmpeg path (blank = bundled / PATH / tools folder)")); panel.Children.Add(ffmpeg);
+        panel.Children.Add(ffmpegRow);
+        panel.Children.Add(ffmpegStatus);
+        panel.Children.Add(Blurb(
+            "Also accepts: ffmpeg.exe next to WinTAKTracker.exe, or %LocalAppData%\\WinTAKTracker\\tools\\ffmpeg.exe. " +
+            "Windows builds: gyan.dev (essentials)."));
         panel.Children.Add(Label("Resolution")); panel.Children.Add(resolution);
         panel.Children.Add(Label("FPS")); panel.Children.Add(fps);
         panel.Children.Add(Label("Bitrate (kbps)")); panel.Children.Add(bitrate);
         panel.Children.Add(streamAudio);
-        panel.Children.Add(Blurb(Services.Video.FfmpegLocator.IsAvailable(v.FfmpegPath)
-            ? "FFmpeg found."
-            : "FFmpeg not found — install and set path, or place ffmpeg.exe next to WinTAKTracker."));
 
         panel.Children.Add(SectionHeader("FOV / aim"));
         var courseOffset = new TextBox { Text = _host.Config.Gps.CourseOffsetDegrees.ToString("0.###"), IsEnabled = edit };
@@ -1585,6 +1630,8 @@ public partial class SettingsWindow : Window
             if (int.TryParse(rtspPort.Text, out var rp)) v.RtspListenPort = rp;
             v.NetworkInterface = nic.SelectedItem?.ToString() ?? "Auto";
             v.FfmpegPath = string.IsNullOrWhiteSpace(ffmpeg.Text) ? null : ffmpeg.Text.Trim();
+            if (ffmpegStatus.Child is TextBlock ffmpegTb)
+                ffmpegTb.Text = "FFmpeg: " + FfmpegLocator.DescribeStatus(v.FfmpegPath);
             var resText = resolution.SelectedItem?.ToString() ?? resolution.Text ?? "1280x720";
             var parts = resText.Split('x', 'X');
             if (parts.Length == 2 && int.TryParse(parts[0], out var w) && int.TryParse(parts[1], out var h))

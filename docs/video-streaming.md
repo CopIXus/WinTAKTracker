@@ -43,5 +43,10 @@ Folder size limit: delete oldest files (default) or stop recording.
 
 ## Prerequisites
 
-- [FFmpeg](https://ffmpeg.org/) on PATH, `ffmpeg.exe` next to WinTAKTracker, or an absolute path in Settings → Video
+- **FFmpeg** — external encoder (not part of the .NET app binary). Sources:
+  - Bundled with **`WinTAKTracker-Setup.exe`** when CI fetches essentials (`ffmpeg.exe` beside the tray app)
+  - [gyan.dev Windows builds](https://www.gyan.dev/ffmpeg/builds/) (Settings → Video → **Download FFmpeg…**)
+  - `winget install "FFmpeg (Essentials Build)"` (Settings → Video → **winget install…**)
+  - Custom path, next to `WinTAKTracker.exe`, or `%LocalAppData%\WinTAKTracker\tools\ffmpeg.exe`
+- Details / license: [FFmpeg (third-party)](third-party-ffmpeg.md)
 - Camera accessible to the logged-on user (DirectShow)

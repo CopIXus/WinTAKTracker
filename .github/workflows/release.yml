@@ -87,6 +87,12 @@ jobs:
             -p:InformationalVersion=$info `
             -o publish/service
 
+      - name: Fetch FFmpeg for Setup bundle
+        shell: pwsh
+        run: |
+          & scripts/fetch-ffmpeg.ps1 -OutDir publish -Version 8.1
+          if (-not (Test-Path "publish/ffmpeg.exe")) { throw "Missing publish/ffmpeg.exe after fetch" }
+
       - name: Stage EXE
         shell: pwsh
         run: |
@@ -94,6 +100,10 @@ jobs:
           if (-not (Test-Path $exe)) { throw "Missing $exe" }
           New-Item -ItemType Directory -Force -Path dist | Out-Null
           Copy-Item $exe dist/WinTAKTracker.exe -Force
+          if (Test-Path "publish/ffmpeg.exe") {
+            Copy-Item "publish/ffmpeg.exe" dist/ffmpeg.exe -Force
+            Copy-Item "publish/THIRD_PARTY_FFMPEG.txt" dist/THIRD_PARTY_FFMPEG.txt -Force
+          }
           if (-not (Test-Path "publish/service/WinTAKTracker.Service.exe")) {
             throw "Missing publish/service/WinTAKTracker.Service.exe"
           }
@@ -399,6 +409,8 @@ jobs:
             dist/WinTAKTracker-Setup.exe.sha256
             dist/WinTAKTracker.exe
             dist/WinTAKTracker.exe.sha256
+            dist/ffmpeg.exe
+            dist/THIRD_PARTY_FFMPEG.txt
             dist/WinTAKTracker.Service-win-x64.zip
             dist/install-service.ps1
           fail_on_unmatched_files: true

@@ -25,6 +25,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - **ICU-inspired video streaming** — Settings → Video + Video Console, FFmpeg RTSP/push/UDP, `__video`/FOV CoT, FOV aim viewer, course offset, hotkey/audio cues, 5‑min MP4+SHA-256+KML recording ([Video streaming](video-streaming.md))
+- **FFmpeg install helpers** — Settings → Video download/winget links; Setup CI bundles pinned essentials `ffmpeg.exe` ([FFmpeg third-party](third-party-ffmpeg.md))
 
 ### Changed
 

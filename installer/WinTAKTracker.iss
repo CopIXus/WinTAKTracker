@@ -70,6 +70,9 @@ Name: "migrateconfig"; Description: "Migrate portable config from %LocalAppData%
 [Files]
 ; Tray (self-contained single-file)
 Source: "..\publish\WinTAKTracker.exe"; DestDir: "{app}"; Flags: ignoreversion
+; Optional FFmpeg essentials (fetched by CI / scripts/fetch-ffmpeg.ps1) for video streaming
+Source: "..\publish\ffmpeg.exe"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
+Source: "..\publish\THIRD_PARTY_FFMPEG.txt"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
 ; Service binaries (self-contained publish folder)
 Source: "..\publish\service\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 ; Manual / advanced reinstall helper (optional)

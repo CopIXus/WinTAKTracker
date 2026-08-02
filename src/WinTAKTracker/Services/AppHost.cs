@@ -64,13 +64,14 @@ public sealed class AppHost : IDisposable
         else
             Core = new TrackingHost(AppConfigStore.ForUser(), serviceMode: false);
 
-        Tray = new TrayIconService(this);
+        // Video before Tray: tray ctor builds tooltip/icon and reads Video.LiveCount.
         Video = new VideoService(this);
+        Config.Video ??= new VideoSettings();
+        Config.Video.Feeds ??= [];
         if (Config.Video.Feeds.Count == 0)
-        {
             Config.Video.Feeds.Add(new VideoFeedSettings());
-        }
 
+        Tray = new TrayIconService(this);
         Video.StateChanged += (_, _) => Tray.RefreshTooltip();
     }
 

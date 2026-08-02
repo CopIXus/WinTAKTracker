@@ -225,7 +225,8 @@ public sealed class VideoSettings
     public int RecordingGpsSampleSeconds { get; set; } = 5;
 
     public bool IsConfigured =>
-        Enabled && Feeds.Any(f => f.Enabled && !string.IsNullOrWhiteSpace(f.CameraName));
+        Enabled && Feeds is { Count: > 0 } &&
+        Feeds.Any(f => f.Enabled && !string.IsNullOrWhiteSpace(f.CameraName));
 }
 
 public sealed class VideoFeedSettings

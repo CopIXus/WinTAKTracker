@@ -130,11 +130,12 @@ public sealed class TrayIconService : IDisposable
         var version = _host.Updates.CurrentVersion;
         var updateVersion = ResolveUpdateVersionHint();
         var tip = state.ToTooltip(version, updateVersion);
-        if (_host.Config.Video.IsConfigured || _host.Video.LiveCount > 0)
+        var video = _host.Config.Video;
+        var liveCount = _host.Video?.LiveCount ?? 0;
+        if (video is { } v && (v.IsConfigured || liveCount > 0))
         {
-            var live = _host.Video.LiveCount;
-            var cams = _host.Config.Video.Feeds.Count(f => f.Enabled);
-            tip += live > 0 ? $" | Video: LIVE ×{live}" : $" | Video: idle ({cams} cams)";
+            var cams = v.Feeds?.Count(f => f.Enabled) ?? 0;
+            tip += liveCount > 0 ? $" | Video: LIVE ×{liveCount}" : $" | Video: idle ({cams} cams)";
         }
 
         return tip;
@@ -144,7 +145,9 @@ public sealed class TrayIconService : IDisposable
     {
         _composedIcon?.Dispose();
         _composedIcon = null;
-        var configured = _host.Config.Video.IsConfigured || _host.Video.LiveCount > 0;
+        var video = _host.Config.Video;
+        var liveCount = _host.Video?.LiveCount ?? 0;
+        var configured = video?.IsConfigured == true || liveCount > 0;
         if (!configured) return _baseIcon;
 
         try
@@ -152,7 +155,7 @@ public sealed class TrayIconService : IDisposable
             using var bmp = _baseIcon.ToBitmap();
             using var g = Graphics.FromImage(bmp);
             g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
-            var live = _host.Video.LiveCount > 0;
+            var live = liveCount > 0;
             var accent = live ? Color.FromArgb(220, 60, 60) : Color.FromArgb(40, 180, 200);
             // Small camera body in bottom-right.
             var x = bmp.Width - 10;
@@ -175,7 +178,9 @@ public sealed class TrayIconService : IDisposable
     {
         if (_notifyIcon.ContextMenuStrip?.Items.Count > 1 &&
             _notifyIcon.ContextMenuStrip.Items[1] is Forms.ToolStripMenuItem videoItem)
-            videoItem.Enabled = _host.Config.Video.Enabled || _host.Config.Video.IsConfigured || _host.Video.LiveCount > 0;
+            videoItem.Enabled = _host.Config.Video?.Enabled == true
+                                || _host.Config.Video?.IsConfigured == true
+                                || (_host.Video?.LiveCount ?? 0) > 0;
     }
 
     private string? ResolveUpdateVersionHint()

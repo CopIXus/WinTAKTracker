@@ -104,7 +104,7 @@ public static class VideoHotkeyService
             return "Ctrl+Esc opens the Start menu.";
 
         if (modifiers == (ModifierKeys.Control | ModifierKeys.Shift) && key == Key.Escape)
-            return "Ctrl+Shift+Esc opens Task Manager.";
+            return "Control+Shift+Escape opens Task Manager.";
 
         if (modifiers == (ModifierKeys.Control | ModifierKeys.Alt) && key == Key.Delete)
             return "Ctrl+Alt+Delete is a secure attention sequence and cannot be reliably remapped.";
@@ -141,7 +141,7 @@ public static class VideoHotkeyService
             {
                 Key.N => "Ctrl+Shift+N is often New window / Incognito.",
                 Key.T => "Ctrl+Shift+T restores the last closed tab.",
-                Key.Escape => "Ctrl+Shift+Esc opens Task Manager.",
+                Key.Escape => "Control+Shift+Escape opens Task Manager.",
                 _ => null,
             };
         }

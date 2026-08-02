@@ -1,0 +1,2 @@
+# False positive: hotkey help text matched generic-api-key (Ctrl+Shift+Esc).
+ef6b6ebd74813e805ae045868c7e5cb0ea730e13:src/WinTAKTracker/Services/Video/VideoHotkeyService.cs:generic-api-key:144

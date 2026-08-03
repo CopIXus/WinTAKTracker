@@ -267,6 +267,23 @@ public partial class SettingsWindow : Window
             ShowSection(tag);
     }
 
+    private void NavigateToSection(string tag)
+    {
+        foreach (var item in SectionList.Items.OfType<ListBoxItem>())
+        {
+            if (item.Tag is string t && t.Equals(tag, StringComparison.OrdinalIgnoreCase))
+            {
+                if (!ReferenceEquals(SectionList.SelectedItem, item))
+                    SectionList.SelectedItem = item;
+                else
+                    ShowSection(tag);
+                return;
+            }
+        }
+
+        ShowSection(tag);
+    }
+
     private void ShowSection(string tag)
     {
         SectionContent.Children.Clear();
@@ -465,6 +482,13 @@ public partial class SettingsWindow : Window
             Child = row,
             Tag = key,
         };
+        if (key.Equals("Video", StringComparison.OrdinalIgnoreCase))
+        {
+            tile.Cursor = System.Windows.Input.Cursors.Hand;
+            tile.ToolTip = "Open Video settings";
+            tile.MouseLeftButtonUp += (_, _) => NavigateToSection("Video");
+        }
+
         _statusTiles[key] = tile;
         _statusTileValues[key] = value;
         _statusTileDetails[key] = detail;
@@ -739,8 +763,8 @@ public partial class SettingsWindow : Window
     private (string Value, string? Detail, string Tone) FormatVideoStatusSummary()
     {
         var cfg = _host.Config.Video;
-        if (!cfg.Enabled && !cfg.IsConfigured && _host.Video.LiveCount == 0)
-            return ("Off", null, "neutral");
+        if (!cfg.Enabled)
+            return ("Off", "Enable under Settings → Video", "neutral");
 
         var feeds = cfg.Feeds.Where(f => f.Enabled).ToList();
         var runtimes = _host.Video.SnapshotRuntimes()
@@ -1405,20 +1429,50 @@ public partial class SettingsWindow : Window
             v.Feeds.Add(new VideoFeedSettings());
 
         panel.Children.Add(Blurb(
-            "ICU-inspired camera streaming (session-bound). Configure feeds here; use Video Console for live preview and Start/Stop. " +
-            "Requires FFmpeg (bundled in Setup when available, or install via the Encode section). " +
-            "Streams advertise via CoT so ATAK / CloudTAK / TAK Aware can open the feed."));
+            "Session-bound camera streaming for ATAK / CloudTAK. Needs FFmpeg (Setup bundle or Encode section)."));
 
         var enabled = new CheckBox
         {
             Content = "Enable video feature",
             IsChecked = v.Enabled,
             IsEnabled = edit,
-            Margin = new Thickness(0, 0, 0, 8),
+            VerticalAlignment = VerticalAlignment.Center,
+            Margin = new Thickness(0),
         };
-        enabled.Checked += (_, _) => { if (!CanEdit) return; v.Enabled = true; Persist(); };
-        enabled.Unchecked += (_, _) => { if (!CanEdit) return; v.Enabled = false; Persist(); };
-        panel.Children.Add(enabled);
+        enabled.Checked += (_, _) =>
+        {
+            if (!CanEdit) return;
+            v.Enabled = true;
+            Persist();
+            VideoHotkeyService.Register(_host);
+            _host.Video.EnsureWorkersForConfig();
+            _host.RefreshTray();
+            ShowSection("Video");
+        };
+        enabled.Unchecked += (_, _) =>
+        {
+            if (!CanEdit) return;
+            v.Enabled = false;
+            Persist();
+            _ = DisableVideoFeatureAsync();
+        };
+
+        if (!v.Enabled)
+        {
+            panel.Children.Add(enabled);
+            panel.Children.Add(Blurb(
+                "Video is off — streams, Console, tray badge, and hotkey are stopped."));
+            panel.Children.Add(Chip("Persisted", "Video feature disabled."));
+            return panel;
+        }
+
+        var enableRow = new DockPanel { Margin = new Thickness(0, 0, 0, 8), LastChildFill = true };
+        var openConsole = Btn("Open Video Console", () => _host.Tray.ShowVideoConsole());
+        openConsole.Margin = new Thickness(8, 0, 0, 0);
+        DockPanel.SetDock(openConsole, Dock.Right);
+        enableRow.Children.Add(openConsole);
+        enableRow.Children.Add(enabled);
+        panel.Children.Add(enableRow);
 
         var openStartup = new CheckBox
         {
@@ -1431,12 +1485,9 @@ public partial class SettingsWindow : Window
         openStartup.Unchecked += (_, _) => { if (!CanEdit) return; v.OpenConsoleOnStartup = false; Persist(); };
         panel.Children.Add(openStartup);
 
-        panel.Children.Add(Btn("Open Video Console", () => _host.Tray.ShowVideoConsole()));
-
         panel.Children.Add(SectionHeader("Camera feeds"));
         panel.Children.Add(Blurb(
-            "Each card is one camera feed (tag + device + FOV). Enable the feeds you will use; expand Edit to change settings. " +
-            "Up to 2 concurrent streams recommended."));
+            "One card per camera (tag, device, FOV). Expand Edit to change settings. Up to 2 streams recommended."));
 
         var devices = CameraEnumerator.ListDevices(v.FfmpegPath);
         var camNames = devices.Select(d => d.Name).ToList();
@@ -1574,10 +1625,6 @@ public partial class SettingsWindow : Window
         pushUrl.ToolTip =
             "Paste the restreamer Quick Connect RTSP base, e.g. rtsp://stream.example.com:8554/\n" +
             "Each feed Tag becomes the stream path: rtsp://host:8554/{tag}";
-        panel.Children.Add(Blurb(
-            "For restreamer: set Mode to Push (not On-device), then paste Quick Connect “RTSP SERVER” base " +
-            "(rtsp://host:8554/). Feed Tag = stream name; CoT/ATAK get that play URL. " +
-            "Stop and Go LIVE again after changing Mode. Optional username/password for secured MediaMTX publish."));
         panel.Children.Add(FormRow(
             Field("Push username (optional)", pushUser, 200),
             Field("Push password (optional)", pushPass, 200)));
@@ -1585,11 +1632,14 @@ public partial class SettingsWindow : Window
             Field("UDP multicast host:port", mcast, 200),
             Field("On-device RTSP port", rtspPort, 120),
             Field("Advertise NIC", nic, 180)));
-        panel.Children.Add(Blurb(
-            "Best for ATAK on LAN: On-device RTSP — CoT URL is rtsp://YOUR-PC-IP:port/live-tag " +
-            "(allow inbound TCP on that port in Windows Firewall; Auto NIC prefers Wi‑Fi/Ethernet, skips Tailscale/VPN). " +
-            "UDP multicast: CoT advertises udp://@group:port (players join the group; many Wi‑Fi APs block multicast — test with VLC first). " +
-            "Push to MediaMTX / TAK Video Restreamer for WAN or when multicast is filtered."));
+        panel.Children.Add(HelpExpander(
+            "Transport help",
+            "Push (restreamer / WAN): Mode = Push, paste Quick Connect RTSP base (rtsp://host:8554/). " +
+            "Feed Tag = stream name; CoT/ATAK get that play URL. Stop and Go LIVE after changing Mode. " +
+            "Optional username/password for secured MediaMTX publish.\n\n" +
+            "On-device RTSP (LAN ATAK): CoT URL is rtsp://YOUR-PC-IP:port/live-tag — allow inbound TCP; " +
+            "Auto NIC prefers Wi‑Fi/Ethernet (skips Tailscale/VPN).\n\n" +
+            "UDP multicast: CoT advertises udp://@group:port; many Wi‑Fi APs block multicast — test with VLC first."));
 
         panel.Children.Add(SectionHeader("Encode"));
         panel.Children.Add(Blurb(
@@ -1853,6 +1903,21 @@ public partial class SettingsWindow : Window
 
         panel.Children.Add(Chip("Persisted", "Video settings save when you change a field."));
         return panel;
+    }
+
+    private async Task DisableVideoFeatureAsync()
+    {
+        try { await _host.Video.StopAllAsync().ConfigureAwait(true); }
+        catch { /* ignore */ }
+
+        _host.Video.EnsureWorkersForConfig();
+        try { await _host.Video.PushAnnounceAsync().ConfigureAwait(true); }
+        catch { /* ignore */ }
+
+        VideoHotkeyService.Register(_host); // unregisters when Enabled=false
+        _host.Tray.CloseVideoConsole();
+        _host.RefreshTray();
+        ShowSection("Video");
     }
 
     private UIElement BuildVideoFeedCard(
@@ -2847,6 +2912,21 @@ public partial class SettingsWindow : Window
         Text = text,
         Style = TryStyle("BlurbText"),
     };
+
+    private static Expander HelpExpander(string header, string body)
+    {
+        var blurb = Blurb(body);
+        blurb.Margin = new Thickness(0, 8, 0, 0);
+        var exp = new Expander
+        {
+            Header = header,
+            Content = blurb,
+            IsExpanded = false,
+            Margin = new Thickness(0, 0, 0, 12),
+        };
+        SetTheme(exp, System.Windows.Controls.Control.ForegroundProperty, "TextSecondaryBrush");
+        return exp;
+    }
 
     private static Border Chip(string label, string value)
     {

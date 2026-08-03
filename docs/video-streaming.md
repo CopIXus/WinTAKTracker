@@ -12,7 +12,7 @@ This is **inspired by** community ICU-style plugins; the implementation is origi
 
 | Surface | Role |
 |---------|------|
-| **Settings → Video** | Setup: cameras, tags, transport, encode, FOV aim viewer, hotkey, audio, recording, FFmpeg path, open-on-startup |
+| **Settings → Video** | Master **Enable video feature** (off hides settings, stops streams, closes Console); cameras, tags, transport, encode, FOV, hotkey, recording, FFmpeg |
 | **Video Console** | Ops: previews, Start/Stop, Stay on top |
 | **Tray** | Camera badge when configured; LIVE accent while streaming; **Video Console…** menu |
 

@@ -82,6 +82,8 @@ public sealed class VideoService : IDisposable
     public async Task StartFeedAsync(string feedId)
     {
         var cfg = _host.Config.Video;
+        if (!cfg.Enabled)
+            throw new InvalidOperationException("Video feature is disabled under Settings → Video.");
         var feed = cfg.Feeds.FirstOrDefault(f => f.Id == feedId)
                    ?? throw new InvalidOperationException("Feed not found.");
         if (!feed.Enabled || string.IsNullOrWhiteSpace(feed.CameraName))

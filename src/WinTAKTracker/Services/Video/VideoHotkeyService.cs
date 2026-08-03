@@ -22,6 +22,7 @@ public static class VideoHotkeyService
         {
             EnsureHook();
             Unregister();
+            if (host.Config.Video.Enabled != true) return;
             if (string.IsNullOrWhiteSpace(spec) || _source is null) return;
             if (!TryParse(spec, out var mods, out var key)) return;
             _registered = RegisterHotKey(_source.Handle, HotkeyId, mods, KeyInterop.VirtualKeyFromKey(key));
@@ -200,6 +201,7 @@ public static class VideoHotkeyService
     {
         try
         {
+            if (host.Config.Video.Enabled != true) return;
             var feed = host.Config.Video.Feeds.FirstOrDefault(f => f.Enabled);
             if (feed is null) return;
             var live = host.Video.SnapshotRuntimes().Any(r => r.FeedId == feed.Id && r.IsLive);

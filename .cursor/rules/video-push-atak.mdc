@@ -9,10 +9,11 @@ Validated path: WinTAKTracker **Push** → TAK Video Restreamer / MediaMTX → A
 
 ## Operator config
 
-1. Settings → Video → Mode = **Push** (not OnDeviceRtsp — that advertises LAN `/live-{tag}`).
-2. **Push URL** = restreamer Quick Connect RTSP base, e.g. `rtsp://stream.example.com:8554/` (fake hosts only in repo).
-3. Feed **Tag** = stream name → publish/play `rtsp://host:8554/{tag}`.
-4. Stop → Go LIVE after changing Mode. Console status must show `(Push)` and the restreamer host.
+1. Settings → Video → **Enable video feature** must be on (off hides settings, stops streams, closes Console, clears tray badge/hotkey).
+2. Mode = **Push** (not OnDeviceRtsp — that advertises LAN `/live-{tag}`).
+3. **Push URL** = restreamer Quick Connect RTSP base, e.g. `rtsp://stream.example.com:8554/` (fake hosts only in repo).
+4. Feed **Tag** = stream name → publish/play `rtsp://host:8554/{tag}`.
+5. Stop → Go LIVE after changing Mode. Console status must show `(Push)` and the restreamer host.
 
 ## URL assembly (`VideoService.BuildStreamUrls` / `AppendPath`)
 

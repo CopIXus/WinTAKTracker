@@ -102,6 +102,9 @@ public sealed class TrayIconService : IDisposable
 
     public void ShowVideoConsole()
     {
+        if (_host.Config.Video.Enabled != true)
+            return;
+
         Application.Current.Dispatcher.Invoke(() =>
         {
             if (_videoConsole is null)
@@ -114,6 +117,17 @@ public sealed class TrayIconService : IDisposable
             _videoConsole.Activate();
             if (_videoConsole.WindowState == WindowState.Minimized)
                 _videoConsole.WindowState = WindowState.Normal;
+        });
+    }
+
+    public void CloseVideoConsole()
+    {
+        Application.Current.Dispatcher.Invoke(() =>
+        {
+            if (_videoConsole is null) return;
+            try { _videoConsole.Close(); }
+            catch { /* ignore */ }
+            _videoConsole = null;
         });
     }
 
@@ -132,7 +146,7 @@ public sealed class TrayIconService : IDisposable
         var tip = state.ToTooltip(version, updateVersion);
         var video = _host.Config.Video;
         var liveCount = _host.Video?.LiveCount ?? 0;
-        if (video is { } v && (v.IsConfigured || liveCount > 0))
+        if (video is { Enabled: true } v && (v.IsConfigured || liveCount > 0))
         {
             var cams = v.Feeds?.Count(f => f.Enabled) ?? 0;
             tip += liveCount > 0 ? $" | Video: LIVE ×{liveCount}" : $" | Video: idle ({cams} cams)";
@@ -147,7 +161,7 @@ public sealed class TrayIconService : IDisposable
         _composedIcon = null;
         var video = _host.Config.Video;
         var liveCount = _host.Video?.LiveCount ?? 0;
-        var configured = video?.IsConfigured == true || liveCount > 0;
+        var configured = video is { Enabled: true } && (video.IsConfigured || liveCount > 0);
         if (!configured) return _baseIcon;
 
         try
@@ -178,9 +192,7 @@ public sealed class TrayIconService : IDisposable
     {
         if (_notifyIcon.ContextMenuStrip?.Items.Count > 1 &&
             _notifyIcon.ContextMenuStrip.Items[1] is Forms.ToolStripMenuItem videoItem)
-            videoItem.Enabled = _host.Config.Video?.Enabled == true
-                                || _host.Config.Video?.IsConfigured == true
-                                || (_host.Video?.LiveCount ?? 0) > 0;
+            videoItem.Enabled = _host.Config.Video?.Enabled == true;
     }
 
     private string? ResolveUpdateVersionHint()

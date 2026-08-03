@@ -35,7 +35,12 @@
         <Setter Property="FontSize" Value="12"/>
         <Setter Property="FontWeight" Value="SemiBold"/>
         <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}"/>
-        <Setter Property="Margin" Value="0,12,0,6"/>
+        <Setter Property="Margin" Value="0,8,0,4"/>
+    </Style>
+
+    <!-- Used inside FormRow Field() cells — tighter than standalone FieldLabelText. -->
+    <Style x:Key="CompactFieldLabelText" TargetType="TextBlock" BasedOn="{StaticResource FieldLabelText}">
+        <Setter Property="Margin" Value="0,0,0,4"/>
     </Style>
 
     <Style x:Key="BlurbText" TargetType="TextBlock">

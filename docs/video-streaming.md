@@ -49,7 +49,7 @@ If you paste a full path already (e.g. `rtsp://stream.example.com:8554/custom`),
 
 While LIVE, outbound self-SA includes `<__video url="…"><ConnectionEntry …/></__video>` (ConnectionEntry nested — required by ATAK), plus `sensor` / `device`. RTSP uses `rtspReliable="1"` (TCP) so phones can play MediaMTX / TAK Video Restreamer over WAN. Optional `b-m-p-s-p-loc` sensor markers refresh on a timer for FOV cones.
 
-**Video Console while LIVE (Push):** the webcam is exclusive to FFmpeg, so the console pulls a second viewer from the restreamer play URL (same path ATAK uses). Give it ~1–2s after Go LIVE for frames to appear.
+**Video Console while LIVE (Push):** the webcam is exclusive to FFmpeg, so the console pulls a second viewer from the restreamer play URL (same path ATAK uses). Preview uses RTSP-over-TCP with a low-delay buffer drain so the tile stays closer to ATAK quality. Give it ~1–2s after Go LIVE for frames to appear. Click the status-line URL to copy it.
 
 ## Recording
 

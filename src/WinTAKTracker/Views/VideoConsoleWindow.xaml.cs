@@ -1,5 +1,6 @@
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Threading;
 using WinTAKTracker.Services;
@@ -15,6 +16,8 @@ public partial class VideoConsoleWindow : Window
     private readonly DispatcherTimer _refreshTimer;
     private readonly Dictionary<string, FeedTile> _tiles = new(StringComparer.OrdinalIgnoreCase);
     private bool _busy;
+    private string? _copyStreamUrl;
+    private string? _statusBeforeCopy;
 
     public VideoConsoleWindow(AppHost host)
     {
@@ -131,20 +134,71 @@ public partial class VideoConsoleWindow : Window
 
         LayoutTiles();
 
+        // Don't clobber the brief "Copied" toast.
+        if (_statusBeforeCopy is not null) return;
+
         var transport = _host.Config.Video.Transport;
         if (feeds.Count == 0)
+        {
+            _copyStreamUrl = null;
             StatusLine.Text = "No enabled camera feeds. Open Settings → Video to configure.";
+            StatusLine.Cursor = System.Windows.Input.Cursors.Arrow;
+        }
         else if (_host.Video.LiveCount > 0)
         {
             var liveRt = runtimes.Values.FirstOrDefault(r => r.IsLive && !string.IsNullOrWhiteSpace(r.StreamUrl));
-            StatusLine.Text = liveRt?.StreamUrl is { } url
+            _copyStreamUrl = liveRt?.StreamUrl;
+            StatusLine.Text = _copyStreamUrl is { } url
                 ? $"LIVE ×{_host.Video.LiveCount} ({transport}) — {url}"
                 : $"LIVE ×{_host.Video.LiveCount} ({transport})";
+            StatusLine.Cursor = _copyStreamUrl is null
+                ? System.Windows.Input.Cursors.Arrow
+                : System.Windows.Input.Cursors.Hand;
+            StatusLine.ToolTip = _copyStreamUrl is null
+                ? null
+                : "Click to copy stream URL";
         }
         else if (string.IsNullOrWhiteSpace(StatusLine.Text) ||
-                 StatusLine.Text.StartsWith("LIVE", StringComparison.OrdinalIgnoreCase))
+                 StatusLine.Text.StartsWith("LIVE", StringComparison.OrdinalIgnoreCase) ||
+                 StatusLine.Text.StartsWith("Copied", StringComparison.OrdinalIgnoreCase))
         {
+            _copyStreamUrl = null;
             StatusLine.Text = "Idle — click Go LIVE to start streaming.";
+            StatusLine.Cursor = System.Windows.Input.Cursors.Arrow;
+            StatusLine.ToolTip = null;
+        }
+    }
+
+    private void StatusLine_Click(object sender, MouseButtonEventArgs e)
+    {
+        var url = _copyStreamUrl;
+        if (string.IsNullOrWhiteSpace(url))
+        {
+            // Allow copying a URL embedded in the status text after " — ".
+            var text = StatusLine.Text ?? "";
+            var sep = text.LastIndexOf(" — ", StringComparison.Ordinal);
+            if (sep < 0) return;
+            url = text[(sep + 3)..].Trim();
+            if (!url.Contains("://", StringComparison.Ordinal)) return;
+        }
+
+        try
+        {
+            Clipboard.SetText(url);
+            _statusBeforeCopy = StatusLine.Text;
+            StatusLine.Text = "Copied stream URL to clipboard.";
+            var restore = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1.5) };
+            restore.Tick += (_, _) =>
+            {
+                restore.Stop();
+                _statusBeforeCopy = null;
+                RefreshTiles();
+            };
+            restore.Start();
+        }
+        catch (Exception ex)
+        {
+            StatusLine.Text = "Could not copy: " + ex.Message;
         }
     }
 

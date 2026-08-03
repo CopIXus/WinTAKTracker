@@ -6,30 +6,28 @@
         SizeToContent="Height"
         Width="440"
         MinWidth="360"
-        MinHeight="160"
         WindowStartupLocation="CenterOwner"
         ResizeMode="NoResize"
-        ShowInTaskbar="False">
-    <Grid Margin="24">
-        <Grid.RowDefinitions>
-            <RowDefinition Height="Auto"/>
-            <RowDefinition Height="*"/>
-            <RowDefinition Height="Auto"/>
-        </Grid.RowDefinitions>
+        ShowInTaskbar="False"
+        Background="{DynamicResource ContentBgBrush}"
+        Foreground="{DynamicResource TextPrimaryBrush}">
+    <!-- StackPanel + Auto heights: SizeToContent + Grid * collapses the body to an empty band. -->
+    <StackPanel Margin="24">
         <TextBlock x:Name="TitleText"
-                   Grid.Row="0"
                    FontSize="16"
                    FontWeight="SemiBold"
                    Foreground="{DynamicResource TextPrimaryBrush}"
                    Margin="0,0,0,10"
                    TextWrapping="Wrap"/>
         <TextBlock x:Name="BodyText"
-                   Grid.Row="1"
-                   Style="{DynamicResource BlurbText}"
+                   FontFamily="{DynamicResource AppFont}"
+                   FontSize="13"
+                   Foreground="{DynamicResource TextPrimaryBrush}"
+                   TextWrapping="Wrap"
+                   LineHeight="20"
                    Margin="0,0,0,20"/>
         <StackPanel x:Name="ButtonRow"
-                    Grid.Row="2"
                     Orientation="Horizontal"
                     HorizontalAlignment="Right"/>
-    </Grid>
+    </StackPanel>
 </Window>

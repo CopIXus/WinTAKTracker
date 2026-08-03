@@ -1209,13 +1209,14 @@ public partial class SettingsWindow : Window
         var trustPath = new TextBox();
         var clientPwd = new PasswordBox();
         var trustPwd = new PasswordBox();
-        sp.Children.Add(Label("Host")); sp.Children.Add(host);
-        sp.Children.Add(Label("Port")); sp.Children.Add(port);
-        sp.Children.Add(Label("Protocol")); sp.Children.Add(proto);
-        sp.Children.Add(Label("Client .p12")); sp.Children.Add(RowBrowse(clientPath, "Certificate (*.p12;*.pfx)|*.p12;*.pfx"));
-        sp.Children.Add(Label("Client password")); sp.Children.Add(clientPwd);
-        sp.Children.Add(Label("CA / trust (optional)")); sp.Children.Add(RowBrowse(trustPath, "Cert (*.p12;*.pfx;*.pem)|*.p12;*.pfx;*.pem"));
-        sp.Children.Add(Label("Trust password (optional)")); sp.Children.Add(trustPwd);
+        sp.Children.Add(FormRow(
+            Field("Host", host, 200),
+            Field("Port", port, 80),
+            Field("Protocol", proto, 100)));
+        sp.Children.Add(FieldFull("Client .p12", RowBrowse(clientPath, "Certificate (*.p12;*.pfx)|*.p12;*.pfx")));
+        sp.Children.Add(FieldFull("Client password", clientPwd));
+        sp.Children.Add(FieldFull("CA / trust (optional)", RowBrowse(trustPath, "Cert (*.p12;*.pfx;*.pem)|*.p12;*.pfx;*.pem")));
+        sp.Children.Add(FieldFull("Trust password (optional)", trustPwd));
         sp.Children.Add(Btn("Import", () =>
         {
             if (!int.TryParse(port.Text, out var p)) p = 8089;
@@ -1287,10 +1288,11 @@ public partial class SettingsWindow : Window
             SelectedIndex = computer.CotType.Contains("E-V", StringComparison.OrdinalIgnoreCase) ? 1 : 0,
             IsEnabled = edit,
         };
-        panel.Children.Add(Label("Computer callsign")); panel.Children.Add(computerCallsign);
-        panel.Children.Add(Label("Computer team")); panel.Children.Add(computerTeam);
-        panel.Children.Add(Label("Computer role")); panel.Children.Add(computerRole);
-        panel.Children.Add(Label("Computer phone (optional)")); panel.Children.Add(computerPhone);
+        panel.Children.Add(FieldFull("Computer callsign", computerCallsign));
+        panel.Children.Add(FormRow(
+            Field("Computer team", computerTeam, 160),
+            Field("Computer role", computerRole, 160),
+            Field("Computer phone", computerPhone, 140)));
         panel.Children.Add(new TextBlock
         {
             Text = "Used on ATAK contact cards for Call when the computer identity is active. Sent cleartext on the TAK network.",
@@ -1298,7 +1300,7 @@ public partial class SettingsWindow : Window
             Margin = new Thickness(0, 0, 0, 8),
             TextWrapping = TextWrapping.Wrap,
         });
-        panel.Children.Add(Label("Computer CoT type")); panel.Children.Add(computerCot);
+        panel.Children.Add(FieldFull("Computer CoT type", computerCot));
 
         void SaveComputer()
         {
@@ -1335,10 +1337,11 @@ public partial class SettingsWindow : Window
             IsEnabled = edit,
         };
         var myPhone = new TextBox { Text = user?.Phone ?? "", IsEnabled = edit };
-        panel.Children.Add(Label("My callsign")); panel.Children.Add(myCallsign);
-        panel.Children.Add(Label("My team")); panel.Children.Add(myTeam);
-        panel.Children.Add(Label("My role")); panel.Children.Add(myRole);
-        panel.Children.Add(Label("My phone (optional)")); panel.Children.Add(myPhone);
+        panel.Children.Add(FieldFull("My callsign", myCallsign));
+        panel.Children.Add(FormRow(
+            Field("My team", myTeam, 160),
+            Field("My role", myRole, 160),
+            Field("My phone", myPhone, 140)));
         panel.Children.Add(new TextBlock
         {
             Text = "Used on ATAK contact cards for Call while you are logged in. Sent cleartext on the TAK network.",
@@ -1566,9 +1569,8 @@ public partial class SettingsWindow : Window
             SelectedItem = nics.Contains(v.NetworkInterface) ? v.NetworkInterface : "Auto",
             IsEnabled = edit,
         };
-        panel.Children.Add(Label("Mode")); panel.Children.Add(transport);
-        panel.Children.Add(Label("Push URL (MediaMTX / TAK Video Restreamer base)"));
-        panel.Children.Add(pushUrl);
+        panel.Children.Add(FieldFull("Mode", transport));
+        panel.Children.Add(FieldFull("Push URL (MediaMTX / TAK Video Restreamer base)", pushUrl));
         pushUrl.ToolTip =
             "Paste the restreamer Quick Connect RTSP base, e.g. rtsp://stream.example.com:8554/\n" +
             "Each feed Tag becomes the stream path: rtsp://host:8554/{tag}";
@@ -1576,11 +1578,13 @@ public partial class SettingsWindow : Window
             "For restreamer: set Mode to Push (not On-device), then paste Quick Connect “RTSP SERVER” base " +
             "(rtsp://host:8554/). Feed Tag = stream name; CoT/ATAK get that play URL. " +
             "Stop and Go LIVE again after changing Mode. Optional username/password for secured MediaMTX publish."));
-        panel.Children.Add(Label("Push username (optional)")); panel.Children.Add(pushUser);
-        panel.Children.Add(Label("Push password (optional, stored via DPAPI)")); panel.Children.Add(pushPass);
-        panel.Children.Add(Label("UDP multicast host:port")); panel.Children.Add(mcast);
-        panel.Children.Add(Label("On-device RTSP listen port")); panel.Children.Add(rtspPort);
-        panel.Children.Add(Label("Advertise NIC (LAN IP in CoT for On-device RTSP)")); panel.Children.Add(nic);
+        panel.Children.Add(FormRow(
+            Field("Push username (optional)", pushUser, 200),
+            Field("Push password (optional)", pushPass, 200)));
+        panel.Children.Add(FormRow(
+            Field("UDP multicast host:port", mcast, 200),
+            Field("On-device RTSP port", rtspPort, 120),
+            Field("Advertise NIC", nic, 180)));
         panel.Children.Add(Blurb(
             "Best for ATAK on LAN: On-device RTSP — CoT URL is rtsp://YOUR-PC-IP:port/live-tag " +
             "(allow inbound TCP on that port in Windows Firewall; Auto NIC prefers Wi‑Fi/Ethernet, skips Tailscale/VPN). " +
@@ -1641,15 +1645,16 @@ public partial class SettingsWindow : Window
         var fps = new TextBox { Text = v.Fps.ToString(), IsEnabled = edit };
         var bitrate = new TextBox { Text = v.BitrateKbps.ToString(), IsEnabled = edit };
         var streamAudio = new CheckBox { Content = "Stream microphone audio (AAC)", IsChecked = v.StreamAudio, IsEnabled = edit };
-        panel.Children.Add(Label("FFmpeg path (blank = bundled / PATH / tools folder)")); panel.Children.Add(ffmpeg);
+        panel.Children.Add(FieldFull("FFmpeg path (blank = bundled / PATH / tools folder)", ffmpeg));
         panel.Children.Add(ffmpegRow);
         panel.Children.Add(ffmpegStatus);
         panel.Children.Add(Blurb(
             "Also accepts: ffmpeg.exe next to WinTAKTracker.exe, or %LocalAppData%\\WinTAKTracker\\tools\\ffmpeg.exe. " +
             "Windows builds: gyan.dev (essentials)."));
-        panel.Children.Add(Label("Resolution")); panel.Children.Add(resolution);
-        panel.Children.Add(Label("FPS")); panel.Children.Add(fps);
-        panel.Children.Add(Label("Bitrate (kbps)")); panel.Children.Add(bitrate);
+        panel.Children.Add(FormRow(
+            Field("Resolution", resolution, 140),
+            Field("FPS", fps, 80),
+            Field("Bitrate (kbps)", bitrate, 120)));
         panel.Children.Add(streamAudio);
 
         panel.Children.Add(SectionHeader("FOV / aim"));
@@ -1664,7 +1669,7 @@ public partial class SettingsWindow : Window
             IsChecked = v.SendFovSensorMarker,
             IsEnabled = edit,
         };
-        panel.Children.Add(Label("GPS / course offset (°) — shared with GPS settings")); panel.Children.Add(courseOffset);
+        panel.Children.Add(Field("GPS / course offset (°)", courseOffset, 180));
         panel.Children.Add(sendFov);
 
         var fovViewer = new FovCotViewerControl { Margin = new Thickness(0, 8, 0, 8) };
@@ -1779,9 +1784,10 @@ public partial class SettingsWindow : Window
             IsEnabled = edit,
         };
         panel.Children.Add(recEnable);
-        panel.Children.Add(Label("Recording folder")); panel.Children.Add(recFolder);
-        panel.Children.Add(Label("Max folder size (MB)")); panel.Children.Add(recMax);
-        panel.Children.Add(Label("When over limit")); panel.Children.Add(recPolicy);
+        panel.Children.Add(FieldFull("Recording folder", recFolder));
+        panel.Children.Add(FormRow(
+            Field("Max folder size (MB)", recMax, 140),
+            Field("When over limit", recPolicy, 180)));
         panel.Children.Add(Blurb(
             "Each segment writes three files: .mp4, .sha256, and .kml (GPS every 5s). " +
             "Filename: YYYY-MMDD_HHmmssZ_HHmmss_Computer_Callsign_User[_tag]."));
@@ -1966,18 +1972,14 @@ public partial class SettingsWindow : Window
             var range = new TextBox { Text = feed.RangeMeters.ToString("0.###"), IsEnabled = edit };
             var elev = new TextBox { Text = feed.ElevationDegrees.ToString("0.###"), IsEnabled = edit };
 
-            detail.Children.Add(Label("Camera device"));
-            detail.Children.Add(cam);
-            detail.Children.Add(Label("Short tag (alias / path suffix)"));
-            detail.Children.Add(tag);
-            detail.Children.Add(Label("Camera azimuth offset (°)"));
-            detail.Children.Add(camAz);
-            detail.Children.Add(Label("HFOV (°)"));
-            detail.Children.Add(hfov);
-            detail.Children.Add(Label("FOV range / depth (m)"));
-            detail.Children.Add(range);
-            detail.Children.Add(Label("Elevation / pitch (°) — CoT only"));
-            detail.Children.Add(elev);
+            detail.Children.Add(FormRow(
+                Field("Camera device", cam, 260),
+                Field("Short tag", tag, 140)));
+            detail.Children.Add(FormRow(
+                Field("Azimuth offset (°)", camAz, 120),
+                Field("HFOV (°)", hfov, 100),
+                Field("Range (m)", range, 100),
+                Field("Elevation (°)", elev, 100)));
 
             void SaveFeed()
             {
@@ -2046,13 +2048,14 @@ public partial class SettingsWindow : Window
             Text = _host.Config.Gps.CourseOffsetDegrees.ToString("0.###"),
             IsEnabled = edit,
         };
-        panel.Children.Add(Label("COM port")); panel.Children.Add(port);
-        panel.Children.Add(Label("Baud")); panel.Children.Add(baud);
-        panel.Children.Add(Label("Source priority")); panel.Children.Add(priority);
-        panel.Children.Add(Label("Last-fix hold (seconds)")); panel.Children.Add(hold);
+        panel.Children.Add(FormRow(
+            Field("COM port", port, 220),
+            Field("Baud", baud, 120)));
+        panel.Children.Add(FormRow(
+            Field("Source priority", priority, 200),
+            Field("Last-fix hold (s)", hold, 120),
+            Field("Course offset (°)", courseOffset, 140)));
         panel.Children.Add(network);
-        panel.Children.Add(Label("Course offset (°) — also used for video FOV aim"));
-        panel.Children.Add(courseOffset);
         panel.Children.Add(Blurb(
             "Added to GPS course for CoT track@course and video sensor azimuth. Same value as Settings → Video."));
         var permRow = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 4, 0, 8) };
@@ -2118,10 +2121,12 @@ public partial class SettingsWindow : Window
         var relStat = new TextBox { Text = _host.Config.Reporting.ReliableStationarySeconds.ToString(), IsEnabled = edit };
         var unrelStat = new TextBox { Text = _host.Config.Reporting.UnreliableStationarySeconds.ToString(), IsEnabled = edit };
         var constant = new TextBox { Text = _host.Config.Reporting.ConstantIntervalSeconds.ToString(), IsEnabled = edit };
-        panel.Children.Add(Label("Strategy")); panel.Children.Add(strategy);
-        panel.Children.Add(Label("Reliable stationary (s)")); panel.Children.Add(relStat);
-        panel.Children.Add(Label("Unreliable stationary (s)")); panel.Children.Add(unrelStat);
-        panel.Children.Add(Label("Constant interval (s)")); panel.Children.Add(constant);
+        panel.Children.Add(FormRow(
+            Field("Strategy", strategy, 160),
+            Field("Constant interval (s)", constant, 140)));
+        panel.Children.Add(FormRow(
+            Field("Reliable stationary (s)", relStat, 160),
+            Field("Unreliable stationary (s)", unrelStat, 160)));
 
         var remarks = new CheckBox
         {
@@ -2201,8 +2206,9 @@ public partial class SettingsWindow : Window
         };
         if (nic.SelectedItem is null) nic.SelectedIndex = 0;
         panel.Children.Add(enabled);
-        panel.Children.Add(Label("Mode")); panel.Children.Add(mode);
-        panel.Children.Add(Label("Network interface")); panel.Children.Add(nic);
+        panel.Children.Add(FormRow(
+            Field("Mode", mode, 180),
+            Field("Network interface", nic, 200)));
         panel.Children.Add(Blurb(
             "Pick your Wi‑Fi or Ethernet adapter if Auto still shows a VPN name. Tailscale/Wintun does not carry ATAK Mesh multicast to LAN peers."));
 
@@ -2419,13 +2425,12 @@ public partial class SettingsWindow : Window
         {
             Text = Math.Clamp(_host.Config.Diagnostics.MaxLogSizeMb, 1, 1024).ToString(),
             IsEnabled = edit,
-            Width = 120,
-            HorizontalAlignment = WpfHAlign.Left,
         };
 
         panel.Children.Add(Blurb("Logs are redacted (tokens, enroll URLs, key material). Default level is Error (includes TAK connection failures). Raise to Warning/Information temporarily when diagnosing."));
-        panel.Children.Add(Label("Log level")); panel.Children.Add(level);
-        panel.Children.Add(Label("Max log size (MB)")); panel.Children.Add(maxSize);
+        panel.Children.Add(FormRow(
+            Field("Log level", level, 160),
+            Field("Max log size (MB)", maxSize, 120)));
         panel.Children.Add(new TextBlock
         {
             Text = "When total size of log files exceeds this limit, oldest files are removed and the active file may be truncated.",
@@ -2789,6 +2794,53 @@ public partial class SettingsWindow : Window
         Text = text,
         Style = TryStyle("FieldLabelText"),
     };
+
+    /// <summary>Label + control stacked; sized for wrapping FormRow columns.</summary>
+    private static FrameworkElement Field(string label, FrameworkElement control, double minWidth = 160)
+    {
+        control.HorizontalAlignment = WpfHAlign.Stretch;
+        var stack = new StackPanel
+        {
+            MinWidth = minWidth,
+            Margin = new Thickness(0, 0, 12, 8),
+        };
+        stack.Children.Add(new TextBlock
+        {
+            Text = label,
+            Style = TryStyle("CompactFieldLabelText") ?? TryStyle("FieldLabelText"),
+            Margin = new Thickness(0, 0, 0, 4),
+        });
+        stack.Children.Add(control);
+        return stack;
+    }
+
+    /// <summary>Full-width label + control (paths, URLs, passwords).</summary>
+    private static FrameworkElement FieldFull(string label, FrameworkElement control)
+    {
+        control.HorizontalAlignment = WpfHAlign.Stretch;
+        var stack = new StackPanel { Margin = new Thickness(0, 0, 0, 8) };
+        stack.Children.Add(new TextBlock
+        {
+            Text = label,
+            Style = TryStyle("CompactFieldLabelText") ?? TryStyle("FieldLabelText"),
+            Margin = new Thickness(0, 0, 0, 4),
+        });
+        stack.Children.Add(control);
+        return stack;
+    }
+
+    /// <summary>Side-by-side fields that wrap as the Settings pane narrows.</summary>
+    private static WrapPanel FormRow(params FrameworkElement[] fields)
+    {
+        var wrap = new WrapPanel
+        {
+            Orientation = Orientation.Horizontal,
+            Margin = new Thickness(0, 0, -12, 0),
+        };
+        foreach (var f in fields)
+            wrap.Children.Add(f);
+        return wrap;
+    }
 
     private static TextBlock Blurb(string text) => new()
     {

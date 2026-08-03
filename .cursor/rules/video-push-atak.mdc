@@ -1,0 +1,41 @@
+---
+description: Keep Push→MediaMTX/TAK Video Restreamer publish and ATAK play CoT working
+alwaysApply: true
+---
+
+# Video Push + ATAK play (must keep working)
+
+Validated path: WinTAKTracker **Push** → TAK Video Restreamer / MediaMTX → ATAK plays the same RTSP URL from CoT.
+
+## Operator config
+
+1. Settings → Video → Mode = **Push** (not OnDeviceRtsp — that advertises LAN `/live-{tag}`).
+2. **Push URL** = restreamer Quick Connect RTSP base, e.g. `rtsp://stream.example.com:8554/` (fake hosts only in repo).
+3. Feed **Tag** = stream name → publish/play `rtsp://host:8554/{tag}`.
+4. Stop → Go LIVE after changing Mode. Console status must show `(Push)` and the restreamer host.
+
+## URL assembly (`VideoService.BuildStreamUrls` / `AppendPath`)
+
+- Base with empty/`/` path → append `/{tag}` via `Uri` (never glue `-{tag}` onto the port).
+- Full path already in Push URL → leave as-is.
+- **Advertise (CoT/ATAK)** = public play URL **without** credentials.
+- **FFmpeg** = may inject Push username/password for publish auth.
+- Push with empty Push URL must **fail** (no silent On-device fallback).
+
+## CoT shape (`CotVideoBuilder`) — ATAK “invalid video information”
+
+- Nest `<ConnectionEntry …/>` **inside** `<__video uid url>`, not as a sibling.
+- RTSP/RTSPS: `rtspReliable="1"` (TCP) for WAN/NAT to MediaMTX.
+- UDP multicast only: `rtspReliable="0"`.
+- Self-SA + optional FOV sensor markers only while LIVE/playable.
+
+## Video Console while Push LIVE
+
+- Camera is exclusive to FFmpeg; Console pulls the **play URL** (restreamer) for preview.
+- Preview must use low-latency RTSP (TCP, nobuffer, drain newest frame) — do not regress to a single buffered `Read()` of the network URL.
+- Status line URL: click copies play URL to clipboard.
+
+## Do not break
+
+- On-device path remains `/live-{tag}` on LAN IP for local RTSP listen.
+- No real restreamer hosts, tokens, or enroll URLs in repo (`no-tak-secrets`).

@@ -41,7 +41,8 @@ public sealed class VideoService : IDisposable
     public VideoService(AppHost host)
     {
         _host = host;
-        _previewTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(200) };
+        // ~15 fps UI refresh; GrabPreviewFrame drains the RTSP buffer so we show the newest frame.
+        _previewTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(66) };
         _previewTimer.Tick += (_, _) => TickPreview();
         _previewTimer.Start();
         _pingTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(15) };
@@ -891,24 +892,45 @@ public sealed class VideoService : IDisposable
             }
         }
 
-        /// <summary>Pull frames from a playable RTSP/URL (restreamer) while FFmpeg owns the camera.</summary>
+        /// <summary>
+        /// Pull frames from a playable RTSP/URL (restreamer) while FFmpeg owns the camera.
+        /// Uses TCP + low-delay ffmpeg options so Console preview is closer to ATAK quality.
+        /// </summary>
         public bool OpenStreamPreview(string url)
         {
             if (string.IsNullOrWhiteSpace(url)) return false;
             try
             {
                 ClosePreview();
-                _preview = new VideoCapture(url, VideoCaptureAPIs.FFMPEG);
-                if (!_preview.IsOpened())
+                // OpenCV's ffmpeg backend buffers aggressively by default → laggy / blocky LIVE preview.
+                var prevOpts = Environment.GetEnvironmentVariable("OPENCV_FFMPEG_CAPTURE_OPTIONS");
+                Environment.SetEnvironmentVariable(
+                    "OPENCV_FFMPEG_CAPTURE_OPTIONS",
+                    "rtsp_transport;tcp|fflags;nobuffer|flags;low_delay|framedrop;1|max_delay;500000|probesize;32768|analyzeduration;0");
+                try
                 {
-                    _preview.Release();
-                    _preview.Dispose();
-                    _preview = new VideoCapture(url);
+                    _preview = new VideoCapture(url, VideoCaptureAPIs.FFMPEG);
+                    if (!_preview.IsOpened())
+                    {
+                        _preview.Release();
+                        _preview.Dispose();
+                        _preview = new VideoCapture(url);
+                    }
+                }
+                finally
+                {
+                    Environment.SetEnvironmentVariable("OPENCV_FFMPEG_CAPTURE_OPTIONS", prevOpts);
                 }
 
-                if (_preview.IsOpened()) return true;
-                ClosePreview();
-                return false;
+                if (!_preview.IsOpened())
+                {
+                    ClosePreview();
+                    return false;
+                }
+
+                try { _preview.Set(VideoCaptureProperties.BufferSize, 1); }
+                catch { /* property not supported on all backends */ }
+                return true;
             }
             catch
             {
@@ -923,8 +945,37 @@ public sealed class VideoService : IDisposable
             try
             {
                 using var frame = new Mat();
-                if (!_preview.Read(frame) || frame.Empty()) return;
-                LastPreview = frame.ToBitmapSource();
+                if (IsLive)
+                {
+                    // RTSP pull: drain queued packets; display only the newest frame.
+                    var got = false;
+                    for (var i = 0; i < 12; i++)
+                    {
+                        if (!_preview.Grab()) break;
+                        got = true;
+                    }
+
+                    if (!got || !_preview.Retrieve(frame) || frame.Empty()) return;
+                }
+                else
+                {
+                    if (!_preview.Read(frame) || frame.Empty()) return;
+                }
+
+                // Downscale for UI — full encode resolution slows ToBitmapSource on the dispatcher.
+                const int maxWidth = 960;
+                if (frame.Width > maxWidth)
+                {
+                    var h = (int)Math.Round(frame.Height * (maxWidth / (double)frame.Width));
+                    using var scaled = new Mat();
+                    Cv2.Resize(frame, scaled, new OpenCvSharp.Size(maxWidth, h), 0, 0, InterpolationFlags.Area);
+                    LastPreview = scaled.ToBitmapSource();
+                }
+                else
+                {
+                    LastPreview = frame.ToBitmapSource();
+                }
+
                 LastPreview?.Freeze();
             }
             catch { /* ignore */ }

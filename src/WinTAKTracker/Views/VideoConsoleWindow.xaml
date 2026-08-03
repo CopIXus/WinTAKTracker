@@ -30,6 +30,9 @@
                    DockPanel.Dock="Bottom"
                    Margin="0,8,0,0"
                    Style="{DynamicResource HelperText}"
+                   Cursor="Hand"
+                   ToolTip="Click to copy the stream URL"
+                   MouseLeftButtonUp="StatusLine_Click"
                    Text="Configure cameras under Settings → Video. Click Go LIVE / LIVE to toggle."/>
         <Grid x:Name="FeedGrid"/>
     </DockPanel>

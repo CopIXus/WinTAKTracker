@@ -28,12 +28,12 @@ Video runs in the **interactive tray session** only. After Windows logoff, strea
 
 Use the restreamer dashboard **Quick Connect → RTSP SERVER** base URL (host + port, path empty or `/`).
 
-1. Settings → Video → Transport = **Push**
+1. Settings → Video → Mode = **Push** (not OnDeviceRtsp — that advertises your PC LAN IP as `/live-{tag}`)
 2. **Push URL** = Quick Connect base, e.g. `rtsp://stream.example.com:8554/` (optional username/password if MediaMTX publish auth is enabled)
 3. Each feed **Tag** is the stream name — WinTAKTracker publishes to `rtsp://stream.example.com:8554/{tag}`
-4. Go LIVE in Video Console — logs should show `…:8554/{tag}` (not `…:8554-{tag}`)
-5. Confirm the stream under **Active Streams** on the restreamer UI
-6. Play in VLC or ATAK: `rtsp://stream.example.com:8554/{tag}`
+4. Stop any LIVE feed, then Go LIVE again — Video Console should show `LIVE ×1 (Push) — rtsp://stream.example.com:8554/{tag}`
+5. Confirm the stream under **Active Streams** on the restreamer UI; ATAK plays the same CoT URL
+6. If Console still shows `rtsp://YOUR-LAN-IP:8554/live-…`, Mode is still On-device — re-select **Push**, click another field so it saves, restart LIVE
 
 If you paste a full path already (e.g. `rtsp://stream.example.com:8554/custom`), that path is used as-is and the Tag is not appended.
 
@@ -47,7 +47,9 @@ If you paste a full path already (e.g. `rtsp://stream.example.com:8554/custom`),
 
 ## CoT
 
-While LIVE, outbound self-SA includes `__video`, `ConnectionEntry`, `sensor`, and `device` details. Optional `b-m-p-s-p-loc` sensor markers refresh on a timer for clients that draw FOV cones from that type.
+While LIVE, outbound self-SA includes `<__video url="…"><ConnectionEntry …/></__video>` (ConnectionEntry nested — required by ATAK), plus `sensor` / `device`. RTSP uses `rtspReliable="1"` (TCP) so phones can play MediaMTX / TAK Video Restreamer over WAN. Optional `b-m-p-s-p-loc` sensor markers refresh on a timer for FOV cones.
+
+**Video Console while LIVE (Push):** the webcam is exclusive to FFmpeg, so the console pulls a second viewer from the restreamer play URL (same path ATAK uses). Give it ~1–2s after Go LIVE for frames to appear.
 
 ## Recording
 

@@ -192,6 +192,9 @@ public sealed class VideoService : IDisposable
                 if (started)
                 {
                     _host.Log.Info("Video", $"Feed '{feed.Tag}' LIVE url={advertiseUrl}");
+                    // Camera is exclusive to FFmpeg — pull the play URL for Console preview (Push/restreamer).
+                    if (cfg.Transport.Equals("Push", StringComparison.OrdinalIgnoreCase))
+                        _ = OpenLivePullPreviewAsync(worker, advertiseUrl);
                     break;
                 }
 
@@ -423,13 +426,38 @@ public sealed class VideoService : IDisposable
                     continue;
                 }
 
-                if (_previewSuspendDepth == 0 && !w.IsLive)
+                // Idle camera preview, or LIVE pull-preview from restreamer/play URL.
+                if (_previewSuspendDepth == 0)
                     w.GrabPreviewFrame();
             }
         }
 
         if (lostLive)
             _ = PushAnnounceAsync();
+
+        StateChanged?.Invoke(this, EventArgs.Empty);
+    }
+
+    /// <summary>
+    /// After Push goes LIVE, open an RTSP pull on the advertise URL so Video Console can show frames
+    /// while FFmpeg holds the DirectShow camera.
+    /// </summary>
+    private async Task OpenLivePullPreviewAsync(FeedWorker worker, string playUrl)
+    {
+        // Give MediaMTX / restreamer a moment to accept the publisher before we subscribe.
+        await Task.Delay(1500).ConfigureAwait(false);
+        var opened = false;
+        lock (_gate)
+        {
+            if (!worker.IsLive || string.IsNullOrWhiteSpace(playUrl)) return;
+            opened = worker.OpenStreamPreview(playUrl);
+        }
+
+        if (opened)
+            _host.Log.Info("Video", $"Live console preview pulling {playUrl}");
+        else
+            _host.Log.Warn("Video",
+                $"Live console preview could not open {playUrl} (publish may still be fine; restreamer/VLC can still play).");
 
         StateChanged?.Invoke(this, EventArgs.Empty);
     }
@@ -468,16 +496,25 @@ public sealed class VideoService : IDisposable
         }
     }
 
-    /// <summary>Returns (advertiseUrl for CoT, ffmpegUrl for process args).</summary>
+    /// <summary>Returns (advertiseUrl for CoT/ATAK, ffmpegUrl for process args).</summary>
     private (string Advertise, string Ffmpeg) BuildStreamUrls(VideoSettings cfg, VideoFeedSettings feed)
     {
         var tag = CotVideoBuilder.Sanitize(feed.Tag);
         var path = $"/live-{tag}";
-        if (cfg.Transport.Equals("Push", StringComparison.OrdinalIgnoreCase) &&
-            !string.IsNullOrWhiteSpace(cfg.PushUrl))
+
+        if (cfg.Transport.Equals("Push", StringComparison.OrdinalIgnoreCase))
         {
-            var u = InjectPushCredentials(AppendPath(cfg.PushUrl!, tag), cfg);
-            return (u, u);
+            if (string.IsNullOrWhiteSpace(cfg.PushUrl))
+            {
+                throw new InvalidOperationException(
+                    "Transport is Push but Push URL is empty. " +
+                    "Settings → Video → paste the restreamer Quick Connect RTSP base (e.g. rtsp://stream.example.com:8554/).");
+            }
+
+            // CoT/ATAK must get the public play URL (no credentials). FFmpeg may need auth to publish.
+            var playUrl = StripUrlUserInfo(AppendPath(cfg.PushUrl!, tag));
+            var publishUrl = InjectPushCredentials(playUrl, cfg);
+            return (playUrl, publishUrl);
         }
 
         if (cfg.Transport.Equals("UdpMulticast", StringComparison.OrdinalIgnoreCase))
@@ -488,7 +525,7 @@ public sealed class VideoService : IDisposable
             return (play, send);
         }
 
-        // Listen on all interfaces; advertise the preferred LAN IP in CoT.
+        // On-device RTSP: listen on all interfaces; advertise the preferred LAN IP in CoT.
         var lan = GetLanIpv4(cfg.NetworkInterface);
         var advertise = $"rtsp://{lan}:{cfg.RtspListenPort}{path}";
         var listen = $"rtsp://0.0.0.0:{cfg.RtspListenPort}{path}";
@@ -509,6 +546,22 @@ public sealed class VideoService : IDisposable
             return $"{uri.Scheme}://{userInfo}@{uri.Host}" +
                    (uri.IsDefaultPort ? "" : $":{uri.Port}") +
                    uri.PathAndQuery;
+        }
+        catch
+        {
+            return url;
+        }
+    }
+
+    private static string StripUrlUserInfo(string url)
+    {
+        try
+        {
+            var uri = new Uri(url);
+            if (string.IsNullOrEmpty(uri.UserInfo)) return url;
+            return $"{uri.Scheme}://{uri.Host}" +
+                   (uri.IsDefaultPort ? "" : $":{uri.Port}") +
+                   uri.PathAndQuery + uri.Fragment;
         }
         catch
         {
@@ -819,7 +872,7 @@ public sealed class VideoService : IDisposable
 
         public void OpenPreview(int index)
         {
-            if (IsLive) return; // camera owned by FFmpeg
+            if (IsLive) return; // camera owned by FFmpeg — use OpenStreamPreview while LIVE
             try
             {
                 ClosePreview();
@@ -835,6 +888,32 @@ public sealed class VideoService : IDisposable
             catch (Exception ex)
             {
                 LastError = "Preview: " + ex.Message;
+            }
+        }
+
+        /// <summary>Pull frames from a playable RTSP/URL (restreamer) while FFmpeg owns the camera.</summary>
+        public bool OpenStreamPreview(string url)
+        {
+            if (string.IsNullOrWhiteSpace(url)) return false;
+            try
+            {
+                ClosePreview();
+                _preview = new VideoCapture(url, VideoCaptureAPIs.FFMPEG);
+                if (!_preview.IsOpened())
+                {
+                    _preview.Release();
+                    _preview.Dispose();
+                    _preview = new VideoCapture(url);
+                }
+
+                if (_preview.IsOpened()) return true;
+                ClosePreview();
+                return false;
+            }
+            catch
+            {
+                ClosePreview();
+                return false;
             }
         }
 

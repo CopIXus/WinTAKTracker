@@ -1573,8 +1573,9 @@ public partial class SettingsWindow : Window
             "Paste the restreamer Quick Connect RTSP base, e.g. rtsp://stream.example.com:8554/\n" +
             "Each feed Tag becomes the stream path: rtsp://host:8554/{tag}";
         panel.Children.Add(Blurb(
-            "Push: paste Quick Connect “RTSP SERVER” base (rtsp://host:8554/). " +
-            "Feed Tag = stream name (publish/play path …/tag). Optional username/password for secured MediaMTX."));
+            "For restreamer: set Mode to Push (not On-device), then paste Quick Connect “RTSP SERVER” base " +
+            "(rtsp://host:8554/). Feed Tag = stream name; CoT/ATAK get that play URL. " +
+            "Stop and Go LIVE again after changing Mode. Optional username/password for secured MediaMTX publish."));
         panel.Children.Add(Label("Push username (optional)")); panel.Children.Add(pushUser);
         panel.Children.Add(Label("Push password (optional, stored via DPAPI)")); panel.Children.Add(pushPass);
         panel.Children.Add(Label("UDP multicast host:port")); panel.Children.Add(mcast);
@@ -2743,11 +2744,16 @@ public partial class SettingsWindow : Window
     {
         control.LostFocus += (_, _) => save();
         if (control is ComboBox combo)
+        {
+            // SelectionChanged often fires while the dropdown is still open; skipping that
+            // event previously left Transport stuck on OnDeviceRtsp until LostFocus.
             combo.SelectionChanged += (_, _) =>
             {
                 if (combo.IsDropDownOpen) return;
                 save();
             };
+            combo.DropDownClosed += (_, _) => save();
+        }
     }
 
     private static DockPanel RowBrowse(TextBox pathBox, string filter)

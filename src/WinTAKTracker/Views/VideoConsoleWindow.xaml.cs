@@ -131,14 +131,15 @@ public partial class VideoConsoleWindow : Window
 
         LayoutTiles();
 
+        var transport = _host.Config.Video.Transport;
         if (feeds.Count == 0)
             StatusLine.Text = "No enabled camera feeds. Open Settings → Video to configure.";
         else if (_host.Video.LiveCount > 0)
         {
             var liveRt = runtimes.Values.FirstOrDefault(r => r.IsLive && !string.IsNullOrWhiteSpace(r.StreamUrl));
             StatusLine.Text = liveRt?.StreamUrl is { } url
-                ? $"LIVE ×{_host.Video.LiveCount} — {url}"
-                : $"LIVE ×{_host.Video.LiveCount}";
+                ? $"LIVE ×{_host.Video.LiveCount} ({transport}) — {url}"
+                : $"LIVE ×{_host.Video.LiveCount} ({transport})";
         }
         else if (string.IsNullOrWhiteSpace(StatusLine.Text) ||
                  StatusLine.Text.StartsWith("LIVE", StringComparison.OrdinalIgnoreCase))
@@ -261,7 +262,10 @@ public partial class VideoConsoleWindow : Window
             {
                 await _host.Video.StartFeedAsync(feedId);
                 var rt = _host.Video.SnapshotRuntimes().FirstOrDefault(r => r.FeedId == feedId);
-                StatusLine.Text = rt?.StreamUrl ?? "Streaming…";
+                var transport = _host.Config.Video.Transport;
+                StatusLine.Text = rt?.StreamUrl is { } url
+                    ? $"LIVE ({transport}) — {url}"
+                    : $"Streaming… ({transport})";
             }
         }
         catch (Exception ex)

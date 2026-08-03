@@ -37,8 +37,8 @@ public static class CotVideoBuilder
         foreach (var feed in state.Feeds)
         {
             if (string.IsNullOrWhiteSpace(feed.StreamUrl)) continue;
+            // ATAK expects ConnectionEntry nested under __video (not a sibling).
             yield return BuildVideoElement(feed);
-            yield return BuildConnectionEntry(feed);
             yield return BuildSensorElement(feed);
             yield return BuildDeviceElement(feed);
         }
@@ -75,10 +75,7 @@ public static class CotVideoBuilder
         var detail = new XElement("detail",
             new XElement("contact", new XAttribute("callsign", feed.Alias)));
         if (includeVideo && !string.IsNullOrWhiteSpace(feed.StreamUrl))
-        {
             detail.Add(BuildVideoElement(feed));
-            detail.Add(BuildConnectionEntry(feed));
-        }
 
         detail.Add(BuildDeviceElement(feed));
         detail.Add(BuildSensorElement(feed));
@@ -188,12 +185,14 @@ public static class CotVideoBuilder
     private static XElement BuildVideoElement(VideoFeedAnnounce feed) =>
         new XElement("__video",
             new XAttribute("uid", feed.VideoUid),
-            new XAttribute("url", feed.StreamUrl));
+            new XAttribute("url", feed.StreamUrl),
+            BuildConnectionEntry(feed));
 
     private static XElement BuildConnectionEntry(VideoFeedAnnounce feed)
     {
         var parsed = TryParseUrl(feed.StreamUrl);
-        var reliable = feed.StreamUrl.Contains("tcp", StringComparison.OrdinalIgnoreCase) ? "1" : "0";
+        // TCP (rtspReliable=1) is required across NAT/WAN to MediaMTX / TAK Video Restreamer.
+        var reliable = parsed.Protocol is "udp" ? "0" : "1";
         return new XElement("ConnectionEntry",
             new XAttribute("uid", feed.VideoUid),
             new XAttribute("alias", feed.Alias),

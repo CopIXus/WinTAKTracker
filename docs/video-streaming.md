@@ -20,9 +20,30 @@ Video runs in the **interactive tray session** only. After Windows logoff, strea
 
 ## Transports
 
-- **OnDeviceRtsp** — FFmpeg RTSP listen (default port `8554`, path `/live-{tag}`)
-- **Push** — RTSP/RTMP URL to a restreamer (e.g. MediaMTX)
-- **UdpMulticast** — MPEG-TS to a media multicast group (default `239.2.3.2:5004`, separate from CoT Mesh `239.2.3.1:6969`)
+- **OnDeviceRtsp** — FFmpeg RTSP listen (default port `8554`, path `/live-{tag}`). **Best for ATAK/iTAK on the same LAN.**
+- **Push** — RTSP (or RTMP) publish to a restreamer such as [TAK Video Restreamer](https://github.com/raytheonbbn/tak-video-restreamer) / MediaMTX
+- **UdpMulticast** — MPEG-TS to a media multicast group (default `239.2.3.2:5004`, separate from CoT Mesh `239.2.3.1:6969`). CoT advertises `udp://@group:port` for players; many Wi‑Fi access points filter multicast.
+
+### Push to TAK Video Restreamer
+
+Use the restreamer dashboard **Quick Connect → RTSP SERVER** base URL (host + port, path empty or `/`).
+
+1. Settings → Video → Transport = **Push**
+2. **Push URL** = Quick Connect base, e.g. `rtsp://stream.example.com:8554/` (optional username/password if MediaMTX publish auth is enabled)
+3. Each feed **Tag** is the stream name — WinTAKTracker publishes to `rtsp://stream.example.com:8554/{tag}`
+4. Go LIVE in Video Console — logs should show `…:8554/{tag}` (not `…:8554-{tag}`)
+5. Confirm the stream under **Active Streams** on the restreamer UI
+6. Play in VLC or ATAK: `rtsp://stream.example.com:8554/{tag}`
+
+If you paste a full path already (e.g. `rtsp://stream.example.com:8554/custom`), that path is used as-is and the Tag is not appended.
+
+### Viewing the feed
+
+1. Go LIVE in Video Console (status shows the playable URL).
+2. **On-device RTSP (recommended for ATAK):** on another device open `rtsp://PC-LAN-IP:8554/live-{tag}` in VLC, or in ATAK use **Video → +** / the self-SA video affordance. Allow inbound TCP `8554` on the PC firewall.
+3. **Push / restreamer:** open the advertised `rtsp://…:8554/{tag}` URL (same path FFmpeg published).
+4. **UDP multicast:** open `udp://@239.2.3.2:5004` in VLC on the same L2 network. If VLC fails, the AP is likely blocking multicast — switch to On-device RTSP or Push.
+5. Video bytes do **not** go through TAK Server; only the CoT URL does. The ATAK device must reach the stream source (or multicast group) directly.
 
 ## CoT
 

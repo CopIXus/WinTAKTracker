@@ -227,7 +227,7 @@ public sealed class VideoService : IDisposable
             ResumePreviews();
             lock (_gate) _startingFeeds.Remove(feedId);
             // Restore idle preview only when start failed (LIVE keeps camera for FFmpeg).
-            if (!worker.IsLive)
+            if (!worker.IsLive && feed.Enabled && cfg.Enabled)
             {
                 var idx = CameraEnumerator.ResolveIndex(feed.CameraName, cfg.FfmpegPath);
                 worker.OpenPreview(idx);
@@ -276,7 +276,9 @@ public sealed class VideoService : IDisposable
         _host.Log.Info("Video", $"Stopping feed '{worker.Tag}' id={feedId}");
         var camIndex = CameraEnumerator.ResolveIndex(feed?.CameraName, _host.Config.Video.FfmpegPath);
         await worker.StopAsync().ConfigureAwait(false);
-        if (_previewSuspendDepth == 0)
+        if (_previewSuspendDepth == 0 &&
+            feed is { Enabled: true } &&
+            _host.Config.Video.Enabled)
             worker.OpenPreview(camIndex);
         VideoAudioCues.PlayStop(_host.Config.Video.AudioCuesEnabled);
         await PushAnnounceAsync().ConfigureAwait(false);
@@ -362,23 +364,43 @@ public sealed class VideoService : IDisposable
     {
         lock (_gate)
         {
-            foreach (var feed in _host.Config.Video.Feeds.Where(f => f.Enabled))
-            {
-                if (!_workers.TryGetValue(feed.Id, out var worker))
-                {
-                    worker = new FeedWorker(feed.Id, feed.Tag);
-                    _workers[feed.Id] = worker;
-                }
-                else
-                    worker.Tag = feed.Tag;
+            var cfg = _host.Config.Video;
+            var keepIds = new HashSet<string>(
+                cfg.Enabled
+                    ? cfg.Feeds.Where(f => f.Enabled).Select(f => f.Id)
+                    : Enumerable.Empty<string>(),
+                StringComparer.OrdinalIgnoreCase);
 
-                // Idle preview only — never hold the camera while FFmpeg is LIVE / starting / suspended.
-                if (_previewSuspendDepth == 0 &&
-                    !worker.IsLive &&
-                    !_startingFeeds.Contains(feed.Id))
+            foreach (var id in _workers.Keys.ToList())
+            {
+                if (keepIds.Contains(id)) continue;
+                if (!_workers.Remove(id, out var stale)) continue;
+                stale.ClosePreview();
+                if (stale.IsLive)
+                    stale.MarkDead("Feed disabled.");
+                stale.Dispose();
+            }
+
+            if (cfg.Enabled)
+            {
+                foreach (var feed in cfg.Feeds.Where(f => f.Enabled))
                 {
-                    var idx = CameraEnumerator.ResolveIndex(feed.CameraName, _host.Config.Video.FfmpegPath);
-                    worker.OpenPreview(idx);
+                    if (!_workers.TryGetValue(feed.Id, out var worker))
+                    {
+                        worker = new FeedWorker(feed.Id, feed.Tag);
+                        _workers[feed.Id] = worker;
+                    }
+                    else
+                        worker.Tag = feed.Tag;
+
+                    // Idle preview only — never hold the camera while FFmpeg is LIVE / starting / suspended.
+                    if (_previewSuspendDepth == 0 &&
+                        !worker.IsLive &&
+                        !_startingFeeds.Contains(feed.Id))
+                    {
+                        var idx = CameraEnumerator.ResolveIndex(feed.CameraName, cfg.FfmpegPath);
+                        worker.OpenPreview(idx);
+                    }
                 }
             }
         }
@@ -460,8 +482,10 @@ public sealed class VideoService : IDisposable
 
         if (cfg.Transport.Equals("UdpMulticast", StringComparison.OrdinalIgnoreCase))
         {
-            var u = $"udp://{cfg.MulticastAddress}:{cfg.MulticastPort}";
-            return (u, u);
+            // FFmpeg sends TO the group; ATAK/VLC join/listen with the @ form.
+            var send = $"udp://{cfg.MulticastAddress}:{cfg.MulticastPort}";
+            var play = $"udp://@{cfg.MulticastAddress}:{cfg.MulticastPort}";
+            return (play, send);
         }
 
         // Listen on all interfaces; advertise the preferred LAN IP in CoT.
@@ -492,10 +516,28 @@ public sealed class VideoService : IDisposable
         }
     }
 
+    /// <summary>
+    /// MediaMTX / TAK Video Restreamer: base <c>rtsp://host:8554/</c> + feed tag → <c>…/tag</c>.
+    /// If the URL already has a non-root path, leave it unchanged (full publish URL pasted).
+    /// </summary>
     private static string AppendPath(string baseUrl, string tag)
     {
-        if (baseUrl.Contains(tag, StringComparison.OrdinalIgnoreCase)) return baseUrl;
-        return baseUrl.TrimEnd('/') + "-" + tag;
+        if (string.IsNullOrWhiteSpace(baseUrl)) return baseUrl;
+        var trimmed = baseUrl.Trim();
+        try
+        {
+            var uri = new Uri(trimmed, UriKind.Absolute);
+            var path = uri.AbsolutePath;
+            if (!string.IsNullOrEmpty(path) && path != "/")
+                return trimmed;
+
+            // Authority only (scheme://[user@]host:port) — never glue tag onto the port with '-'.
+            return uri.GetLeftPart(UriPartial.Authority) + "/" + tag.TrimStart('/') + uri.Query + uri.Fragment;
+        }
+        catch
+        {
+            return trimmed.TrimEnd('/') + "/" + tag.TrimStart('/');
+        }
     }
 
     private List<string> BuildFfmpegArgs(

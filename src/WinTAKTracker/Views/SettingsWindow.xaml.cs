@@ -1567,16 +1567,24 @@ public partial class SettingsWindow : Window
             IsEnabled = edit,
         };
         panel.Children.Add(Label("Mode")); panel.Children.Add(transport);
-        panel.Children.Add(Label("Push URL (MediaMTX / restreamer)")); panel.Children.Add(pushUrl);
+        panel.Children.Add(Label("Push URL (MediaMTX / TAK Video Restreamer base)"));
+        panel.Children.Add(pushUrl);
+        pushUrl.ToolTip =
+            "Paste the restreamer Quick Connect RTSP base, e.g. rtsp://stream.example.com:8554/\n" +
+            "Each feed Tag becomes the stream path: rtsp://host:8554/{tag}";
+        panel.Children.Add(Blurb(
+            "Push: paste Quick Connect “RTSP SERVER” base (rtsp://host:8554/). " +
+            "Feed Tag = stream name (publish/play path …/tag). Optional username/password for secured MediaMTX."));
         panel.Children.Add(Label("Push username (optional)")); panel.Children.Add(pushUser);
         panel.Children.Add(Label("Push password (optional, stored via DPAPI)")); panel.Children.Add(pushPass);
         panel.Children.Add(Label("UDP multicast host:port")); panel.Children.Add(mcast);
         panel.Children.Add(Label("On-device RTSP listen port")); panel.Children.Add(rtspPort);
         panel.Children.Add(Label("Advertise NIC (LAN IP in CoT for On-device RTSP)")); panel.Children.Add(nic);
         panel.Children.Add(Blurb(
-            "On-device RTSP: CoT URL is rtsp://YOUR-PC-IP:port/live-tag (Auto prefers Wi‑Fi/Ethernet, skips Tailscale/VPN). " +
-            "UDP multicast: CoT URL is the media group (e.g. udp://239.2.3.2:5004), not your PC IP. " +
-            "On-device RTSP needs an inbound firewall allow; prefer push to MediaMTX for WAN."));
+            "Best for ATAK on LAN: On-device RTSP — CoT URL is rtsp://YOUR-PC-IP:port/live-tag " +
+            "(allow inbound TCP on that port in Windows Firewall; Auto NIC prefers Wi‑Fi/Ethernet, skips Tailscale/VPN). " +
+            "UDP multicast: CoT advertises udp://@group:port (players join the group; many Wi‑Fi APs block multicast — test with VLC first). " +
+            "Push to MediaMTX / TAK Video Restreamer for WAN or when multicast is filtered."));
 
         panel.Children.Add(SectionHeader("Encode"));
         panel.Children.Add(Blurb(

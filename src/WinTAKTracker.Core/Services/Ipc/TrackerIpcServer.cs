@@ -41,6 +41,27 @@ public sealed class TrackerIpcServer : IAsyncDisposable
         nameof(IpcMethod.DismissUserSetupPrompt),
     };
 
+    /// <summary>
+    /// Reads that expose hosts, usernames, callsign, and live coordinates — same interactive-client
+    /// requirement as mutations so arbitrary local services cannot harvest them over the pipe.
+    /// </summary>
+    private static readonly HashSet<string> SensitiveReadMethods = new(StringComparer.Ordinal)
+    {
+        nameof(IpcMethod.GetStatus),
+        nameof(IpcMethod.GetConfig),
+    };
+
+    /// <summary>
+    /// Methods whose payload carries a UserSid that must match the impersonated pipe client SID —
+    /// another interactive user must not be able to claim or rewrite someone else's identity/session.
+    /// </summary>
+    private static readonly HashSet<string> SidBoundMethods = new(StringComparer.Ordinal)
+    {
+        nameof(IpcMethod.SetUserIdentity),
+        nameof(IpcMethod.SetActiveSession),
+        nameof(IpcMethod.DismissUserSetupPrompt),
+    };
+
     private readonly TrackingHost _host;
     private readonly CancellationTokenSource _cts = new();
     private Task? _loop;
@@ -150,20 +171,24 @@ public sealed class TrackerIpcServer : IAsyncDisposable
         var method = request.Method;
         try
         {
-            if (MutatingMethods.Contains(method))
+            if (MutatingMethods.Contains(method) || SensitiveReadMethods.Contains(method))
             {
                 if (!TryGetInteractiveClientSid(pipe, out var clientSid, out var interactiveError))
-                    throw new InvalidOperationException(interactiveError ?? "IPC mutation requires an interactive Windows user.");
+                    throw new InvalidOperationException(interactiveError ?? "IPC access requires an interactive Windows user.");
 
                 if (LockGatedMethods.Contains(method) && _host.SettingsLock.IsLocked)
                     throw new InvalidOperationException(
-                        "Settings are locked — unlock in the tray (or UnlockSettings) before mutating config/identity/GPS.");
+                        "Settings are locked — unlock in the tray (or UnlockSettings) before mutating config/identity.");
+
+                // Identity/session payloads must be about the caller — the impersonated pipe SID is
+                // authoritative; a mismatched payload SID is a spoof attempt from another session.
+                if (SidBoundMethods.Contains(method))
+                    EnsurePayloadSidMatchesCaller(method, request.Payload, clientSid);
 
                 // Multi-session: only the active companion SID may push GPS / claim session when one is set.
                 if (method is nameof(IpcMethod.PushGpsFix) or nameof(IpcMethod.SetActiveSession))
                 {
-                    var sid = ResolveCallerSid(method, request.Payload, clientSid);
-                    if (!_host.IsCompanionSidAllowed(sid) &&
+                    if (!_host.IsCompanionSidAllowed(clientSid) &&
                         method == nameof(IpcMethod.PushGpsFix))
                     {
                         throw new InvalidOperationException(
@@ -171,7 +196,7 @@ public sealed class TrackerIpcServer : IAsyncDisposable
                     }
 
                     if (method == nameof(IpcMethod.SetActiveSession) &&
-                        !_host.IsCompanionSidAllowed(sid) &&
+                        !_host.IsCompanionSidAllowed(clientSid) &&
                         request.Payload is { } p &&
                         p.TryGetProperty("loggedOn", out var logged) &&
                         logged.ValueKind == JsonValueKind.True)
@@ -327,23 +352,38 @@ public sealed class TrackerIpcServer : IAsyncDisposable
         return new { locked = _host.SettingsLock.IsLocked };
     }
 
-    private static string? ResolveCallerSid(string method, JsonElement? payload, string? pipeSid)
+    private static void EnsurePayloadSidMatchesCaller(string method, JsonElement? payload, string? pipeSid)
     {
-        if (payload is null) return pipeSid;
+        if (payload is null || string.IsNullOrWhiteSpace(pipeSid)) return;
+
+        string? payloadSid = null;
         try
         {
-            if (method == nameof(IpcMethod.SetActiveSession))
+            if (payload.Value.ValueKind == JsonValueKind.Object)
             {
-                var dto = payload.Value.Deserialize<SessionUpdateDto>(IpcJson.Options);
-                return dto?.UserSid ?? pipeSid;
+                // Deserialization is case-insensitive — match it, or "UserSid" would bypass the check.
+                foreach (var prop in payload.Value.EnumerateObject())
+                {
+                    if (prop.Name.Equals("userSid", StringComparison.OrdinalIgnoreCase) &&
+                        prop.Value.ValueKind == JsonValueKind.String)
+                    {
+                        payloadSid = prop.Value.GetString();
+                        break;
+                    }
+                }
             }
         }
         catch
         {
-            /* ignore */
+            /* malformed payload fails later in the handler */
         }
 
-        return pipeSid;
+        if (!string.IsNullOrWhiteSpace(payloadSid) &&
+            !string.Equals(payloadSid, pipeSid, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException(
+                $"{method} rejected: payload UserSid does not match the connected Windows user.");
+        }
     }
 
     /// <summary>
@@ -417,7 +457,7 @@ public sealed class TrackerIpcServer : IAsyncDisposable
         }
         catch
         {
-            return true; // fail open on exotic tokens after SID checks passed
+            return false; // fail closed — unreadable/exotic tokens do not get the interactive gate
         }
     }
 

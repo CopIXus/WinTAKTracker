@@ -1,4 +1,6 @@
+using System.Security.AccessControl;
 using System.Security.Cryptography;
+using System.Security.Principal;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
@@ -126,9 +128,65 @@ public sealed class AppConfigStore
         config.EnsureIdentityDefaults();
         config.Version = AppConfig.CurrentVersion;
         var json = JsonSerializer.Serialize(config, JsonOptions);
-        var temp = _configPath + ".tmp";
-        File.WriteAllText(temp, json);
-        File.Move(temp, _configPath, overwrite: true);
+
+        // Tray and service can save concurrently (both write the machine store) — serialize
+        // cross-process, and use a unique temp name so two writers never share a .tmp path.
+        using var mutex = AcquireStoreMutex();
+        var temp = _configPath + "." + Guid.NewGuid().ToString("N") + ".tmp";
+        try
+        {
+            File.WriteAllText(temp, json);
+            File.Move(temp, _configPath, overwrite: true);
+        }
+        finally
+        {
+            try { if (File.Exists(temp)) File.Delete(temp); } catch { /* ignore */ }
+            mutex?.ReleaseMutex();
+        }
+    }
+
+    /// <summary>
+    /// Cross-process (tray user session ↔ SYSTEM service) writer lock for this store.
+    /// Best-effort: returns null when the mutex cannot be created/acquired.
+    /// </summary>
+    private Mutex? AcquireStoreMutex()
+    {
+        try
+        {
+            var name = @"Global\WinTAKTracker-store-" +
+                       Convert.ToHexString(SHA256.HashData(
+                           System.Text.Encoding.UTF8.GetBytes(
+                               Path.GetFullPath(_rootDir).ToUpperInvariant())))[..16];
+            var security = new MutexSecurity();
+            security.AddAccessRule(new MutexAccessRule(
+                new SecurityIdentifier(WellKnownSidType.AuthenticatedUserSid, null),
+                MutexRights.Synchronize | MutexRights.Modify,
+                AccessControlType.Allow));
+            security.AddAccessRule(new MutexAccessRule(
+                new SecurityIdentifier(WellKnownSidType.LocalSystemSid, null),
+                MutexRights.FullControl,
+                AccessControlType.Allow));
+
+            var mutex = MutexAcl.Create(initiallyOwned: false, name, out _, security);
+            try
+            {
+                if (!mutex.WaitOne(TimeSpan.FromSeconds(10)))
+                {
+                    mutex.Dispose();
+                    return null;
+                }
+            }
+            catch (AbandonedMutexException)
+            {
+                // Previous holder died mid-save — we now own the mutex; temp+rename keeps the file whole.
+            }
+
+            return mutex;
+        }
+        catch
+        {
+            return null; // fall back to unsynchronized (still atomic per-writer via temp+rename)
+        }
     }
 
     public void WriteSecret(string blobName, string plaintext)
@@ -138,7 +196,26 @@ public sealed class AppConfigStore
         var path = Path.Combine(_secretsDir, safeName + ".dpapi");
         var protectedBytes = DpapiProtector.Protect(
             System.Text.Encoding.UTF8.GetBytes(plaintext), _dpapiScope);
-        File.WriteAllBytes(path, protectedBytes);
+
+        // Atomic when possible so a crash never truncates a DPAPI blob. Replacing another
+        // principal's blob needs Delete on the target; fall back to in-place overwrite
+        // (Authenticated Users keep WriteData under the secrets ACL).
+        var temp = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
+        try
+        {
+            File.WriteAllBytes(temp, protectedBytes);
+            File.Move(temp, path, overwrite: true);
+        }
+        catch (UnauthorizedAccessException)
+        {
+            try { File.Delete(temp); } catch { /* ignore */ }
+            File.WriteAllBytes(path, protectedBytes);
+        }
+        catch
+        {
+            try { File.Delete(temp); } catch { /* ignore */ }
+            throw;
+        }
     }
 
     public string? ReadSecret(string blobName)

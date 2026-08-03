@@ -62,7 +62,8 @@
                        Style="{DynamicResource SectionTitleText}"/>
 
             <Border Grid.Row="1" Style="{DynamicResource ContentSurface}">
-                <ScrollViewer VerticalScrollBarVisibility="Auto"
+                <ScrollViewer x:Name="SectionScroll"
+                              VerticalScrollBarVisibility="Auto"
                               HorizontalScrollBarVisibility="Disabled"
                               Padding="0,0,4,0">
                     <StackPanel x:Name="SectionContent"/>

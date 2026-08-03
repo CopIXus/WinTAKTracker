@@ -41,6 +41,14 @@ public sealed class TrackingHost : IDisposable
     private string? _activeUserSid;
     private string? _activeUserName;
 
+    // Resume-from-sleep detection: timers do not fire while suspended, so a large gap between
+    // probe callbacks means the machine slept (works in session 0 where SystemEvents does not).
+    private static readonly TimeSpan ResumeProbePeriod = TimeSpan.FromSeconds(30);
+    private static readonly TimeSpan ResumeGapThreshold = TimeSpan.FromSeconds(120);
+    private System.Threading.Timer? _resumeProbeTimer;
+    private long _lastResumeProbeMs = Environment.TickCount64;
+    private int _resumeRecoveryBusy;
+
     public event EventHandler? StatusChanged;
 
     public TrackingHost(AppConfigStore? store = null, bool serviceMode = false)
@@ -188,9 +196,49 @@ public sealed class TrackingHost : IDisposable
         await Tak.StartAsync(Config).ConfigureAwait(false);
         Reporting.Start(Config);
 
+        _lastResumeProbeMs = Environment.TickCount64;
+        _resumeProbeTimer = new System.Threading.Timer(
+            _ => ProbeResumeFromSleep(), null, ResumeProbePeriod, ResumeProbePeriod);
+
         Log.Info("Host", ServiceMode
             ? "WinTAKTracker service host started (machine store)."
             : "WinTAKTracker in-process host started (user store).");
+    }
+
+    private void ProbeResumeFromSleep()
+    {
+        var now = Environment.TickCount64;
+        var last = Interlocked.Exchange(ref _lastResumeProbeMs, now);
+        if (now - last < ResumeGapThreshold.TotalMilliseconds + ResumeProbePeriod.TotalMilliseconds)
+            return;
+
+        if (Interlocked.CompareExchange(ref _resumeRecoveryBusy, 1, 0) != 0)
+            return;
+
+        var gapSeconds = (now - last) / 1000.0;
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                Log.Info("Host",
+                    $"System resume detected (probe gap {gapSeconds:0}s) — bouncing GPS, Mesh, and TAK streams.");
+                // Sockets look Connected after sleep but are dead; force-drop so the normal
+                // reconnect/backoff path re-establishes them instead of waiting on read EOF.
+                await Tak.ForceReconnectAsync().ConfigureAwait(false);
+                await Gps.ApplySettingsAsync(Config.Gps).ConfigureAwait(false);
+                Mesh.ApplySettings(Config.MeshSa);
+                Reporting.RequestAsap();
+                StatusChanged?.Invoke(this, EventArgs.Empty);
+            }
+            catch (Exception ex)
+            {
+                Log.Warn("Host", $"Resume recovery failed: {ex.GetType().Name}: {ex.Message}");
+            }
+            finally
+            {
+                Interlocked.Exchange(ref _resumeRecoveryBusy, 0);
+            }
+        });
     }
 
     public void SaveConfig()
@@ -456,6 +504,8 @@ public sealed class TrackingHost : IDisposable
 
     public void Dispose()
     {
+        _resumeProbeTimer?.Dispose();
+        _resumeProbeTimer = null;
         Reporting.Dispose();
         (Tak as IDisposable)?.Dispose();
         Mesh.Dispose();

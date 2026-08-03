@@ -42,6 +42,7 @@ public sealed class GpsService : IGpsService, IDisposable
     private DateTimeOffset? _lastLiveUtc;
     private System.Threading.Timer? _holdTimer;
     private CancellationTokenSource? _networkDelayCts;
+    private bool _networkArmed;
     private bool _started;
     private bool _companionFixActive;
 
@@ -221,21 +222,32 @@ public sealed class GpsService : IGpsService, IDisposable
         _network.Stop();
     }
 
-    private void ScheduleNetworkFallback(bool windowsEnabled)
+    private void ScheduleNetworkFallback(bool windowsEnabled, bool rearm = false)
     {
         CancelNetworkDelay();
         var cts = new CancellationTokenSource();
-        _networkDelayCts = cts;
-        _ = WaitThenStartNetworkAsync(windowsEnabled, cts.Token);
+        lock (_gate)
+        {
+            _networkDelayCts = cts;
+            _networkArmed = true;
+        }
+
+        _ = WaitThenStartNetworkAsync(windowsEnabled, rearm, cts);
     }
 
-    private async Task WaitThenStartNetworkAsync(bool windowsEnabled, CancellationToken ct)
+    private async Task WaitThenStartNetworkAsync(bool windowsEnabled, bool rearm, CancellationTokenSource cts)
     {
+        var ct = cts.Token;
         try
         {
             // If Windows Location is denied/unavailable, fall back quickly; otherwise wait for Wi‑Fi fix.
+            // Re-arm after precision loss uses a short delay — the hold already gave sources time.
             var delay = NetworkFallbackDelay;
-            if (windowsEnabled)
+            if (rearm)
+            {
+                delay = TimeSpan.FromSeconds(2);
+            }
+            else if (windowsEnabled)
             {
                 var perm = _windows.PermissionState;
                 if (perm is GpsPermissionState.Denied or GpsPermissionState.NotAvailable)
@@ -261,7 +273,9 @@ public sealed class GpsService : IGpsService, IDisposable
                     _windows.PermissionState is GpsPermissionState.Denied or GpsPermissionState.NotAvailable &&
                     waited >= TimeSpan.FromSeconds(1))
                     break;
-                if (_windows.HasPublishedFix) return;
+                // HasPublishedFix stays latched while Windows Location runs — for re-arm after a
+                // precision loss it must not block IP fallback (HasPrecisionFixAvailable rules here).
+                if (!rearm && _windows.HasPublishedFix) return;
 
                 await Task.Delay(step, ct);
                 waited += step;
@@ -269,11 +283,11 @@ public sealed class GpsService : IGpsService, IDisposable
 
             ct.ThrowIfCancellationRequested();
             if (!_started || !_settings.EnableNetworkFallback) return;
-            if (HasPrecisionFixAvailable() || _windows.HasPublishedFix) return;
+            if (HasPrecisionFixAvailable() || (!rearm && _windows.HasPublishedFix)) return;
 
             _network.Start();
             _log.Info("GPS",
-                "Network IP geolocation fallback started (ipwho.is, approximate) — Windows Location had no fix.");
+                "Network IP geolocation fallback started (ipwho.is, approximate) — no precision fix available.");
         }
         catch (OperationCanceledException)
         {
@@ -283,13 +297,26 @@ public sealed class GpsService : IGpsService, IDisposable
         {
             _log.Warn("GPS", $"Network fallback schedule error: {ex.Message}");
         }
+        finally
+        {
+            lock (_gate)
+            {
+                // Allow TickHold to re-arm later, unless a newer schedule replaced this one.
+                if (ReferenceEquals(_networkDelayCts, cts))
+                    _networkArmed = false;
+            }
+        }
     }
 
     private void CancelNetworkDelay()
     {
         try { _networkDelayCts?.Cancel(); } catch { /* ignore */ }
         try { _networkDelayCts?.Dispose(); } catch { /* ignore */ }
-        _networkDelayCts = null;
+        lock (_gate)
+        {
+            _networkDelayCts = null;
+            _networkArmed = false;
+        }
     }
 
     private bool HasPrecisionFixAvailable()
@@ -358,6 +385,7 @@ public sealed class GpsService : IGpsService, IDisposable
     private void TickHold()
     {
         GpsFix? publish;
+        var rearmNetwork = false;
         lock (_gate)
         {
             if (_liveFix is not null && IsPrecisionSource(_liveFix.Source) && _lastLiveUtc.HasValue)
@@ -376,6 +404,7 @@ public sealed class GpsService : IGpsService, IDisposable
                     {
                         _heldFix = null;
                         publish = _settings.EnableNetworkFallback ? _networkFix : null;
+                        rearmNetwork = ShouldRearmNetworkLocked();
                     }
 
                     goto Emit;
@@ -386,6 +415,7 @@ public sealed class GpsService : IGpsService, IDisposable
             {
                 _heldFix = null;
                 publish = _settings.EnableNetworkFallback ? _networkFix : null;
+                rearmNetwork = ShouldRearmNetworkLocked();
                 goto Emit;
             }
 
@@ -393,8 +423,20 @@ public sealed class GpsService : IGpsService, IDisposable
         }
 
     Emit:
+        if (rearmNetwork)
+        {
+            // Precision fix gone and hold expired — restart IP geolocation so positions do not
+            // black out until the next settings reload (it was stopped when precision arrived).
+            _log.Info("GPS", "Precision fix lost and hold expired — re-arming IP geolocation fallback.");
+            var priority = _settings.SourcePriority ?? "NmeaThenWindows";
+            ScheduleNetworkFallback(priority is not "NmeaOnly" && !_serviceMode, rearm: true);
+        }
+
         FixChanged?.Invoke(this, publish);
     }
+
+    private bool ShouldRearmNetworkLocked() =>
+        _started && _settings.EnableNetworkFallback && !_network.IsRunning && !_networkArmed;
 
     private bool IsHoldActive()
     {

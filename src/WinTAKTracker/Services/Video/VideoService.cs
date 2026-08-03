@@ -30,6 +30,8 @@ public sealed class VideoService : IDisposable
     private readonly object _gate = new();
     private readonly Dictionary<string, FeedWorker> _workers = new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<string> _startingFeeds = new(StringComparer.OrdinalIgnoreCase);
+    /// <summary>Stop-during-start: cancelling this token aborts the in-flight start for a feed.</summary>
+    private readonly Dictionary<string, CancellationTokenSource> _startCancels = new(StringComparer.OrdinalIgnoreCase);
     private int _previewSuspendDepth;
     private readonly DispatcherTimer _previewTimer;
     private readonly DispatcherTimer _pingTimer;
@@ -93,6 +95,7 @@ public sealed class VideoService : IDisposable
                      ?? throw new InvalidOperationException("FFmpeg not found. Set path under Settings → Video.");
 
         FeedWorker worker;
+        CancellationToken startCt;
         lock (_gate)
         {
             if (!_workers.TryGetValue(feedId, out worker!))
@@ -101,8 +104,12 @@ public sealed class VideoService : IDisposable
                 _workers[feedId] = worker;
             }
 
-            if (worker.IsLive) return;
+            // Single-flight: a second start while one is in progress is a no-op (hotkey/Console race).
+            if (worker.IsLive || _startingFeeds.Contains(feedId)) return;
             _startingFeeds.Add(feedId);
+            var cts = new CancellationTokenSource();
+            _startCancels[feedId] = cts;
+            startCt = cts.Token;
         }
 
         SuspendPreviews();
@@ -158,6 +165,13 @@ public sealed class VideoService : IDisposable
             GC.WaitForPendingFinalizers();
             await Task.Delay(1200).ConfigureAwait(false);
 
+            if (startCt.IsCancellationRequested)
+            {
+                worker.CancelPreparedRecording();
+                _host.Log.Info("Video", $"Start of feed '{feed.Tag}' cancelled by stop before FFmpeg launch.");
+                return;
+            }
+
             var attempts = new List<(string Label, string Device, bool StreamAudio)>
             {
                 ("friendly", dshowName, cfg.StreamAudio),
@@ -177,6 +191,7 @@ public sealed class VideoService : IDisposable
             string? lastStderr = null;
             foreach (var (label, device, streamAudio) in attempts)
             {
+                if (startCt.IsCancellationRequested) break;
                 lastTried = device;
                 var args = BuildFfmpegArgs(cfg, feed, device, ffmpegUrl, worker, streamAudio);
                 _host.Log.Info("Video",
@@ -208,6 +223,17 @@ public sealed class VideoService : IDisposable
                 await Task.Delay(400).ConfigureAwait(false);
             }
 
+            if (startCt.IsCancellationRequested)
+            {
+                // Stop was requested while FFmpeg was starting — tear down whatever came up
+                // instead of letting the stream go LIVE behind the operator's back.
+                worker.CancelPreparedRecording();
+                await worker.StopAsync().ConfigureAwait(false);
+                _host.Log.Info("Video", $"Start of feed '{feed.Tag}' cancelled by stop; stream torn down.");
+                StateChanged?.Invoke(this, EventArgs.Empty);
+                return;
+            }
+
             if (!started)
             {
                 worker.CancelPreparedRecording();
@@ -231,7 +257,13 @@ public sealed class VideoService : IDisposable
         finally
         {
             ResumePreviews();
-            lock (_gate) _startingFeeds.Remove(feedId);
+            lock (_gate)
+            {
+                _startingFeeds.Remove(feedId);
+                if (_startCancels.Remove(feedId, out var cts))
+                    cts.Dispose();
+            }
+
             // Restore idle preview only when start failed (LIVE keeps camera for FFmpeg).
             if (!worker.IsLive && feed.Enabled && cfg.Enabled)
             {
@@ -276,13 +308,24 @@ public sealed class VideoService : IDisposable
     public async Task StopFeedAsync(string feedId)
     {
         FeedWorker? worker;
-        lock (_gate) _workers.TryGetValue(feedId, out worker);
+        lock (_gate)
+        {
+            _workers.TryGetValue(feedId, out worker);
+            // A start may be mid-flight — cancel it so the stream cannot go LIVE after this stop.
+            if (_startCancels.TryGetValue(feedId, out var startCts))
+            {
+                try { startCts.Cancel(); } catch { /* already disposed by the start's finally */ }
+            }
+        }
+
         if (worker is null) return;
         var feed = _host.Config.Video.Feeds.FirstOrDefault(f => f.Id == feedId);
         _host.Log.Info("Video", $"Stopping feed '{worker.Tag}' id={feedId}");
         var camIndex = CameraEnumerator.ResolveIndex(feed?.CameraName, _host.Config.Video.FfmpegPath);
         await worker.StopAsync().ConfigureAwait(false);
-        if (_previewSuspendDepth == 0 &&
+        bool canReopenPreview;
+        lock (_gate) canReopenPreview = _previewSuspendDepth == 0 && !_startingFeeds.Contains(feedId);
+        if (canReopenPreview &&
             feed is { Enabled: true } &&
             _host.Config.Video.Enabled)
             worker.OpenPreview(camIndex);
@@ -770,7 +813,9 @@ public sealed class VideoService : IDisposable
                 FileName = ffmpeg,
                 UseShellExecute = false,
                 RedirectStandardError = true,
-                RedirectStandardOutput = true,
+                // stdout is never read (output goes to RTSP/file) — redirecting an undrained
+                // pipe can stall FFmpeg once the pipe buffer fills.
+                RedirectStandardOutput = false,
                 CreateNoWindow = true,
             };
             foreach (var a in args)
@@ -784,7 +829,17 @@ public sealed class VideoService : IDisposable
                 return false;
             }
 
-            var errBuf = new System.Text.StringBuilder();
+            // Bounded ring: FFmpeg logs progress continuously for the whole LIVE session —
+            // an unbounded buffer grows without limit on long streams.
+            const int maxStderrLines = 200;
+            var errLines = new Queue<string>(maxStderrLines);
+            var errLock = new object();
+
+            string SnapshotStderr()
+            {
+                lock (errLock) return string.Join(Environment.NewLine, errLines);
+            }
+
             var inputOpened = false;
             _ = Task.Run(() =>
             {
@@ -794,7 +849,13 @@ public sealed class VideoService : IDisposable
                     {
                         var line = _process.StandardError.ReadLine();
                         if (line is null) break;
-                        errBuf.AppendLine(line);
+                        lock (errLock)
+                        {
+                            errLines.Enqueue(line);
+                            while (errLines.Count > maxStderrLines)
+                                errLines.Dequeue();
+                        }
+
                         onStderrLine?.Invoke(line);
                         if (line.Contains("Input #0", StringComparison.OrdinalIgnoreCase) ||
                             line.Contains("Press [q]", StringComparison.OrdinalIgnoreCase))
@@ -815,15 +876,15 @@ public sealed class VideoService : IDisposable
                 if (inputOpened) break;
             }
 
-            LastStderrTail = Tail(errBuf.ToString(), 40);
+            LastStderrTail = Tail(SnapshotStderr(), 40);
 
             if (_process.HasExited || IsHardFfmpegError(LastError))
             {
                 await Task.Delay(200).ConfigureAwait(false);
-                LastStderrTail = Tail(errBuf.ToString(), 40);
+                LastStderrTail = Tail(SnapshotStderr(), 40);
                 if (string.IsNullOrWhiteSpace(LastError))
                 {
-                    var line = errBuf.ToString().Split('\n')
+                    var line = SnapshotStderr().Split('\n')
                         .LastOrDefault(l => IsHardFfmpegError(l))?.Trim();
                     LastError = line ??
                                 "FFmpeg exited. Check camera name under Settings → Video (use FFmpeg device list).";

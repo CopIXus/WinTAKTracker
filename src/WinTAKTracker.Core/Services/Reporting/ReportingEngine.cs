@@ -254,11 +254,18 @@ public sealed class ReportingEngine : IDisposable
             : CotEventBuilder.FromConfig(config, battery: battery);
         var stale = rate.GetStale(TimeSpan.FromSeconds(Math.Max(config.Reporting.ReliableMinSeconds, 30)));
         var cot = BuildCot(fix, identity, stale, config, video, pliClear: null);
+        var cotForServer = MakePerServerCot(config, active, battery, fix, stale, video, pliClear: null, defaultCot: cot);
 
         try
         {
             using var timeout = new CancellationTokenSource(CotSendTimeout);
-            await _tak.SendToAllAsync(cot, timeout.Token).ConfigureAwait(false);
+            var sent = await _tak.SendToAllAsync(cotForServer, timeout.Token).ConfigureAwait(false);
+            if (sent == 0)
+            {
+                _log.Warn("Report", "Presence announce delivered to no servers; keeping ASAP pending.");
+                return;
+            }
+
             _lastReliable = DateTimeOffset.UtcNow;
             LastPliSentUtc = _lastReliable;
             lock (_gate)
@@ -276,6 +283,43 @@ public sealed class ReportingEngine : IDisposable
             RequestAsap();
         }
     }
+
+    /// <summary>
+    /// Per-server PLI factory: servers with identity overrides (enroll/SoftCert callsign, team, role)
+    /// get CoT built with those overrides applied; everyone else shares the default event XML.
+    /// </summary>
+    private Func<ServerProfile, string> MakePerServerCot(
+        AppConfig config,
+        ActiveIdentity? active,
+        int? battery,
+        GpsFix fix,
+        TimeSpan stale,
+        VideoAnnounceState video,
+        IReadOnlyList<VideoFeedAnnounce>? pliClear,
+        string defaultCot)
+    {
+        // SendToAllAsync invokes sequentially — a plain cache is safe.
+        var cache = new Dictionary<string, string>(StringComparer.Ordinal);
+        return profile =>
+        {
+            if (!HasIdentityOverrides(profile))
+                return defaultCot;
+            if (cache.TryGetValue(profile.Id, out var cached))
+                return cached;
+
+            var identity = active is not null
+                ? CotEventBuilder.FromActiveIdentity(config, active, profile, battery)
+                : CotEventBuilder.FromConfig(config, profile, battery);
+            var xml = BuildCot(fix, identity, stale, config, video, pliClear);
+            cache[profile.Id] = xml;
+            return xml;
+        };
+    }
+
+    private static bool HasIdentityOverrides(ServerProfile profile) =>
+        !string.IsNullOrEmpty(profile.CallsignOverride)
+        || !string.IsNullOrEmpty(profile.TeamOverride)
+        || !string.IsNullOrEmpty(profile.RoleOverride);
 
     private async Task TickCoreBodyAsync()
     {
@@ -325,6 +369,11 @@ public sealed class ReportingEngine : IDisposable
 
         if (!reliableDue && !unreliableDue && !sensorDue && collapse.Count == 0) return;
 
+        // ASAP with no delivery path (offline, mesh off): keep flags pending; skip the tick work
+        // so the pending PLI fires the moment a server reconnects.
+        if (!sensorDue && collapse.Count == 0 && !_tak.AnyConnected && !ShouldSendMesh(config))
+            return;
+
         var battery = TryGetBatteryPercent();
         var active = _identityProvider?.Invoke();
         var identity = active is not null
@@ -332,15 +381,22 @@ public sealed class ReportingEngine : IDisposable
             : CotEventBuilder.FromConfig(config, battery: battery);
         var stale = rate.GetStale(rate.GetInterval(ReportingPath.Reliable, speed));
         var cot = BuildCot(fix, identity, stale, config, video, pliClear);
+        var cotForServer = MakePerServerCot(config, active, battery, fix, stale, video, pliClear, defaultCot: cot);
+
+        var reliableSent = false;
+        var meshSent = false;
 
         if (reliableDue && _tak.AnyConnected)
         {
             try
             {
                 using var timeout = new CancellationTokenSource(CotSendTimeout);
-                await _tak.SendToAllAsync(cot, timeout.Token).ConfigureAwait(false);
-                _lastReliable = DateTimeOffset.UtcNow;
-                LastPliSentUtc = _lastReliable;
+                reliableSent = await _tak.SendToAllAsync(cotForServer, timeout.Token).ConfigureAwait(false) > 0;
+                if (reliableSent)
+                {
+                    _lastReliable = DateTimeOffset.UtcNow;
+                    LastPliSentUtc = _lastReliable;
+                }
             }
             catch (Exception ex)
             {
@@ -352,6 +408,7 @@ public sealed class ReportingEngine : IDisposable
         {
             if (_mesh.TrySend(cot))
             {
+                meshSent = true;
                 _lastUnreliable = DateTimeOffset.UtcNow;
                 LastPliSentUtc = _lastUnreliable;
             }
@@ -383,17 +440,24 @@ public sealed class ReportingEngine : IDisposable
             }
         }
 
+        var delivered = reliableSent || meshSent;
         lock (_gate)
         {
-            if (clearingVideo || (reliableDue || unreliableDue))
+            if (delivered && (clearingVideo || reliableDue || unreliableDue))
                 _pendingPliClear.Clear();
             _prevAlt = fix.AltitudeMeters;
             _prevSpeedMph = speed;
-            _asap = false;
-            _identityDirty = false;
+            // ASAP/identity announcements are only satisfied when a PLI actually left this box;
+            // keep them pending across failed/skipped sends so the next tick retries.
+            if (delivered)
+            {
+                _asap = false;
+                _identityDirty = false;
+            }
         }
 
-        Reported?.Invoke(this, EventArgs.Empty);
+        if (delivered || sensorDue || collapse.Count > 0)
+            Reported?.Invoke(this, EventArgs.Empty);
     }
 
     private async Task SendSensorCotAsync(string marker, AppConfig config)

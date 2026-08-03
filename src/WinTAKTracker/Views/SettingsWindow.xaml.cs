@@ -2595,29 +2595,17 @@ public partial class SettingsWindow : Window
         if (_lastUpdateCheck is { UpdateAvailable: true, AssetName: not null })
             panel.Children.Add(Chip("Package", _lastUpdateCheck.AssetName));
 
-        if (!string.IsNullOrWhiteSpace(_lastUpdateCheck?.ReleaseNotes) && _lastUpdateCheck.UpdateAvailable)
+        if (_lastUpdateCheck is { Success: false } && !string.IsNullOrWhiteSpace(_lastUpdateCheck.Error))
         {
-            var notes = new TextBlock
+            var err = new TextBlock
             {
-                Text = _lastUpdateCheck.ReleaseNotes,
-                TextWrapping = TextWrapping.Wrap,
-                Margin = new Thickness(0, 8, 0, 8),
-            };
-            SetTheme(notes, TextBlock.ForegroundProperty, "TextSecondaryBrush");
-            panel.Children.Add(notes);
-        }
-
-        if (UpdateService.IsManagedInstall())
-        {
-            var uacHint = new TextBlock
-            {
-                Text = "Setup / service installs update via WinTAKTracker-Setup.exe. Windows may ask for administrator approval (UAC).",
+                Text = _lastUpdateCheck.Error,
                 Style = TryStyle("HelperText"),
                 TextWrapping = TextWrapping.Wrap,
-                Margin = new Thickness(0, 0, 0, 8),
+                Margin = new Thickness(0, 4, 0, 8),
             };
-            SetTheme(uacHint, TextBlock.ForegroundProperty, "TextSecondaryBrush");
-            panel.Children.Add(uacHint);
+            SetTheme(err, TextBlock.ForegroundProperty, "DangerBrush");
+            panel.Children.Add(err);
         }
 
         if (!string.IsNullOrWhiteSpace(_updateProgress))
@@ -2632,7 +2620,6 @@ public partial class SettingsWindow : Window
             panel.Children.Add(progress);
         }
 
-        panel.Children.Add(auto);
         auto.Checked += (_, _) =>
         {
             if (!CanEdit) return;
@@ -2649,10 +2636,21 @@ public partial class SettingsWindow : Window
         var updateRow = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 8, 0, 0) };
         updateRow.Children.Add(Btn("Check for updates", async () =>
         {
-            _lastUpdateCheck = await _host.Updates.CheckAsync();
-            _host.NoteUpdateCheck(_lastUpdateCheck);
+            _updateProgress = "Checking for updates…";
+            ShowSection("Updates");
+            try
+            {
+                _lastUpdateCheck = await _host.Updates.CheckAsync();
+                _host.NoteUpdateCheck(_lastUpdateCheck);
+            }
+            finally
+            {
+                _updateProgress = null;
+            }
+
             // Inline only — no popup for up-to-date / available results.
             ShowSection("Updates");
+            SectionScroll.ScrollToTop();
         }, enabled: string.IsNullOrWhiteSpace(_updateProgress)));
 
         var updateAvailable = _lastUpdateCheck?.UpdateAvailable == true;
@@ -2712,16 +2710,51 @@ public partial class SettingsWindow : Window
         }
 
         panel.Children.Add(updateRow);
-        if (_lastUpdateCheck is { Success: false } && !string.IsNullOrWhiteSpace(_lastUpdateCheck.Error))
+        auto.Margin = new Thickness(0, 8, 0, 0);
+        panel.Children.Add(auto);
+
+        if (UpdateService.IsManagedInstall())
         {
-            var err = new TextBlock
+            var uacHint = new TextBlock
             {
-                Text = _lastUpdateCheck.Error,
+                Text = "Setup / service installs update via WinTAKTracker-Setup.exe. Windows may ask for administrator approval (UAC).",
                 Style = TryStyle("HelperText"),
-                Margin = new Thickness(0, 10, 0, 0),
+                TextWrapping = TextWrapping.Wrap,
+                Margin = new Thickness(0, 8, 0, 0),
             };
-            SetTheme(err, TextBlock.ForegroundProperty, "DangerBrush");
-            panel.Children.Add(err);
+            SetTheme(uacHint, TextBlock.ForegroundProperty, "TextSecondaryBrush");
+            panel.Children.Add(uacHint);
+        }
+
+        if (!string.IsNullOrWhiteSpace(_lastUpdateCheck?.ReleaseNotes) && _lastUpdateCheck.UpdateAvailable)
+        {
+            var notesHeader = new TextBlock
+            {
+                Text = "Release notes",
+                FontWeight = FontWeights.SemiBold,
+                Margin = new Thickness(0, 14, 0, 4),
+            };
+            SetTheme(notesHeader, TextBlock.ForegroundProperty, "TextPrimaryBrush");
+            panel.Children.Add(notesHeader);
+
+            var notes = new TextBlock
+            {
+                Text = _lastUpdateCheck.ReleaseNotes,
+                TextWrapping = TextWrapping.Wrap,
+            };
+            SetTheme(notes, TextBlock.ForegroundProperty, "TextSecondaryBrush");
+
+            // Cap the notes height so long changelogs never push the action
+            // buttons below the fold; the notes scroll independently instead.
+            var notesScroll = new ScrollViewer
+            {
+                Content = notes,
+                MaxHeight = 180,
+                VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+                HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
+                Padding = new Thickness(0, 0, 8, 0),
+            };
+            panel.Children.Add(notesScroll);
         }
 
         return panel;

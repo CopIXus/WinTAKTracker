@@ -26,6 +26,13 @@ public interface ITakConnectionManager
     Task StartAsync(AppConfig config);
     Task ReloadAsync(AppConfig config);
     Task SendToAllAsync(string cotXml, CancellationToken ct = default);
+    /// <summary>
+    /// Send per-profile CoT (e.g. per-server callsign overrides). Returns the number of
+    /// servers that accepted the write, so callers can keep ASAP state when nothing delivered.
+    /// </summary>
+    Task<int> SendToAllAsync(Func<ServerProfile, string> cotForProfile, CancellationToken ct = default);
+    /// <summary>Drop every stream so the normal reconnect path re-establishes them (resume from sleep).</summary>
+    Task ForceReconnectAsync();
     Task<(bool Ok, string Message)> TestServerAsync(string profileId, AppConfig config);
     void WipeProfile(AppConfig config, string profileId, AppConfigStore store);
     void WipeAll(AppConfig config, AppConfigStore store);
@@ -168,17 +175,45 @@ public sealed class TakConnectionManager : ITakConnectionManager, IDisposable
         StatusChanged?.Invoke(this, EventArgs.Empty);
     }
 
-    public async Task SendToAllAsync(string cotXml, CancellationToken ct = default)
+    public Task SendToAllAsync(string cotXml, CancellationToken ct = default) =>
+        SendToAllAsync(_ => cotXml, ct);
+
+    public async Task<int> SendToAllAsync(Func<ServerProfile, string> cotForProfile, CancellationToken ct = default)
     {
         List<CotStreamClient> clients;
         lock (_gate) clients = _clients.Values.Where(c => c.State == TakConnectionState.Connected).ToList();
 
+        var sent = 0;
         foreach (var client in clients)
         {
-            try { await client.SendAsync(cotXml, ct).ConfigureAwait(false); }
+            try
+            {
+                await client.SendAsync(cotForProfile(client.Profile), ct).ConfigureAwait(false);
+                sent++;
+            }
             catch (Exception ex)
             {
                 _log.Warn("TAK", $"Send failed: {ex.GetType().Name}");
+            }
+        }
+
+        return sent;
+    }
+
+    public async Task ForceReconnectAsync()
+    {
+        List<CotStreamClient> clients;
+        lock (_gate) clients = _clients.Values.ToList();
+
+        _log.Info("TAK", $"Force reconnect of {clients.Count} stream(s) (resume/network recovery).");
+        foreach (var client in clients)
+        {
+            // DisconnectAsync flips state to Disconnected; the StateChanged hook schedules
+            // the normal reconnect/backoff path, so no explicit reconnect call is needed here.
+            try { await client.DisconnectAsync().ConfigureAwait(false); }
+            catch (Exception ex)
+            {
+                _log.Warn("TAK", $"Force disconnect failed: {ex.GetType().Name}");
             }
         }
     }

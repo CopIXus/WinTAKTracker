@@ -7,7 +7,31 @@ public static class FfmpegLocator
     public const string DownloadBuildsUrl = "https://www.gyan.dev/ffmpeg/builds/";
     public const string WingetPackageHint = "winget install \"FFmpeg (Essentials Build)\"";
 
+    // "where ffmpeg" spawns a process (up to 3s); cache the result so repeated
+    // Resolve calls (Settings rebuilds, device enumeration) stay cheap.
+    private sealed record ResolveCacheEntry(string Key, string? Path, long TimestampMs);
+
+    private const int NotFoundTtlMs = 10_000;
+    private static ResolveCacheEntry? _resolveCache;
+
     public static string? Resolve(string? configuredPath)
+    {
+        var key = configuredPath ?? "";
+        var cached = Volatile.Read(ref _resolveCache);
+        if (cached is not null && cached.Key == key)
+        {
+            if (cached.Path is not null && File.Exists(cached.Path))
+                return cached.Path;
+            if (cached.Path is null && Environment.TickCount64 - cached.TimestampMs < NotFoundTtlMs)
+                return null;
+        }
+
+        var resolved = ResolveUncached(configuredPath);
+        Volatile.Write(ref _resolveCache, new ResolveCacheEntry(key, resolved, Environment.TickCount64));
+        return resolved;
+    }
+
+    private static string? ResolveUncached(string? configuredPath)
     {
         if (!string.IsNullOrWhiteSpace(configuredPath) && File.Exists(configuredPath))
             return configuredPath;

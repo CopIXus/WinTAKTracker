@@ -6,6 +6,15 @@ namespace WinTAKTracker.Services.Video;
 
 public sealed record CameraDevice(int Index, string Name, string? AlternativeName = null);
 
+/// <summary>One completed device scan: what to show and whether FFmpeg listing worked.</summary>
+public sealed record CameraSnapshot(
+    IReadOnlyList<CameraDevice> Devices,
+    bool UsedOpenCvFallback,
+    long TimestampMs)
+{
+    public bool IsFresh => Environment.TickCount64 - TimestampMs < CameraEnumerator.SnapshotTtlMs;
+}
+
 public static class CameraEnumerator
 {
     private static readonly Regex QuotedName = new("\"([^\"]+)\"", RegexOptions.Compiled);
@@ -16,18 +25,83 @@ public static class CameraEnumerator
         @"^Camera\s+(\d+)\b",
         RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
+    // Enumeration is expensive: FFmpeg -list_devices spawns a process (seconds),
+    // and the OpenCV fallback probes 8 capture indices (much worse). Cache one
+    // scan and share it across ListDevices / Resolve* / UsedOpenCvFallback so a
+    // stream start or a Settings rebuild costs at most one scan.
+    internal const int SnapshotTtlMs = 10_000;
+    private const int OpenCvTtlMs = 30_000;
+
+    private sealed record FfmpegScan(string Key, string Stderr, IReadOnlyList<CameraDevice> Devices, long TimestampMs);
+
+    private sealed record OpenCvScan(IReadOnlyList<CameraDevice> Devices, long TimestampMs);
+
+    private static readonly object FfmpegRunGate = new();
+    private static readonly object OpenCvRunGate = new();
+    private static readonly object InflightGate = new();
+    private static FfmpegScan? _ffmpegScan;
+    private static OpenCvScan? _openCvScan;
+    private static string? _inflightKey;
+    private static Task<CameraSnapshot>? _inflight;
+
     /// <summary>
     /// Prefer FFmpeg DirectShow friendly names; fall back to OpenCvSharp index probes.
     /// </summary>
-    public static IReadOnlyList<CameraDevice> ListDevices(string? ffmpegPath = null)
-    {
-        var fromFfmpeg = ListViaFfmpeg(ffmpegPath);
-        if (fromFfmpeg.Count > 0) return fromFfmpeg;
-        return ListViaOpenCv();
-    }
+    public static IReadOnlyList<CameraDevice> ListDevices(string? ffmpegPath = null) =>
+        GetSnapshot(ffmpegPath).Devices;
 
     public static bool UsedOpenCvFallback(string? ffmpegPath = null) =>
-        ListViaFfmpeg(ffmpegPath).Count == 0;
+        GetSnapshot(ffmpegPath).UsedOpenCvFallback;
+
+    /// <summary>Blocking scan (cached). Safe on background threads; avoid on the UI thread.</summary>
+    public static CameraSnapshot GetSnapshot(string? ffmpegPath = null)
+    {
+        var scan = GetFfmpegScan(ffmpegPath);
+        if (scan.Devices.Count > 0)
+            return new CameraSnapshot(scan.Devices, UsedOpenCvFallback: false, scan.TimestampMs);
+        return new CameraSnapshot(GetOpenCvDevices(), UsedOpenCvFallback: true, scan.TimestampMs);
+    }
+
+    /// <summary>Last completed scan for this FFmpeg path (any age), without triggering a new one.</summary>
+    public static CameraSnapshot? TryGetCachedSnapshot(string? ffmpegPath = null)
+    {
+        var key = ffmpegPath ?? "";
+        var scan = Volatile.Read(ref _ffmpegScan);
+        if (scan is null || scan.Key != key) return null;
+        if (scan.Devices.Count > 0)
+            return new CameraSnapshot(scan.Devices, UsedOpenCvFallback: false, scan.TimestampMs);
+        var cv = Volatile.Read(ref _openCvScan);
+        if (cv is null) return null;
+        return new CameraSnapshot(cv.Devices, UsedOpenCvFallback: true, scan.TimestampMs);
+    }
+
+    /// <summary>Thread-pool scan with single-flight: concurrent callers share one run.</summary>
+    public static Task<CameraSnapshot> GetSnapshotAsync(string? ffmpegPath = null)
+    {
+        if (TryGetCachedSnapshot(ffmpegPath) is { IsFresh: true } fresh)
+            return Task.FromResult(fresh);
+
+        var key = ffmpegPath ?? "";
+        lock (InflightGate)
+        {
+            if (_inflight is { } running && _inflightKey == key)
+                return running;
+
+            _inflightKey = key;
+            var task = Task.Run(() => GetSnapshot(ffmpegPath));
+            _inflight = task;
+            _ = task.ContinueWith(
+                _ =>
+                {
+                    lock (InflightGate)
+                    {
+                        if (ReferenceEquals(_inflight, task)) _inflight = null;
+                    }
+                },
+                TaskScheduler.Default);
+            return task;
+        }
+    }
 
     public static int ResolveIndex(string? cameraName, string? ffmpegPath = null)
     {
@@ -44,7 +118,7 @@ public static class CameraEnumerator
     /// <summary>DirectShow device string for FFmpeg <c>-i video=…</c> (friendly name, not "Camera 0").</summary>
     public static string ResolveDshowVideoName(string? cameraName, string? ffmpegPath = null)
     {
-        var ffmpegDevices = ListViaFfmpeg(ffmpegPath);
+        var ffmpegDevices = GetFfmpegScan(ffmpegPath).Devices;
         if (ffmpegDevices.Count > 0)
         {
             var match = FindDevice(ffmpegDevices, cameraName, allowIndexFallback: true);
@@ -61,25 +135,13 @@ public static class CameraEnumerator
     /// <summary>FFmpeg alternative name (<c>@device_…</c>) when available.</summary>
     public static string? ResolveDshowVideoAlternativeName(string? cameraName, string? ffmpegPath = null)
     {
-        var devices = ListViaFfmpeg(ffmpegPath);
+        var devices = GetFfmpegScan(ffmpegPath).Devices;
         var match = FindDevice(devices, cameraName, allowIndexFallback: true);
         return match?.AlternativeName;
     }
 
-    public static string? ResolveDshowAudioName(string? ffmpegPath = null)
-    {
-        var ffmpeg = FfmpegLocator.Resolve(ffmpegPath);
-        if (ffmpeg is null) return null;
-        try
-        {
-            var err = RunListDevices(ffmpeg);
-            return ParseFirstAudio(err);
-        }
-        catch
-        {
-            return null;
-        }
-    }
+    public static string? ResolveDshowAudioName(string? ffmpegPath = null) =>
+        ParseFirstAudio(GetFfmpegScan(ffmpegPath).Stderr);
 
     /// <summary>True when <paramref name="cameraName"/> is an OpenCV-style label FFmpeg cannot open directly.</summary>
     public static bool IsOpenCvStyleLabel(string? cameraName)
@@ -117,23 +179,55 @@ public static class CameraEnumerator
             trimmed.Contains(d.Name, StringComparison.OrdinalIgnoreCase));
     }
 
-    private static List<CameraDevice> ListViaFfmpeg(string? ffmpegPath)
+    private static FfmpegScan GetFfmpegScan(string? ffmpegPath)
     {
-        var list = new List<CameraDevice>();
-        var ffmpeg = FfmpegLocator.Resolve(ffmpegPath);
-        if (ffmpeg is null) return list;
-        try
-        {
-            var err = RunListDevices(ffmpeg);
-            foreach (var (name, alt) in ParseVideoDevices(err))
-                list.Add(new CameraDevice(list.Count, name, alt));
-        }
-        catch
-        {
-            // fall through
-        }
+        var key = ffmpegPath ?? "";
+        var cached = Volatile.Read(ref _ffmpegScan);
+        if (cached is not null && cached.Key == key &&
+            Environment.TickCount64 - cached.TimestampMs < SnapshotTtlMs)
+            return cached;
 
-        return list;
+        lock (FfmpegRunGate)
+        {
+            cached = Volatile.Read(ref _ffmpegScan);
+            if (cached is not null && cached.Key == key &&
+                Environment.TickCount64 - cached.TimestampMs < SnapshotTtlMs)
+                return cached;
+
+            var stderr = "";
+            var ffmpeg = FfmpegLocator.Resolve(ffmpegPath);
+            if (ffmpeg is not null)
+            {
+                try { stderr = RunListDevices(ffmpeg); }
+                catch { stderr = ""; }
+            }
+
+            var list = new List<CameraDevice>();
+            foreach (var (name, alt) in ParseVideoDevices(stderr))
+                list.Add(new CameraDevice(list.Count, name, alt));
+
+            var scan = new FfmpegScan(key, stderr, list, Environment.TickCount64);
+            Volatile.Write(ref _ffmpegScan, scan);
+            return scan;
+        }
+    }
+
+    private static IReadOnlyList<CameraDevice> GetOpenCvDevices()
+    {
+        var cached = Volatile.Read(ref _openCvScan);
+        if (cached is not null && Environment.TickCount64 - cached.TimestampMs < OpenCvTtlMs)
+            return cached.Devices;
+
+        lock (OpenCvRunGate)
+        {
+            cached = Volatile.Read(ref _openCvScan);
+            if (cached is not null && Environment.TickCount64 - cached.TimestampMs < OpenCvTtlMs)
+                return cached.Devices;
+
+            var list = ListViaOpenCv();
+            Volatile.Write(ref _openCvScan, new OpenCvScan(list, Environment.TickCount64));
+            return list;
+        }
     }
 
     private static string RunListDevices(string ffmpeg)

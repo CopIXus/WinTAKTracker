@@ -116,10 +116,15 @@ public sealed class VideoService : IDisposable
         try
         {
             var (advertiseUrl, ffmpegUrl) = BuildStreamUrls(cfg, feed);
-            var dshowName = CameraEnumerator.ResolveDshowVideoName(feed.CameraName, cfg.FfmpegPath);
-            var dshowAlt = CameraEnumerator.ResolveDshowVideoAlternativeName(feed.CameraName, cfg.FfmpegPath);
-            var devices = CameraEnumerator.ListDevices(cfg.FfmpegPath);
-            var openCvFallback = CameraEnumerator.UsedOpenCvFallback(cfg.FfmpegPath);
+            // Device enumeration spawns FFmpeg (or probes cameras); keep it off the
+            // caller's thread so Go LIVE from the Console/hotkey never freezes the UI.
+            var (dshowName, dshowAlt, devices, openCvFallback) = await Task.Run(() =>
+            {
+                var name = CameraEnumerator.ResolveDshowVideoName(feed.CameraName, cfg.FfmpegPath);
+                var alt = CameraEnumerator.ResolveDshowVideoAlternativeName(feed.CameraName, cfg.FfmpegPath);
+                var snap = CameraEnumerator.GetSnapshot(cfg.FfmpegPath);
+                return (name, alt, snap.Devices, snap.UsedOpenCvFallback);
+            }, startCt).ConfigureAwait(false);
 
             _host.Log.Info("Video",
                 $"Start feed '{feed.Tag}' id={feedId} configuredCamera=\"{feed.CameraName}\" " +
@@ -321,7 +326,9 @@ public sealed class VideoService : IDisposable
         if (worker is null) return;
         var feed = _host.Config.Video.Feeds.FirstOrDefault(f => f.Id == feedId);
         _host.Log.Info("Video", $"Stopping feed '{worker.Tag}' id={feedId}");
-        var camIndex = CameraEnumerator.ResolveIndex(feed?.CameraName, _host.Config.Video.FfmpegPath);
+        // ResolveIndex may rescan devices after a long stream (cache expired) — keep it off the UI thread.
+        var camIndex = await Task.Run(() =>
+            CameraEnumerator.ResolveIndex(feed?.CameraName, _host.Config.Video.FfmpegPath)).ConfigureAwait(false);
         await worker.StopAsync().ConfigureAwait(false);
         bool canReopenPreview;
         lock (_gate) canReopenPreview = _previewSuspendDepth == 0 && !_startingFeeds.Contains(feedId);
@@ -411,6 +418,7 @@ public sealed class VideoService : IDisposable
 
     public void EnsureWorkersForConfig()
     {
+        var reopen = new List<(FeedWorker Worker, string FeedId, string? CameraName)>();
         lock (_gate)
         {
             var cfg = _host.Config.Video;
@@ -446,12 +454,41 @@ public sealed class VideoService : IDisposable
                     if (_previewSuspendDepth == 0 &&
                         !worker.IsLive &&
                         !_startingFeeds.Contains(feed.Id))
-                    {
-                        var idx = CameraEnumerator.ResolveIndex(feed.CameraName, cfg.FfmpegPath);
-                        worker.OpenPreview(idx);
-                    }
+                        reopen.Add((worker, feed.Id, feed.CameraName));
                 }
             }
+        }
+
+        // This runs on every settings change: ResolveIndex may rescan devices and
+        // OpenPreview opens an OpenCV capture (seconds) — both belong off this thread.
+        if (reopen.Count > 0)
+        {
+            var ffmpegPath = _host.Config.Video.FfmpegPath;
+            _ = Task.Run(() =>
+            {
+                var opened = false;
+                foreach (var (worker, feedId, cameraName) in reopen)
+                {
+                    int idx;
+                    try { idx = CameraEnumerator.ResolveIndex(cameraName, ffmpegPath); }
+                    catch { continue; }
+
+                    lock (_gate)
+                    {
+                        if (_previewSuspendDepth != 0 || worker.IsLive || _startingFeeds.Contains(feedId))
+                            continue;
+                        if (!_workers.TryGetValue(feedId, out var current) || !ReferenceEquals(current, worker))
+                            continue;
+                        if (worker.HasOpenPreview(idx))
+                            continue;
+                        worker.OpenPreview(idx);
+                        opened = true;
+                    }
+                }
+
+                if (opened)
+                    StateChanged?.Invoke(this, EventArgs.Empty);
+            });
         }
 
         StateChanged?.Invoke(this, EventArgs.Empty);
@@ -920,6 +957,16 @@ public sealed class VideoService : IDisposable
                    || line.Contains("Immediate exit requested", StringComparison.OrdinalIgnoreCase);
         }
 
+        private int _previewIndex = -1;
+
+        /// <summary>True when an opened camera preview for this index already exists (skip a slow reopen).</summary>
+        public bool HasOpenPreview(int index)
+        {
+            if (_preview is not { } p || _previewIndex != index) return false;
+            try { return p.IsOpened(); }
+            catch { return false; }
+        }
+
         public void ClosePreview()
         {
             try
@@ -931,6 +978,7 @@ public sealed class VideoService : IDisposable
             finally
             {
                 _preview = null;
+                _previewIndex = -1;
             }
         }
 
@@ -948,6 +996,8 @@ public sealed class VideoService : IDisposable
                     _preview.Dispose();
                     _preview = new VideoCapture(index, VideoCaptureAPIs.DSHOW);
                 }
+
+                _previewIndex = index;
             }
             catch (Exception ex)
             {

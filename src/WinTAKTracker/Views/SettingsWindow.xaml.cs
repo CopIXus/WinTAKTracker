@@ -33,6 +33,8 @@ public partial class SettingsWindow : Window
     private readonly List<Action> _serverCardRefreshers = [];
     private string? _videoExpandedFeedId;
     private string? _videoSelectedFeedId;
+    private string? _currentSectionTag;
+    private int _videoDeviceScanGen;
 
     private bool CanEdit => _host.SettingsLock.IsUnlocked;
 
@@ -286,6 +288,7 @@ public partial class SettingsWindow : Window
 
     private void ShowSection(string tag)
     {
+        _currentSectionTag = tag;
         SectionContent.Children.Clear();
         SectionTitle.Text = tag switch
         {
@@ -1420,6 +1423,89 @@ public partial class SettingsWindow : Window
         return panel;
     }
 
+    /// <summary>Inline "work is happening" row: indeterminate bar + accent text.</summary>
+    private UIElement BusyRow(string text)
+    {
+        var row = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 0, 0, 8) };
+        row.Children.Add(new System.Windows.Controls.ProgressBar
+        {
+            IsIndeterminate = true,
+            Width = 110,
+            Height = 4,
+            VerticalAlignment = VerticalAlignment.Center,
+            Margin = new Thickness(0, 0, 8, 0),
+        });
+        var tb = new TextBlock
+        {
+            Text = text,
+            Style = TryStyle("HelperText"),
+            VerticalAlignment = VerticalAlignment.Center,
+            TextWrapping = TextWrapping.Wrap,
+        };
+        SetTheme(tb, TextBlock.ForegroundProperty, "AccentBrush");
+        row.Children.Add(tb);
+        return row;
+    }
+
+    /// <summary>"Camera N" / "N" label → FFmpeg friendly name using an already-loaded device list.</summary>
+    private static string? ResolveFromSnapshot(IReadOnlyList<CameraDevice> devices, string? cameraName)
+    {
+        if (devices.Count == 0 || string.IsNullOrWhiteSpace(cameraName)) return null;
+        var trimmed = cameraName.Trim();
+        if (!int.TryParse(trimmed, out var idx))
+        {
+            var m = System.Text.RegularExpressions.Regex.Match(trimmed, @"^Camera\s+(\d+)\b",
+                System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+            if (!m.Success || !int.TryParse(m.Groups[1].Value, out idx)) return null;
+        }
+
+        return (devices.FirstOrDefault(d => d.Index == idx) ?? devices[0]).Name;
+    }
+
+    private async Task UpdateFfmpegStatusChipAsync(Border chip, string? ffmpegPath)
+    {
+        string text;
+        try
+        {
+            text = await Task.Run(() => FfmpegLocator.DescribeStatus(ffmpegPath));
+        }
+        catch
+        {
+            text = "status check failed";
+        }
+
+        if (chip.Child is TextBlock tb)
+            tb.Text = "FFmpeg: " + text;
+    }
+
+    /// <summary>
+    /// Scans cameras on a background thread; rebuilds the Video section only when the
+    /// user is still on it and the device list actually changed (or this is the first scan).
+    /// </summary>
+    private async Task RefreshVideoDeviceListAsync(string? ffmpegPath, CameraSnapshot? shown)
+    {
+        var gen = Interlocked.Increment(ref _videoDeviceScanGen);
+        CameraSnapshot snap;
+        try
+        {
+            snap = await CameraEnumerator.GetSnapshotAsync(ffmpegPath);
+        }
+        catch
+        {
+            return;
+        }
+
+        if (gen != Volatile.Read(ref _videoDeviceScanGen)) return; // superseded by a newer scan
+        if (!string.Equals(_currentSectionTag, "Video", StringComparison.OrdinalIgnoreCase)) return;
+
+        var changed = shown is null
+                      || shown.UsedOpenCvFallback != snap.UsedOpenCvFallback
+                      || !shown.Devices.Select(d => d.Name).SequenceEqual(
+                          snap.Devices.Select(d => d.Name), StringComparer.OrdinalIgnoreCase);
+        if (changed)
+            ShowSection("Video");
+    }
+
     private UIElement BuildVideo()
     {
         var panel = new StackPanel();
@@ -1489,10 +1575,16 @@ public partial class SettingsWindow : Window
         panel.Children.Add(Blurb(
             "One card per camera (tag, device, FOV). Expand Edit to change settings. Up to 2 streams recommended."));
 
-        var devices = CameraEnumerator.ListDevices(v.FfmpegPath);
+        // Never enumerate cameras on the UI thread: build from the last completed
+        // scan and refresh in the background (BuildVideo reruns on every change).
+        var camSnapshot = CameraEnumerator.TryGetCachedSnapshot(v.FfmpegPath);
+        var devices = camSnapshot?.Devices ?? [];
         var camNames = devices.Select(d => d.Name).ToList();
-        var openCvList = CameraEnumerator.UsedOpenCvFallback(v.FfmpegPath);
-        if (openCvList)
+        if (camSnapshot is null)
+        {
+            panel.Children.Add(BusyRow("Detecting cameras… camera lists update when the scan finishes."));
+        }
+        else if (camSnapshot.UsedOpenCvFallback)
         {
             panel.Children.Add(Blurb(
                 "FFmpeg could not list DirectShow devices. Camera labels like \"Camera 0\" will not stream until FFmpeg can enumerate devices."));
@@ -1500,11 +1592,12 @@ public partial class SettingsWindow : Window
         else
         {
             // Repair OpenCV-style labels saved before the FFmpeg device-list parser understood newer builds.
+            // Resolve against the snapshot we already have — no extra scan on the UI thread.
             var repaired = false;
             foreach (var feed in v.Feeds)
             {
                 if (!CameraEnumerator.IsOpenCvStyleLabel(feed.CameraName)) continue;
-                var resolved = CameraEnumerator.ResolveDshowVideoName(feed.CameraName, v.FfmpegPath);
+                var resolved = ResolveFromSnapshot(devices, feed.CameraName);
                 if (string.IsNullOrWhiteSpace(resolved) ||
                     string.Equals(resolved, feed.CameraName, StringComparison.Ordinal))
                     continue;
@@ -1516,6 +1609,9 @@ public partial class SettingsWindow : Window
 
             if (repaired) Persist();
         }
+
+        if (camSnapshot is null || !camSnapshot.IsFresh)
+            _ = RefreshVideoDeviceListAsync(v.FfmpegPath, camSnapshot);
 
         if (_videoSelectedFeedId is null || v.Feeds.All(f => f.Id != _videoSelectedFeedId))
             _videoSelectedFeedId = v.Feeds.FirstOrDefault()?.Id;
@@ -1646,7 +1742,9 @@ public partial class SettingsWindow : Window
             "FFmpeg is a separate encoder (external program). Setup installs may bundle ffmpeg.exe beside WinTAKTracker; " +
             "otherwise install it once, or browse to ffmpeg.exe below."));
         var ffmpeg = new TextBox { Text = v.FfmpegPath ?? "", IsEnabled = edit };
-        var ffmpegStatus = Chip("FFmpeg", FfmpegLocator.DescribeStatus(v.FfmpegPath));
+        // DescribeStatus can spawn "where ffmpeg" when FFmpeg is missing — resolve off the UI thread.
+        var ffmpegStatus = Chip("FFmpeg", "checking…");
+        _ = UpdateFfmpegStatusChipAsync(ffmpegStatus, v.FfmpegPath);
         var ffmpegRow = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 0, 0, 8) };
         ffmpegRow.Children.Add(Btn("Browse…", () =>
         {
@@ -1662,8 +1760,7 @@ public partial class SettingsWindow : Window
                 ffmpeg.Text = dlg.FileName;
                 v.FfmpegPath = dlg.FileName;
                 Persist();
-                if (ffmpegStatus.Child is TextBlock tb)
-                    tb.Text = "FFmpeg: " + FfmpegLocator.DescribeStatus(v.FfmpegPath);
+                _ = UpdateFfmpegStatusChipAsync(ffmpegStatus, v.FfmpegPath);
             }
         }, edit));
         ffmpegRow.Children.Add(new Border { Width = 8 });
@@ -1859,8 +1956,7 @@ public partial class SettingsWindow : Window
             if (int.TryParse(rtspPort.Text, out var rp)) v.RtspListenPort = rp;
             v.NetworkInterface = nic.SelectedItem?.ToString() ?? "Auto";
             v.FfmpegPath = string.IsNullOrWhiteSpace(ffmpeg.Text) ? null : ffmpeg.Text.Trim();
-            if (ffmpegStatus.Child is TextBlock ffmpegTb)
-                ffmpegTb.Text = "FFmpeg: " + FfmpegLocator.DescribeStatus(v.FfmpegPath);
+            _ = UpdateFfmpegStatusChipAsync(ffmpegStatus, v.FfmpegPath);
             var resText = resolution.SelectedItem?.ToString() ?? resolution.Text ?? "1280x720";
             var parts = resText.Split('x', 'X');
             if (parts.Length == 2 && int.TryParse(parts[0], out var w) && int.TryParse(parts[1], out var h))

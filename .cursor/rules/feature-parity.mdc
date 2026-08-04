@@ -1,0 +1,14 @@
+---
+description: Keep WinTAKTracker and AndroidTAKTracker feature parity in sync
+alwaysApply: true
+---
+
+# Feature parity with AndroidTAKTracker
+
+When you add or meaningfully change a tracking feature, update `docs/feature-parity.md` with a stable Feature ID (`FP-…`).
+
+If the feature belongs on Android too (or is Android-only and should be noted as N/A on Windows), call that out in the PR description so the sibling repo can be updated.
+
+Sibling repo: `CopIXus/AndroidTAKTracker` (folder `T:\TAK\IdeaAndroidTAKTracker` when local).
+
+Video on Android is intentionally N/A — point operators to ICU VideoStreamer, not a port of WinTAKTracker video.

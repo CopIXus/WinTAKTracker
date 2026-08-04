@@ -1,0 +1,53 @@
+name: Feature parity drift
+
+on:
+  schedule:
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+
+jobs:
+  parity:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Compare Feature IDs with AndroidTAKTracker
+        shell: bash
+        run: |
+          set -euo pipefail
+          LOCAL="docs/feature-parity.md"
+          REMOTE_URL="https://raw.githubusercontent.com/CopIXus/AndroidTAKTracker/main/docs/feature-parity.md"
+          TMP="$(mktemp)"
+
+          if [ ! -f "$LOCAL" ]; then
+            echo "Missing local $LOCAL"
+            exit 1
+          fi
+
+          echo "Downloading sibling parity doc..."
+          if ! curl -fsSL "$REMOTE_URL" -o "$TMP"; then
+            echo "WARN: Could not download $REMOTE_URL (sibling may not publish the file yet)."
+            exit 0
+          fi
+
+          extract_ids() {
+            grep -E '^\| FP-[A-Z0-9-]+ \|' "$1" | sed -E 's/^\| (FP-[A-Z0-9-]+) \|.*/\1/' | sort -u
+          }
+
+          extract_ids "$LOCAL" > /tmp/local_ids.txt
+          extract_ids "$TMP" > /tmp/remote_ids.txt
+
+          echo "=== Local Feature IDs ==="
+          cat /tmp/local_ids.txt
+          echo "=== Remote Feature IDs ==="
+          cat /tmp/remote_ids.txt
+
+          if ! diff -u /tmp/remote_ids.txt /tmp/local_ids.txt; then
+            echo ""
+            echo "Feature ID drift detected between WinTAKTracker and AndroidTAKTracker."
+            echo "Update docs/feature-parity.md in both repos to match."
+            exit 1
+          fi
+
+          echo "Feature IDs match."

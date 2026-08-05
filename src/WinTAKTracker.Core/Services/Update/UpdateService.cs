@@ -201,6 +201,9 @@ public sealed class UpdateService : IUpdateService
         if (!await VerifySha256Async(dest, check.Sha256Expected).ConfigureAwait(false))
             return (false, "SHA256 verification failed. Update aborted.");
 
+        if (SmartAppControlBlocksUnsigned(dest, out var sacMessage))
+            return (false, sacMessage);
+
         _log.Info("Update", "Launching elevated Setup installer (UAC may prompt).");
         try
         {
@@ -265,6 +268,9 @@ public sealed class UpdateService : IUpdateService
 
         if (!await VerifySha256Async(dest, check.Sha256Expected).ConfigureAwait(false))
             return (false, "SHA256 verification failed. Update aborted.");
+
+        if (SmartAppControlBlocksUnsigned(dest, out var sacMessage))
+            return (false, sacMessage);
 
         // Helper waits for this PID to exit, then retries copy (EXE lock / AV), relaunches, cleans up.
         // Config/certs under %LocalAppData%\WinTAKTracker\ are untouched.
@@ -333,6 +339,58 @@ public sealed class UpdateService : IUpdateService
         }
 
         return (true, "Update ready. The app will restart.");
+    }
+
+    /// <summary>
+    /// Windows Smart App Control (enforce mode) blocks newly introduced unsigned executables with
+    /// "Error 4551: An Application Control policy has blocked this file" — the Inno Setup
+    /// bootstrapper dies when re-executing itself from %TEMP%. SAC has no per-file override, so
+    /// detect the combination up front and explain, instead of letting the cryptic dialog appear.
+    /// </summary>
+    private bool SmartAppControlBlocksUnsigned(string exePath, out string message)
+    {
+        message = "";
+        if (!IsSmartAppControlEnforcing())
+            return false;
+        if (HasAuthenticodeSignature(exePath))
+            return false;
+
+        _log.Warn("Update", "Smart App Control is enforcing and the update binary is unsigned — not launching.");
+        message =
+            "Windows Smart App Control is ON and blocks this unsigned update " +
+            "(Error 4551). Smart App Control has no per-app exception. Options: turn it off under " +
+            "Windows Security → App & browser control → Smart App Control (one-way; it cannot be " +
+            "re-enabled without resetting Windows), or install a signed build when available. " +
+            $"The downloaded installer was kept at: {exePath}";
+        return true;
+    }
+
+    private static bool IsSmartAppControlEnforcing()
+    {
+        try
+        {
+            using var key = Microsoft.Win32.Registry.LocalMachine.OpenSubKey(
+                @"SYSTEM\CurrentControlSet\Control\CI\Policy");
+            // 1 = enforce, 2 = evaluation, 0/absent = off.
+            return key?.GetValue("VerifiedAndReputablePolicyState") is int state && state == 1;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static bool HasAuthenticodeSignature(string path)
+    {
+        try
+        {
+            using var _ = System.Security.Cryptography.X509Certificates.X509Certificate.CreateFromSignedFile(path);
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
     }
 
     private async Task<bool> VerifySha256Async(string path, string? expected)

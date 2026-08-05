@@ -902,6 +902,8 @@ public partial class SettingsWindow : Window
         }, edit));
         panel.Children.Add(addRow);
 
+        panel.Children.Add(BuildManualEnrollSection(edit));
+
         if (_host.Config.Servers.Count > 0)
         {
             panel.Children.Add(Btn("Forget all profiles", () =>
@@ -915,6 +917,91 @@ public partial class SettingsWindow : Window
         }
 
         return panel;
+    }
+
+    /// <summary>
+    /// ATAK Quick Connect style: type host + username + password, run the same Marti CSR
+    /// enrollment as URL/QR enrollment — for servers where no enroll URL / QR is at hand.
+    /// </summary>
+    private UIElement BuildManualEnrollSection(bool edit)
+    {
+        var body = new StackPanel { Margin = new Thickness(0, 4, 0, 4) };
+        body.Children.Add(Blurb(
+            "Certificate enrollment with typed-in credentials (like ATAK Quick Connect). " +
+            "Uses the Marti enrollment API (default port 8446); the streaming profile connects on the CoT port (default 8089)."));
+
+        var hostBox = new TextBox { IsEnabled = edit };
+        var userBox = new TextBox { IsEnabled = edit };
+        var passBox = new PasswordBox { IsEnabled = edit };
+        var enrollPortBox = new TextBox { Text = "8446", IsEnabled = edit, Width = 100, HorizontalAlignment = System.Windows.HorizontalAlignment.Left };
+        var streamPortBox = new TextBox { Text = "8089", IsEnabled = edit, Width = 100, HorizontalAlignment = System.Windows.HorizontalAlignment.Left };
+
+        body.Children.Add(Label("Server host (e.g. tak.example.com)"));
+        body.Children.Add(hostBox);
+        body.Children.Add(Label("Username"));
+        body.Children.Add(userBox);
+        body.Children.Add(Label("Password"));
+        body.Children.Add(passBox);
+        body.Children.Add(Label("Enrollment port"));
+        body.Children.Add(enrollPortBox);
+        body.Children.Add(Label("Streaming (CoT) port"));
+        body.Children.Add(streamPortBox);
+
+        var manualStatus = new TextBlock { Style = TryStyle("HelperText") };
+        body.Children.Add(manualStatus);
+
+        var enrollBtn = Btn("Enroll with credentials", async () =>
+        {
+            if (!EnsureEditable()) return;
+            if (string.IsNullOrWhiteSpace(hostBox.Text) ||
+                string.IsNullOrWhiteSpace(userBox.Text) ||
+                string.IsNullOrEmpty(passBox.Password))
+            {
+                manualStatus.Text = "Host, username, and password are required.";
+                SetTheme(manualStatus, TextBlock.ForegroundProperty, "DangerBrush");
+                return;
+            }
+
+            manualStatus.Text = "Enrolling certificate…";
+            SetTheme(manualStatus, TextBlock.ForegroundProperty, "AccentBrush");
+            var progress = new Progress<string>(msg => { manualStatus.Text = msg; });
+            var result = await _host.Enrollment.EnrollManualAsync(
+                hostBox.Text,
+                userBox.Text,
+                passBox.Password,
+                _host.Config,
+                streamingPort: int.TryParse(streamPortBox.Text, out var sp) ? sp : 8089,
+                enrollmentPort: int.TryParse(enrollPortBox.Text, out var ep) ? ep : 8446,
+                progress: progress,
+                ct: CancellationToken.None,
+                activeUserSid: IdentityResolver.CurrentUserSid(),
+                activeUserName: Environment.UserName);
+
+            if (!result.Success)
+            {
+                manualStatus.Text = result.Error ?? "Enrollment failed.";
+                SetTheme(manualStatus, TextBlock.ForegroundProperty, "DangerBrush");
+                Msg(result.Error ?? "Failed", MessageBoxImage.Warning);
+                return;
+            }
+
+            passBox.Clear();
+            manualStatus.Text = result.Message ?? "Enrolled.";
+            SetTheme(manualStatus, TextBlock.ForegroundProperty, "AccentBrush");
+            await _host.ReloadConnectionsAsync();
+            Msg(result.Message ?? "Enrolled.");
+            ShowSection("Servers");
+        }, edit, primary: true);
+        enrollBtn.Margin = new Thickness(0, 6, 0, 0);
+        body.Children.Add(enrollBtn);
+
+        return new Expander
+        {
+            Header = "Manual enrollment (host / username / password)",
+            Content = body,
+            IsExpanded = false,
+            Margin = new Thickness(0, 4, 0, 8),
+        };
     }
 
     private UIElement BuildServerCard(ServerProfile server, bool edit)
@@ -1264,8 +1351,10 @@ public partial class SettingsWindow : Window
     {
         var panel = new StackPanel();
         var edit = CanEdit;
-        var teams = new[] { "Cyan", "Blue", "Green", "Yellow", "Orange", "Red", "Purple", "Magenta", "Maroon", "Teal", "White" };
-        var roles = new[] { "Team Member", "Team Lead", "HQ", "Sniper", "Medic", "Forward Observer", "RTO", "K9" };
+        // Keep in lockstep with Core's allow-lists so Portal-pushed values (e.g. "Dark Green")
+        // round-trip cleanly through the ComboBoxes.
+        var teams = Services.Identity.RemoteIdentityApply.KnownTeams;
+        var roles = Services.Identity.RemoteIdentityApply.KnownRoles;
         var computer = _host.Config.ComputerIdentity;
         var sid = Services.Identity.IdentityResolver.CurrentUserSid();
         _host.Config.UserIdentities.TryGetValue(sid ?? "", out var user);
@@ -2822,11 +2911,17 @@ public partial class SettingsWindow : Window
             panel.Children.Add(uacHint);
         }
 
-        if (!string.IsNullOrWhiteSpace(_lastUpdateCheck?.ReleaseNotes) && _lastUpdateCheck.UpdateAvailable)
+        // Prefer the CHANGELOG section for the new version — the release body of
+        // continuous builds only links to CHANGELOG.md instead of listing changes.
+        var hasChangelog = !string.IsNullOrWhiteSpace(_lastUpdateCheck?.ChangelogNotes);
+        var notesText = hasChangelog ? _lastUpdateCheck!.ChangelogNotes : _lastUpdateCheck?.ReleaseNotes;
+        if (!string.IsNullOrWhiteSpace(notesText) && _lastUpdateCheck?.UpdateAvailable == true)
         {
             var notesHeader = new TextBlock
             {
-                Text = "Release notes",
+                Text = hasChangelog
+                    ? $"What's new in {_lastUpdateCheck.LatestVersion}"
+                    : "Release notes",
                 FontWeight = FontWeights.SemiBold,
                 Margin = new Thickness(0, 14, 0, 4),
             };
@@ -2835,7 +2930,7 @@ public partial class SettingsWindow : Window
 
             var notes = new TextBlock
             {
-                Text = _lastUpdateCheck.ReleaseNotes,
+                Text = notesText,
                 TextWrapping = TextWrapping.Wrap,
             };
             SetTheme(notes, TextBlock.ForegroundProperty, "TextSecondaryBrush");

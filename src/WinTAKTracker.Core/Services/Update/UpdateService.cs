@@ -24,6 +24,9 @@ public sealed class UpdateCheckResult
     public string CurrentVersion { get; init; } = "0.1.0";
     public string? LatestVersion { get; init; }
     public string? ReleaseNotes { get; init; }
+
+    /// <summary>CHANGELOG.md section for the new version (plain text), when it could be fetched.</summary>
+    public string? ChangelogNotes { get; init; }
     public string? DownloadUrl { get; init; }
     public string? AssetName { get; init; }
     public UpdateAssetKind AssetKind { get; init; }
@@ -107,7 +110,7 @@ public sealed class UpdateService : IUpdateService
                 };
             }
 
-            var (release, _, normalized, asset, shaAsset, kind) = selected.Value;
+            var (release, tag, normalized, asset, shaAsset, kind) = selected.Value;
             string? expectedSha = null;
             if (shaAsset?.BrowserDownloadUrl is not null)
             {
@@ -128,12 +131,19 @@ public sealed class UpdateService : IUpdateService
             if (newer && string.IsNullOrWhiteSpace(downloadUrl))
                 error = $"Version {normalized} is available but {asset.Name} was not found on the release.";
 
+            // Continuous-build release bodies only link to CHANGELOG.md; pull the
+            // actual changelog section so the user can read what changed inline.
+            string? changelog = null;
+            if (newer)
+                changelog = await TryFetchChangelogAsync(configuredUrl, tag, normalized, ct).ConfigureAwait(false);
+
             return new UpdateCheckResult
             {
                 Success = true,
                 CurrentVersion = current,
                 LatestVersion = normalized,
                 ReleaseNotes = Truncate(release.Body, 800),
+                ChangelogNotes = changelog,
                 DownloadUrl = downloadUrl,
                 AssetName = asset.Name,
                 AssetKind = kind,
@@ -561,6 +571,81 @@ public sealed class UpdateService : IUpdateService
 
     private static string? Truncate(string? s, int max) =>
         s is null ? null : s.Length <= max ? s : s[..max] + "…";
+
+    private async Task<string?> TryFetchChangelogAsync(
+        string? configuredApiUrl, string tag, string normalizedVersion, CancellationToken ct)
+    {
+        var url = TryBuildChangelogUrl(configuredApiUrl, tag);
+        if (url is null) return null;
+        try
+        {
+            using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            cts.CancelAfter(TimeSpan.FromSeconds(15));
+            var markdown = await _http.GetStringAsync(url, cts.Token).ConfigureAwait(false);
+            var section = ExtractChangelogSection(markdown, normalizedVersion);
+            return section is null ? null : Truncate(MarkdownToPlainText(section), 6000);
+        }
+        catch
+        {
+            _log.Warn("Update", "Could not fetch CHANGELOG.md for the new version; showing release body only.");
+            return null;
+        }
+    }
+
+    /// <summary>Raw CHANGELOG.md URL at the release tag, derived from the GitHub releases API URL.</summary>
+    internal static string? TryBuildChangelogUrl(string? configuredApiUrl, string tag)
+    {
+        if (string.IsNullOrWhiteSpace(tag)) return null;
+        var api = string.IsNullOrWhiteSpace(configuredApiUrl)
+            ? "https://api.github.com/repos/CopIXus/WinTAKTracker/releases"
+            : configuredApiUrl;
+        var m = Regex.Match(api, @"api\.github\.com/repos/(?<owner>[^/]+)/(?<repo>[^/?#]+)", RegexOptions.IgnoreCase);
+        if (!m.Success) return null;
+        return "https://raw.githubusercontent.com/" +
+               $"{m.Groups["owner"].Value}/{m.Groups["repo"].Value}/{Uri.EscapeDataString(tag)}/CHANGELOG.md";
+    }
+
+    /// <summary>
+    /// Keep-a-Changelog section for <paramref name="version"/>; continuous builds have no
+    /// versioned heading, so fall back to the [Unreleased] section (their pending changes).
+    /// </summary>
+    internal static string? ExtractChangelogSection(string markdown, string version)
+    {
+        var lines = markdown.Replace("\r\n", "\n").Split('\n');
+        var headings = new List<(int Line, string Text)>();
+        for (var i = 0; i < lines.Length; i++)
+        {
+            if (lines[i].StartsWith("## ", StringComparison.Ordinal))
+                headings.Add((i, lines[i]));
+        }
+
+        if (headings.Count == 0) return null;
+
+        var start = headings.FindIndex(h =>
+            h.Text.Contains($"[{version}]", StringComparison.OrdinalIgnoreCase) ||
+            h.Text.Contains($" {version} ", StringComparison.OrdinalIgnoreCase));
+        if (start < 0)
+            start = headings.FindIndex(h => h.Text.Contains("unreleased", StringComparison.OrdinalIgnoreCase));
+        if (start < 0) return null;
+
+        // Skip the heading itself — the UI renders its own "What's new in {version}" title.
+        var from = headings[start].Line + 1;
+        var to = start + 1 < headings.Count ? headings[start + 1].Line : lines.Length;
+        var section = string.Join('\n', lines[from..to]).Trim();
+        return section.Length == 0 ? null : section;
+    }
+
+    /// <summary>Light markdown cleanup for TextBlock display: links → text, no emphasis/backticks.</summary>
+    internal static string MarkdownToPlainText(string markdown)
+    {
+        var text = Regex.Replace(markdown, @"\[([^\]]+)\]\([^)]*\)", "$1");
+        text = text.Replace("**", "").Replace("`", "");
+        text = Regex.Replace(text, @"^###\s+(.+)$", "$1:", RegexOptions.Multiline);
+        text = Regex.Replace(text, @"^##\s+", "", RegexOptions.Multiline);
+        // Collapse the 3+ blank lines that heading removal can leave behind.
+        text = Regex.Replace(text, @"\n{3,}", "\n\n");
+        return text.Trim();
+    }
 
     private sealed class GitHubRelease
     {

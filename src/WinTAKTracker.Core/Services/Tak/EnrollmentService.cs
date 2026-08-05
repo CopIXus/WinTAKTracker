@@ -179,6 +179,36 @@ public sealed class EnrollmentService
         };
     }
 
+    /// <summary>
+    /// Manual enrollment: typed host / ports / username / password (ATAK Quick Connect style).
+    /// Feeds the same Marti CSR path as URL/QR enrollment without ever building a credentialed
+    /// URL string that could leak into logs.
+    /// </summary>
+    public Task<EnrollmentApplyResult> EnrollManualAsync(
+        string host,
+        string username,
+        string password,
+        AppConfig config,
+        int streamingPort = 8089,
+        int enrollmentPort = 8446,
+        IProgress<string>? progress = null,
+        CancellationToken ct = default,
+        string? activeUserSid = null,
+        string? activeUserName = null)
+    {
+        var parsed = new EnrollmentParseResult
+        {
+            Kind = EnrollmentKind.TakEnroll,
+            Host = host.Trim(),
+            Username = username.Trim(),
+            Token = password,
+            Port = streamingPort > 0 ? streamingPort : 8089,
+            EnrollmentPort = enrollmentPort > 0 ? enrollmentPort : 8446,
+            Protocol = "ssl",
+        };
+        return EnrollWithCredentialsAsync(parsed, config, progress, ct, activeUserSid, activeUserName);
+    }
+
     private async Task<EnrollmentApplyResult> EnrollWithCredentialsAsync(
         EnrollmentParseResult parsed,
         AppConfig config,

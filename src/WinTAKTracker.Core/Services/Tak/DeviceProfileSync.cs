@@ -193,35 +193,54 @@ public sealed class DeviceProfileSync
             }
         }
 
-        foreach (var url in urls.Distinct(StringComparer.OrdinalIgnoreCase))
+        // Portal deletes the package from Marti shortly after send — a transient failure on the
+        // first pass means it's gone for good, so retry the whole URL list a few times.
+        const int downloadAttempts = 3;
+        var candidates = urls.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        string? lastFailure = null;
+        for (var attempt = 1; attempt <= downloadAttempts; attempt++)
         {
-            X509Certificate2? clientCert = null;
-            try
+            foreach (var url in candidates)
             {
-                using var handler = CreateHandler(profile, config, out clientCert);
-                using var http = new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(45) };
-                http.DefaultRequestHeaders.UserAgent.ParseAdd("WinTAKTracker/0.1");
-                http.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("*/*"));
+                X509Certificate2? clientCert = null;
+                try
+                {
+                    using var handler = CreateHandler(profile, config, out clientCert);
+                    using var http = new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(45) };
+                    http.DefaultRequestHeaders.UserAgent.ParseAdd("WinTAKTracker/0.1");
+                    http.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("*/*"));
 
-                using var resp = await http.GetAsync(url, ct).ConfigureAwait(false);
-                if (!resp.IsSuccessStatusCode) continue;
-                var bytes = await resp.Content.ReadAsByteArrayAsync(ct).ConfigureAwait(false);
-                if (bytes.Length > 0) return bytes;
+                    using var resp = await http.GetAsync(url, ct).ConfigureAwait(false);
+                    if (!resp.IsSuccessStatusCode)
+                    {
+                        lastFailure = $"HTTP {(int)resp.StatusCode}";
+                        continue;
+                    }
+
+                    var bytes = await resp.Content.ReadAsByteArrayAsync(ct).ConfigureAwait(false);
+                    if (bytes.Length > 0) return bytes;
+                }
+                catch (OperationCanceledException) when (ct.IsCancellationRequested)
+                {
+                    throw;
+                }
+                catch (Exception ex)
+                {
+                    lastFailure = ex.GetType().Name;
+                }
+                finally
+                {
+                    clientCert?.Dispose();
+                }
             }
-            catch (OperationCanceledException) when (ct.IsCancellationRequested)
-            {
-                throw;
-            }
-            catch
-            {
-                // try next URL
-            }
-            finally
-            {
-                clientCert?.Dispose();
-            }
+
+            if (attempt < downloadAttempts)
+                await Task.Delay(TimeSpan.FromSeconds(attempt * 2), ct).ConfigureAwait(false);
         }
 
+        _log.Warn(
+            "Profile",
+            $"Pref package download failed after {downloadAttempts} attempts ({candidates.Count} URL(s), last: {lastFailure ?? "no response"}).");
         return null;
     }
 

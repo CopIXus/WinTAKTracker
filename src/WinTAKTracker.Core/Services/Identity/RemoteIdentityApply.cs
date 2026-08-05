@@ -16,6 +16,12 @@ public static class RemoteIdentityApply
         "Yellow", "Orange", "Red", "Purple", "Magenta", "Maroon", "Teal", "White",
     ];
 
+    /// <summary>ATAK role allow-list — unknown roles are dropped, not written to CoT.</summary>
+    public static readonly string[] KnownRoles =
+    [
+        "Team Member", "Team Lead", "HQ", "Sniper", "Medic", "Forward Observer", "RTO", "K9",
+    ];
+
     public sealed class Result
     {
         public bool Applied { get; init; }
@@ -52,9 +58,26 @@ public static class RemoteIdentityApply
         return t;
     }
 
+    /// <summary>Normalize ATAK role against the allow-list (case-insensitive); unknown roles → null.</summary>
+    public static string? NormalizeRole(string? role)
+    {
+        if (string.IsNullOrWhiteSpace(role)) return null;
+        var r = role.Trim();
+        foreach (var known in KnownRoles)
+        {
+            if (known.Equals(r, StringComparison.OrdinalIgnoreCase))
+                return known;
+        }
+
+        return null;
+    }
+
     /// <summary>
-    /// Write callsign/team/role into the active user identity when a session SID is provided
-    /// and that user already has (or is receiving) a callsign; otherwise computer identity.
+    /// Write callsign/team/role into the identity currently on the wire: the active user session
+    /// when one is bound, otherwise the sticky last interactive user (default after logoff),
+    /// otherwise the computer identity. Without the sticky fallback a headless Portal push would
+    /// update <c>ComputerIdentity</c> while CoT kept broadcasting the last user's callsign — the
+    /// push looked like a no-op on maps and Portal.
     /// </summary>
     public static Result Apply(
         AppConfig config,
@@ -78,17 +101,35 @@ public static class RemoteIdentityApply
 
         var normalizedCallsign = hasCallsign ? EnsureWttSuffix(callsign!) : null;
         var normalizedTeam = NormalizeTeam(team);
-        var normalizedRole = string.IsNullOrWhiteSpace(role) ? null : role.Trim();
+        var normalizedRole = NormalizeRole(role);
+        if (normalizedCallsign is null && normalizedTeam is null && normalizedRole is null)
+        {
+            return new Result
+            {
+                Applied = false,
+                Message = "No valid callsign, team, or role in remote configuration.",
+            };
+        }
 
-        var useUser = !string.IsNullOrWhiteSpace(activeUserSid) &&
-                      (hasCallsign || UserAlreadyHasCallsign(config, activeUserSid!));
+        // Match IdentityResolver.Resolve order: active user → sticky last user → computer.
+        var targetSid = activeUserSid;
+        if (string.IsNullOrWhiteSpace(targetSid) &&
+            !config.RevertToComputerCallsignOnLogoff &&
+            !string.IsNullOrWhiteSpace(config.LastInteractiveUserSid) &&
+            UserAlreadyHasCallsign(config, config.LastInteractiveUserSid!))
+        {
+            targetSid = config.LastInteractiveUserSid;
+        }
+
+        var useUser = !string.IsNullOrWhiteSpace(targetSid) &&
+                      (hasCallsign || UserAlreadyHasCallsign(config, targetSid!));
 
         if (useUser)
         {
-            if (!config.UserIdentities.TryGetValue(activeUserSid!, out var user))
+            if (!config.UserIdentities.TryGetValue(targetSid!, out var user))
             {
                 user = new UserIdentitySettings();
-                config.UserIdentities[activeUserSid!] = user;
+                config.UserIdentities[targetSid!] = user;
             }
 
             var unchanged =
@@ -120,9 +161,13 @@ public static class RemoteIdentityApply
                 user.Team = normalizedTeam;
             if (normalizedRole is not null)
                 user.Role = normalizedRole;
-            user.SetupPromptDismissed = false;
+
+            // Only re-open the callsign setup prompt when a callsign actually arrived — a
+            // team/role-only push must not nag a user who previously skipped setup.
+            if (normalizedCallsign is not null)
+                user.SetupPromptDismissed = false;
             if (user.HasCallsign)
-                config.LastInteractiveUserSid = activeUserSid;
+                config.LastInteractiveUserSid = targetSid;
 
             config.EnsureIdentityDefaults();
             return new Result

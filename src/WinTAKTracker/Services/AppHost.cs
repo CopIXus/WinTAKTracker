@@ -237,6 +237,26 @@ public sealed class AppHost : IDisposable
         return Tak.GetStatuses();
     }
 
+    /// <summary>
+    /// Best-effort re-pull of the service-authoritative config. Portal Pref pushes and device
+    /// profile syncs mutate the service copy; pushing a stale tray copy via SetConfig would
+    /// clobber the remotely applied identity. Call before opening Settings.
+    /// </summary>
+    public async Task RefreshConfigFromServiceAsync()
+    {
+        if (ServiceClient is null) return;
+        try
+        {
+            var remote = await ServiceClient.GetConfigDtoAsync().ConfigureAwait(false);
+            if (remote is not null)
+                Core.ReplaceConfig(remote, save: false);
+        }
+        catch (Exception ex)
+        {
+            Log.Warn("IPC", $"Config refresh failed: {ex.Message}");
+        }
+    }
+
     public void SaveConfig() => _ = SaveConfigAsync();
 
     public async Task SaveConfigAsync()

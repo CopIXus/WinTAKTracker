@@ -83,8 +83,14 @@ public sealed class TrayIconService : IDisposable
         catch { /* ignore */ }
     }
 
-    public void ShowSettings()
+    public void ShowSettings() => _ = ShowSettingsAsync();
+
+    private async Task ShowSettingsAsync()
     {
+        // Pull the service-authoritative config first so a Portal-pushed identity is never
+        // clobbered by saving stale tray settings.
+        await _host.RefreshConfigFromServiceAsync().ConfigureAwait(false);
+
         Application.Current.Dispatcher.Invoke(() =>
         {
             if (_settingsWindow is null)

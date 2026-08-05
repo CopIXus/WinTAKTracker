@@ -96,6 +96,9 @@ public sealed class TrackingHost : IDisposable
         {
             // Config already mutated + saved by ProfileSync.
             Reporting.NotifyIdentityChanged();
+            // Re-announce immediately (works without a GPS fix) so Portal/TAK Server labels
+            // pick up the pushed callsign/team/role — the ASAP PLI tick alone is GPS-gated.
+            _ = Reporting.AnnouncePresenceAsync();
             StatusChanged?.Invoke(this, EventArgs.Empty);
         };
         Tak.ServerConnected += (_, profile) =>

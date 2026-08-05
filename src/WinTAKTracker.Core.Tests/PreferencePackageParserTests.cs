@@ -100,6 +100,40 @@ public class PreferencePackageParserTests
     }
 
     [Fact]
+    public void Apply_UnknownRole_Dropped()
+    {
+        var cfg = new WinTAKTracker.Services.Config.AppConfig();
+        var result = RemoteIdentityApply.Apply(cfg, "USER", "Dark Green", "Warlord");
+        Assert.True(result.Applied);
+        Assert.NotEqual("Warlord", cfg.ComputerIdentity.Role);
+    }
+
+    [Fact]
+    public void Apply_NormalizesRoleCase()
+    {
+        Assert.Equal("Forward Observer", RemoteIdentityApply.NormalizeRole("forward observer"));
+        Assert.Null(RemoteIdentityApply.NormalizeRole("Warlord"));
+    }
+
+    [Fact]
+    public void Apply_HeadlessTargetsStickyLastUser()
+    {
+        // Headless Pref push must update the identity currently on the wire (sticky last user),
+        // not the computer identity — otherwise the push looks like a no-op on maps/Portal.
+        var cfg = new WinTAKTracker.Services.Config.AppConfig();
+        cfg.UserIdentities["S-1-5-21-1"] = new WinTAKTracker.Services.Config.UserIdentitySettings
+        {
+            Callsign = "OPERATOR.wtt",
+        };
+        cfg.LastInteractiveUserSid = "S-1-5-21-1";
+
+        var result = RemoteIdentityApply.Apply(cfg, "NEWNAME", "Red", "Medic", activeUserSid: null);
+        Assert.True(result.Applied);
+        Assert.Equal("user", result.Target);
+        Assert.Equal("NEWNAME.wtt", cfg.UserIdentities["S-1-5-21-1"].Callsign);
+    }
+
+    [Fact]
     public void FileShareCot_ParsesPrefAnnounce()
     {
         var xml = """

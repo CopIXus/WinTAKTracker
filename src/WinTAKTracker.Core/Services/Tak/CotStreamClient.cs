@@ -24,6 +24,13 @@ public sealed class CotStreamClient : IDisposable
 {
     private static readonly TimeSpan IdenticalErrorLogInterval = TimeSpan.FromMinutes(2);
 
+    /// <summary>
+    /// Client-initiated <c>t-x-c-t</c> ping interval. NAT/firewall idle timeouts are commonly
+    /// 60–120s; long stationary PLI intervals let the socket go idle long enough to be silently
+    /// dropped, which shows up as Connecting/Connected flapping.
+    /// </summary>
+    private static readonly TimeSpan KeepaliveInterval = TimeSpan.FromSeconds(55);
+
     private readonly AppConfigStore _store;
     private readonly IRedactedLogger _log;
     private readonly object _gate = new();
@@ -32,6 +39,7 @@ public sealed class CotStreamClient : IDisposable
     private Stream? _stream;
     private CancellationTokenSource? _cts;
     private Task? _readLoop;
+    private Task? _keepaliveLoop;
     private X509Certificate2Collection? _clientCerts;
     private int _backoffSeconds = 2;
     private int _consecutiveFailures;
@@ -160,6 +168,7 @@ public sealed class CotStreamClient : IDisposable
                 LastErrorCode = null;
                 SetState(TakConnectionState.Connected);
                 _readLoop = Task.Run(() => ReadLoopAsync(_cts.Token));
+                _keepaliveLoop = Task.Run(() => KeepaliveLoopAsync(_cts.Token));
                 _log.Info("TAK", $"Connected profile={ProfileLabel(profile)} via {profile.Protocol}.");
             }
             catch (OperationCanceledException) when (!ct.IsCancellationRequested)
@@ -383,6 +392,63 @@ public sealed class CotStreamClient : IDisposable
 
         if (State == TakConnectionState.Connected)
             SetState(TakConnectionState.Disconnected);
+    }
+
+    /// <summary>
+    /// Keep the socket warm through NAT/firewall idle timeouts: if nothing has been sent for
+    /// ~<see cref="KeepaliveInterval"/> (paused, long stationary PLI interval), send a client
+    /// <c>t-x-c-t</c> ping. A send failure here means the socket silently died — drop to
+    /// Disconnected so the manager's reconnect path brings it back.
+    /// </summary>
+    private async Task KeepaliveLoopAsync(CancellationToken ct)
+    {
+        while (!ct.IsCancellationRequested && State == TakConnectionState.Connected)
+        {
+            try { await Task.Delay(KeepaliveInterval, ct).ConfigureAwait(false); }
+            catch (OperationCanceledException) { return; }
+
+            if (State != TakConnectionState.Connected) return;
+
+            var last = LastSendUtc;
+            if (last is not null && DateTimeOffset.UtcNow - last.Value < KeepaliveInterval)
+                continue;
+
+            try
+            {
+                await SendAsync(BuildClientPing(), ct).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) { return; }
+            catch (Exception ex)
+            {
+                if (State != TakConnectionState.Connected) return;
+                LastErrorCode = $"Keepalive send failed ({ex.GetType().Name})";
+                LogConnectionFailure(Profile, LastErrorCode);
+                SetState(TakConnectionState.Disconnected);
+                await DisconnectCoreAsync().ConfigureAwait(false);
+                return;
+            }
+        }
+    }
+
+    private string BuildClientPing()
+    {
+        var now = DateTimeOffset.UtcNow;
+        var ping = new XElement("event",
+            new XAttribute("version", "2.0"),
+            new XAttribute("uid", $"{ShortId(Profile.Id)}-wintaktracker-ping"),
+            new XAttribute("type", "t-x-c-t"),
+            new XAttribute("how", "h-g-i-g-o"),
+            new XAttribute("time", FormatTakTime(now)),
+            new XAttribute("start", FormatTakTime(now)),
+            new XAttribute("stale", FormatTakTime(now.AddSeconds(20))),
+            new XElement("point",
+                new XAttribute("lat", "0.0"),
+                new XAttribute("lon", "0.0"),
+                new XAttribute("hae", "0.0"),
+                new XAttribute("ce", "9999999.0"),
+                new XAttribute("le", "9999999.0")),
+            new XElement("detail"));
+        return ping.ToString(SaveOptions.DisableFormatting) + "\n";
     }
 
     /// <summary>
@@ -685,6 +751,7 @@ public sealed class CotStreamClient : IDisposable
         _cts?.Dispose();
         _cts = null;
         _readLoop = null;
+        _keepaliveLoop = null;
     }
 
     private static void DisposeClientCerts(X509Certificate2Collection? certs)
@@ -698,6 +765,9 @@ public sealed class CotStreamClient : IDisposable
 
     private void SetState(TakConnectionState state)
     {
+        // Re-entering the same state (e.g. duplicate Disconnected) must not re-fire the
+        // event — that would schedule extra reconnect cycles.
+        if (state == State) return;
         State = state;
         StateChanged?.Invoke(this, EventArgs.Empty);
     }

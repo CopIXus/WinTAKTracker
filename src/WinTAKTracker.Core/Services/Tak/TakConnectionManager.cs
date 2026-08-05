@@ -369,7 +369,11 @@ public sealed class TakConnectionManager : ITakConnectionManager, IDisposable
         lock (_gate) _clients.TryGetValue(profileId, out client);
         if (client is null) return;
         if (client.AutoReconnectSuspended) return;
-        if (client.State is TakConnectionState.Connected or TakConnectionState.Connecting)
+        // Reconnecting means a backoff loop is already in flight — restarting it here would
+        // cancel and reset the backoff, producing extra Connecting cycles in the UI.
+        if (client.State is TakConnectionState.Connected
+            or TakConnectionState.Connecting
+            or TakConnectionState.Reconnecting)
             return;
 
         CancelReconnect(profileId);

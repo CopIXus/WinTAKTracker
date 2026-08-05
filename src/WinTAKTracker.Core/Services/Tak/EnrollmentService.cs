@@ -101,8 +101,24 @@ public sealed class EnrollmentService
         string? activeUserName = null)
     {
         var result = _softCert.ImportZip(zipPath, displayName);
-        if (!result.Success || result.Profile is null)
+        if (!result.Success)
             return Fail(result.Error ?? "Import failed.");
+
+        // Pref-*.zip (Portal preference package): identity only, no server profile.
+        if (result.Profile is null)
+        {
+            var prefIdentity = RemoteIdentityApply.Apply(
+                config, result.Callsign, result.Team, result.Role, activeUserSid, activeUserName);
+            if (!prefIdentity.Applied)
+                return Fail(prefIdentity.Message);
+            _store.Save(config);
+            return new EnrollmentApplyResult
+            {
+                Success = true,
+                IdentityUpdated = true,
+                Message = "Preference package applied (callsign/team/role).",
+            };
+        }
 
         var identity = RemoteIdentityApply.Apply(
             config, result.Callsign, result.Team, result.Role, activeUserSid, activeUserName);

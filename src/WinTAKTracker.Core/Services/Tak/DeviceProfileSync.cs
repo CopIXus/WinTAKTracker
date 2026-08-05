@@ -62,32 +62,167 @@ public sealed class DeviceProfileSync
                 return;
             }
 
-            var prefs = PreferencePackageParser.ParseZipBytes(bytes);
-            if (!prefs.HasAny)
-            {
-                _log.Info("Profile", "Device profile package had no callsign/team/role prefs.");
-                return;
-            }
-
-            var result = RemoteIdentityApply.Apply(
-                config,
-                prefs.Callsign,
-                prefs.Team,
-                prefs.Role,
-                activeUserSid,
-                activeUserName);
-
-            if (!result.Applied) return;
-
-            _store.Save(config);
-            _log.Info("Profile", $"Remote identity applied ({result.Target}): callsign/team updated.");
-            IdentityApplied?.Invoke(this, result);
+            ApplyParsedPrefs(bytes, config, activeUserSid, activeUserName, filenameHint: null);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested) { }
         catch (Exception ex)
         {
             _log.Warn("Profile", $"Device profile sync skipped: {ex.GetType().Name}");
         }
+    }
+
+    /// <summary>
+    /// Handle inbound Marti fileshare CoT for Portal Pref-* packages (missioncreate → contact).
+    /// Downloads via Enterprise Sync and applies identity when <c>onReceiveImport</c> allows.
+    /// </summary>
+    public async Task TryHandleFileShareCotAsync(
+        ServerProfile profile,
+        AppConfig config,
+        string cotXml,
+        string? activeUserSid,
+        string? activeUserName,
+        CancellationToken ct = default)
+    {
+        if (!config.ApplyRemoteIdentityFromPortal) return;
+
+        var offer = FileShareCotParser.TryParse(cotXml);
+        if (offer is null) return;
+        if (!offer.LooksLikePreferencePackage &&
+            string.IsNullOrWhiteSpace(offer.Sha256) &&
+            string.IsNullOrWhiteSpace(offer.SenderUrl))
+            return;
+
+        // Only auto-download Pref-* announces (ignore maps / other data packages).
+        if (!offer.LooksLikePreferencePackage &&
+            !(offer.Filename?.EndsWith(".zip", StringComparison.OrdinalIgnoreCase) == true &&
+              offer.Filename.Contains("Pref", StringComparison.OrdinalIgnoreCase)))
+            return;
+
+        try
+        {
+            var bytes = await DownloadSyncContentAsync(profile, config, offer, ct).ConfigureAwait(false);
+            if (bytes is null || bytes.Length == 0)
+            {
+                _log.Warn("Profile", "Pref package download empty or failed.");
+                return;
+            }
+
+            if (!PreferencePackageParser.IsPreferencePackage(bytes, offer.Filename))
+            {
+                _log.Info("Profile", "Downloaded fileshare was not a Pref preference package — ignored.");
+                return;
+            }
+
+            ApplyParsedPrefs(bytes, config, activeUserSid, activeUserName, offer.Filename);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested) { }
+        catch (Exception ex)
+        {
+            _log.Warn("Profile", $"Pref package import skipped: {ex.GetType().Name}");
+        }
+    }
+
+    /// <summary>Apply Pref / device-profile ZIP bytes already in memory (tests + SoftCert Pref path).</summary>
+    public bool TryApplyPreferencePackageBytes(
+        byte[] bytes,
+        AppConfig config,
+        string? activeUserSid,
+        string? activeUserName,
+        string? filenameHint = null) =>
+        ApplyParsedPrefs(bytes, config, activeUserSid, activeUserName, filenameHint);
+
+    private bool ApplyParsedPrefs(
+        byte[] bytes,
+        AppConfig config,
+        string? activeUserSid,
+        string? activeUserName,
+        string? filenameHint)
+    {
+        var prefs = PreferencePackageParser.ParseZipBytes(bytes);
+        if (!prefs.HasAny)
+        {
+            _log.Info("Profile", "Preference package had no callsign/team/role prefs.");
+            return false;
+        }
+
+        if (!PreferencePackageParser.ShouldAutoImport(prefs))
+        {
+            _log.Info("Profile", "Preference package onReceiveImport=false — skipped auto-import.");
+            return false;
+        }
+
+        var result = RemoteIdentityApply.Apply(
+            config,
+            prefs.Callsign,
+            prefs.Team,
+            prefs.Role,
+            activeUserSid,
+            activeUserName);
+
+        if (!result.Applied) return false;
+
+        _store.Save(config);
+        _log.Info(
+            "Profile",
+            $"Remote identity applied ({result.Target}) from {(filenameHint ?? "preference package")}: callsign/team/role updated.");
+        IdentityApplied?.Invoke(this, result);
+        return true;
+    }
+
+    private async Task<byte[]?> DownloadSyncContentAsync(
+        ServerProfile profile,
+        AppConfig config,
+        FileShareOffer offer,
+        CancellationToken ct)
+    {
+        var urls = new List<string>();
+        if (!string.IsNullOrWhiteSpace(offer.SenderUrl) &&
+            Uri.TryCreate(offer.SenderUrl, UriKind.Absolute, out var sender) &&
+            sender.Host.Equals(profile.Host, StringComparison.OrdinalIgnoreCase))
+        {
+            urls.Add(offer.SenderUrl!);
+        }
+
+        if (!string.IsNullOrWhiteSpace(offer.Sha256))
+        {
+            var hash = Uri.EscapeDataString(offer.Sha256!);
+            foreach (var port in new[] { 8443, 8446 })
+            {
+                urls.Add($"https://{profile.Host}:{port}/Marti/sync/content?hash={hash}");
+                urls.Add($"https://{profile.Host}:{port}/Marti/api/sync/metadata/{hash}/content");
+            }
+        }
+
+        foreach (var url in urls.Distinct(StringComparer.OrdinalIgnoreCase))
+        {
+            X509Certificate2? clientCert = null;
+            try
+            {
+                using var handler = CreateHandler(profile, config, out clientCert);
+                using var http = new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(45) };
+                http.DefaultRequestHeaders.UserAgent.ParseAdd("WinTAKTracker/0.1");
+                http.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("*/*"));
+
+                using var resp = await http.GetAsync(url, ct).ConfigureAwait(false);
+                if (!resp.IsSuccessStatusCode) continue;
+                var bytes = await resp.Content.ReadAsByteArrayAsync(ct).ConfigureAwait(false);
+                if (bytes.Length > 0) return bytes;
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch
+            {
+                // try next URL
+            }
+            finally
+            {
+                clientCert?.Dispose();
+            }
+        }
+
+        return null;
     }
 
     private async Task<byte[]?> DownloadProfilePackageAsync(

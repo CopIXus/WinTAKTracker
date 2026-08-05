@@ -12,8 +12,8 @@ public static class RemoteIdentityApply
 
     public static readonly string[] KnownTeams =
     [
-        "Cyan", "Blue", "Green", "Yellow", "Orange", "Red",
-        "Purple", "Magenta", "Maroon", "Teal", "White",
+        "Cyan", "Blue", "Dark Blue", "Brown", "Green", "Dark Green",
+        "Yellow", "Orange", "Red", "Purple", "Magenta", "Maroon", "Teal", "White",
     ];
 
     public sealed class Result

@@ -66,6 +66,12 @@ public sealed class CotStreamClient : IDisposable
 
     public event EventHandler? StateChanged;
 
+    /// <summary>
+    /// Raised for inbound CoT that looks like a Marti fileshare / Pref package announce.
+    /// Handler should download via Marti sync and apply identity (never block the read loop).
+    /// </summary>
+    public event EventHandler<string>? FileShareCotReceived;
+
     /// <summary>Clear circuit-breaker so the next Connect/Test may retry (e.g. user toggled Connect).</summary>
     public void ClearAutoReconnectSuspend()
     {
@@ -381,7 +387,7 @@ public sealed class CotStreamClient : IDisposable
 
     /// <summary>
     /// Reply to TAK Server connection tests (<c>t-x-c-t</c> → <c>t-x-c-t-r</c>).
-    /// Other inbound CoT is ignored (tracking-only client).
+    /// Also surfaces Marti fileshare / Pref-* package announces for Portal preference pushes.
     /// </summary>
     private async Task ProcessInboundAsync(StringBuilder pending, CancellationToken ct)
     {
@@ -405,6 +411,17 @@ public sealed class CotStreamClient : IDisposable
             end += "</event>".Length;
             var xml = text[..end];
             pending.Remove(0, end);
+
+            // Portal Pref packages arrive as fileshare CoT (missioncreate → contact).
+            if (FileShareCotParser.LooksLikeFileShareEvent(xml))
+            {
+                try { FileShareCotReceived?.Invoke(this, xml); }
+                catch (Exception ex)
+                {
+                    if (ShouldLog($"{Profile.Id}|fileshare|{ex.GetType().Name}"))
+                        _log.Warn("TAK", $"FileShare handler failed: {ex.GetType().Name}");
+                }
+            }
 
             if (!xml.Contains("t-x-c-t", StringComparison.OrdinalIgnoreCase))
                 continue;

@@ -20,6 +20,8 @@ public interface ITakConnectionManager
     event EventHandler? StatusChanged;
     /// <summary>Raised when a server stream reaches <see cref="TakConnectionState.Connected"/>.</summary>
     event EventHandler<ServerProfile>? ServerConnected;
+    /// <summary>Inbound Marti fileshare CoT (Pref package announce) with the owning server profile.</summary>
+    event EventHandler<(ServerProfile Profile, string CotXml)>? FileShareCotReceived;
     IReadOnlyList<ServerConnectionStatus> GetStatuses();
     bool AnyConnected { get; }
     bool AnyReconnecting { get; }
@@ -62,6 +64,7 @@ public sealed class TakConnectionManager : ITakConnectionManager, IDisposable
 
     public event EventHandler? StatusChanged;
     public event EventHandler<ServerProfile>? ServerConnected;
+    public event EventHandler<(ServerProfile Profile, string CotXml)>? FileShareCotReceived;
 
     public bool AnyConnected => GetStatuses().Any(s => s.State == TakConnectionState.Connected);
     public bool AnyReconnecting => GetStatuses().Any(s => s.State == TakConnectionState.Reconnecting);
@@ -147,6 +150,8 @@ public sealed class TakConnectionManager : ITakConnectionManager, IDisposable
                         if (client.State == TakConnectionState.Disconnected)
                             _ = EnsureReconnectAsync(profile.Id);
                     };
+                    client.FileShareCotReceived += (_, xml) =>
+                        FileShareCotReceived?.Invoke(this, (client.Profile, xml));
                     _clients[profile.Id] = client;
                     _connectGates[profile.Id] = new SemaphoreSlim(1, 1);
                 }

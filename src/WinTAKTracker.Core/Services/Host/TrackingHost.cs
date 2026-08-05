@@ -104,6 +104,12 @@ public sealed class TrackingHost : IDisposable
             // uses computer callsign (machine name) and Portal/TAK Server keep that label.
             _ = AnnouncePresenceAfterConnectAsync(profile);
         };
+        Tak.FileShareCotReceived += (_, args) =>
+        {
+            // Portal "Send Callsign Preferences" → Pref-*.zip via Marti missioncreate / fileshare CoT.
+            _ = ProfileSync.TryHandleFileShareCotAsync(
+                args.Profile, Config, args.CotXml, _activeUserSid, _activeUserName);
+        };
 
         if (!serviceMode)
             _activeUserSid = IdentityResolver.CurrentUserSid();

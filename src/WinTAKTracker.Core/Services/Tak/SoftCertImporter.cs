@@ -82,7 +82,26 @@ public sealed class SoftCertImporter
             }
 
             if (clientP12 is null || clientP12.Length == 0)
+            {
+                // Portal Pref-*.zip is identity-only (MANIFEST + certs/config.pref) — no client p12.
+                var zipBytes = File.ReadAllBytes(zipPath);
+                if (PreferencePackageParser.IsPreferencePackage(zipBytes, Path.GetFileName(zipPath)))
+                {
+                    var prefs = PreferencePackageParser.ParseZipBytes(zipBytes);
+                    if (!prefs.HasAny)
+                        return Fail("Preference package had no callsign/team/role.");
+                    _log.Info("Enroll", "Imported Pref preference package (identity only).");
+                    return new SoftCertImportResult
+                    {
+                        Success = true,
+                        Callsign = prefs.Callsign,
+                        Team = prefs.Team,
+                        Role = prefs.Role,
+                    };
+                }
+
                 return Fail("SoftCert ZIP did not contain a client certificate (.p12/.pfx).");
+            }
 
             var host = "";
             var port = 8089;

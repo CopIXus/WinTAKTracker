@@ -14,26 +14,40 @@ Internal API: `TrackingHost.ApplyRemoteIdentity(callsign, team, role)` and `Remo
 
 ## Receive paths (implemented)
 
-1. **Device profile on connect** (primary ATAK-compatible path)  
+1. **Device profile on connect** (ATAK-compatible path)  
    After a successful CoT stream connect, WinTAKTracker best-effort `GET`s  
    `/Marti/api/device/profile/connection?clientUid=…` on HTTPS ports **8443** / **8446** using the profile client certificate (same idea as ATAK “Apply TAK Server Profile Updates”).  
-   If the response is a data-package ZIP (or pref XML), `*.pref` / config prefs are scanned for `locationCallsign` / `callsign`, `locationTeam` / `team` / `teamColor`, and `locationRole` / `role`.
+   If the response is a data-package ZIP (or pref XML), prefs are scanned for identity keys (below).
 
-2. **Enrollment / preference URLs**  
-   Paste `tak://…/preference?locationCallsign=…&locationTeam=…` (or SoftCert ZIP with `config.pref`) under **Settings → Servers**. Same `.wtt` + team rules apply.
+2. **Portal Pref mission package (fileshare CoT)**  
+   When Portal uses Marti `missioncreate` / Enterprise Sync to push  
+   `Pref-{Callsign}-{Team}-{Role}.zip` (`MANIFEST/manifest.xml` + `certs/config.pref`) to this client UID,  
+   WinTAKTracker detects the inbound fileshare CoT, downloads via  
+   `GET /Marti/sync/content?hash=…` (mTLS), and auto-imports when `onReceiveImport=true`.
 
-3. **SoftCert / import URL**  
-   Prefs inside SoftCert packages are applied through the same helper.
+3. **Enrollment / preference URLs**  
+   Paste `tak://…/preference?locationCallsign=…&locationTeam=…` (or SoftCert / Pref ZIP) under **Settings → Servers**. Same `.wtt` + team rules apply.
+
+4. **Manual Pref / SoftCert ZIP import**  
+   Identity-only Pref packages (no `.p12`) and SoftCert packages with `config.pref` both apply through the same helpers.
+
+### Preference keys we read
+
+| Purpose | Keys |
+|---------|------|
+| Callsign | `locationCallsign`, `callsign` |
+| Team | `locationTeam`, `team`, `teamColor` (incl. `Dark Green`, `Dark Blue`, `Brown`) |
+| Role | `atakRoleType`, `locationRole`, `role` |
 
 ## What is still limited
 
 - Full Portal wire formats vary by server (OpenTAK Server, TAK Server, custom portals). Empty or non-pref profile responses are ignored; failures are logged without breaking PLI.
-- Inbound CoT SA / file-share mission packages on the streaming socket are still drained, not fully parsed for config (tracking-only). Prefer device-profile packages or preference URLs.
+- Arbitrary mission content (maps, overlays, plugins) is not installed — only callsign / team / role from Pref packages.
 - Do not put real hosts, tokens, or live enroll URLs in this repository — see [SECURITY.md](../SECURITY.md).
 
 ## Operator tip
 
-After changing callsign/team in Portal, reconnect the client (or restart the WinTAKTracker service/tray) so profile sync runs again. Callsigns appear on the network as `NAME.wtt`.
+Portal **Send Callsign Preferences** can update a live session via Pref ZIP fileshare (no reconnect required). Device-profile pull still runs after connect. Callsigns appear on the network as `NAME.wtt`.
 
 ## For Portal developers
 

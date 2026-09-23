@@ -26,10 +26,13 @@ Aggressive **auto-reconnect** (especially older builds with reload races) can pr
 
 ## What WinTAKTracker does now
 
-1. **Exponential backoff** on reconnect (longer delays for TLS/cert faults).
-2. **Circuit breaker** — stop auto-reconnect after a small number of consecutive TLS/cert failures (well under 20/5 min), and after a limited number of network failures.
-3. **Detailed Error** on the server card + Diagnostics log, including guidance to re-enroll / fix the cert and that fail2ban may be involved.
-4. **Manual retry** — toggle **Connect** off/on, or change host/certs, or use **Test** (creates a fresh attempt). Config saves do **not** clear the circuit while suspended.
+1. **Exponential backoff** on reconnect (longer delays for TLS/cert faults; capped ≤60 s for network).
+2. **Circuit breaker (TLS/cert only)** — stop auto-reconnect after a small number of consecutive TLS/cert failures (well under 20/5 min). Sticky until the operator toggles **Connect**, changes host/certs, or uses **Test**.
+3. **Network / unreachable failures keep retrying** — connect timeouts, DNS, and “no route” never permanently open the circuit. When connectivity returns (`NetworkChange` / availability), a debounced reload reconnects (including cancelling a mid-backoff wait so the device does not sit idle for up to a minute).
+4. **Detailed Error** on the server card + Diagnostics log, including guidance to re-enroll / fix the cert and that fail2ban may be involved.
+5. **Manual retry** for a TLS-suspended stream — toggle **Connect** off/on, or change host/certs, or use **Test**. Config saves do **not** clear a TLS circuit while suspended.
+
+CoT streaming auth is **client certificate**, not username/password. Bad enroll credentials or a rejected `.p12` show up as TLS handshake failures and correctly trip the sticky circuit. Plain offline / cannot-reach-server must not.
 
 ## If you are banned
 

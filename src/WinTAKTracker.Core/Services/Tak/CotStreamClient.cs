@@ -50,10 +50,11 @@ public sealed class CotStreamClient : IDisposable
 
     /// <summary>
     /// infra-TAK TAK Server fail2ban jail: ~20 TLS handshake failures / 5 minutes → UFW ban.
-    /// Stop auto-reconnect well under that for TLS/cert faults; network faults allow more tries.
+    /// Sticky-stop auto-reconnect well under that for TLS/cert faults only.
+    /// Network / unreachable failures keep retrying forever (capped backoff) so offline devices
+    /// resume when connectivity returns.
     /// </summary>
     private const int MaxConsecutiveTlsFailures = 5;
-    private const int MaxConsecutiveNetworkFailures = 10;
 
     public CotStreamClient(AppConfigStore store, IRedactedLogger log)
     {
@@ -69,7 +70,7 @@ public sealed class CotStreamClient : IDisposable
     /// <summary>When false (default), reject TLS if trust-store validation fails. When true, SoftCert soft-accept.</summary>
     public bool AllowInsecureTlsSoftAccept { get; set; }
 
-    /// <summary>True when auto-reconnect stopped to avoid fail2ban / hammering — user can retry Connect.</summary>
+    /// <summary>True when auto-reconnect stopped for TLS/cert faults (fail2ban). Network outages do not set this.</summary>
     public bool AutoReconnectSuspended { get; private set; }
 
     public event EventHandler? StateChanged;
@@ -173,8 +174,9 @@ public sealed class CotStreamClient : IDisposable
             }
             catch (OperationCanceledException) when (!ct.IsCancellationRequested)
             {
-                LastErrorCode = "Connection timed out (server unreachable or TLS handshake stalled)";
-                NoteFailure(profile, LastErrorCode, tlsOrCert: true);
+                // TCP connect / overall connect timeout — network class, not a completed TLS probe.
+                LastErrorCode = "Connection timed out — server unreachable or network blocked";
+                NoteFailure(profile, LastErrorCode, tlsOrCert: false);
                 SetState(TakConnectionState.Error);
                 await DisconnectCoreAsync().ConfigureAwait(false);
                 throw new TimeoutException(LastErrorCode);
@@ -236,7 +238,9 @@ public sealed class CotStreamClient : IDisposable
     private static string HumanizeConnectError(Exception ex) => ex switch
     {
         InvalidOperationException ioe => ioe.Message,
-        TimeoutException te => te.Message,
+        TimeoutException te => string.IsNullOrWhiteSpace(te.Message)
+            ? "Connection timed out — server unreachable or network blocked"
+            : te.Message,
         OperationCanceledException => "Connection timed out or was canceled",
         AuthenticationException ae when SchannelCertificateLoader.IsSchannelNoCredentials(ae) =>
             "TLS failed — Windows could not use the client certificate private key (Schannel). " +
@@ -245,7 +249,8 @@ public sealed class CotStreamClient : IDisposable
         AuthenticationException =>
             DescribeAuthenticationFailure(ex),
         SocketException se => $"Network error ({se.SocketErrorCode})",
-        IOException => "Stream closed during connect (often TLS handshake rejected)",
+        // Avoid "TLS"/"handshake" in the text — string heuristics must not re-label network IO drops.
+        IOException => "Stream closed during connect (peer closed or network dropped)",
         CryptographicException =>
             "Client certificate could not be loaded (bad password or key store). Fix the .p12 before retrying.",
         _ => ex.GetType().Name,
@@ -267,15 +272,23 @@ public sealed class CotStreamClient : IDisposable
                "Repeated retries can trigger fail2ban.";
     }
 
-    private static bool IsTlsOrCertFailure(Exception ex, string? human = null)
+    /// <summary>
+    /// True when the failure is a TLS/cert/auth fault (fail2ban risk if retried aggressively).
+    /// False for network / unreachable / connect timeouts — those must keep retrying.
+    /// </summary>
+    public static bool IsTlsOrCertFailure(Exception ex, string? human = null)
     {
-        if (ex is AuthenticationException or CryptographicException or TimeoutException)
+        // Network-class first so TimeoutException / SocketException never trip the TLS circuit.
+        if (ex is SocketException or TimeoutException)
+            return false;
+        if (ex is AuthenticationException or CryptographicException)
             return true;
         if (ex is InvalidOperationException &&
             (ex.Message.Contains("certificate", StringComparison.OrdinalIgnoreCase)
              || ex.Message.Contains("enroll", StringComparison.OrdinalIgnoreCase)))
             return true;
         human ??= ex.Message;
+        if (string.IsNullOrEmpty(human)) return false;
         return human.Contains("TLS", StringComparison.OrdinalIgnoreCase)
                || human.Contains("certificate", StringComparison.OrdinalIgnoreCase)
                || human.Contains("handshake", StringComparison.OrdinalIgnoreCase);
@@ -320,15 +333,16 @@ public sealed class CotStreamClient : IDisposable
             {
                 var human = LastErrorCode ?? HumanizeConnectError(ex);
                 var tls = IsTlsOrCertFailure(ex, human);
-                var max = tls ? MaxConsecutiveTlsFailures : MaxConsecutiveNetworkFailures;
 
-                if (_consecutiveFailures >= max)
+                // Sticky suspend only for TLS/cert — never permanently stop on network outages.
+                if (tls && _consecutiveFailures >= MaxConsecutiveTlsFailures)
                 {
-                    SuspendAutoReconnect(profile, human, tls);
+                    SuspendAutoReconnect(profile, human);
                     return;
                 }
 
                 // TLS/cert faults: longer delays (infra-TAK fail2ban ≈ 20 TLS fails / 5 min).
+                // Network faults: keep retrying forever with capped backoff.
                 var delay = tls
                     ? Math.Min(Math.Max(_backoffSeconds, 15), 120)
                     : Math.Min(_backoffSeconds, 60);
@@ -346,18 +360,16 @@ public sealed class CotStreamClient : IDisposable
         _ = tlsOrCert;
     }
 
-    private void SuspendAutoReconnect(ServerProfile profile, string lastError, bool tlsOrCert)
+    private void SuspendAutoReconnect(ServerProfile profile, string lastError)
     {
         AutoReconnectSuspended = true;
-        LastErrorCode = tlsOrCert
-            ? $"{lastError} — stopped auto-reconnect after {_consecutiveFailures} failures " +
-              "to avoid infra-TAK fail2ban (TLS probes). Fix the certificate/enrollment, then toggle Connect or use Test."
-            : $"{lastError} — stopped auto-reconnect after {_consecutiveFailures} failures. " +
-              "Check network/DNS/firewall (or fail2ban ban), then toggle Connect or use Test.";
+        LastErrorCode =
+            $"{lastError} — stopped auto-reconnect after {_consecutiveFailures} TLS/cert failures " +
+            "to avoid infra-TAK fail2ban (TLS probes). Fix the certificate/enrollment, then toggle Connect or use Test.";
         LogConnectionFailure(profile, LastErrorCode);
         _log.Error("TAK",
-            $"Auto-reconnect suspended for '{ProfileLabel(profile)}' after {_consecutiveFailures} failures " +
-            $"(tlsOrCert={tlsOrCert}). Manual retry required.");
+            $"Auto-reconnect suspended for '{ProfileLabel(profile)}' after {_consecutiveFailures} TLS/cert failures. " +
+            "Manual retry required.");
         SetState(TakConnectionState.Error);
     }
 

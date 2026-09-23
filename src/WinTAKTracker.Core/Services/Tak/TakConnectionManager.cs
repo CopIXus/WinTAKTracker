@@ -166,11 +166,16 @@ public sealed class TakConnectionManager : ITakConnectionManager, IDisposable
                 continue;
             }
 
-            if (client.State is TakConnectionState.Connecting or TakConnectionState.Reconnecting
-                && !ProfileEndpointChanged(client.Profile, profile))
-            {
-                // Let the in-flight attempt finish instead of thrashing.
+            // Let an in-flight first connect finish. Mid-backoff RECONNECTING after a network
+            // outage should retry immediately when connectivity returns (cancel the wait).
+            if (client.State == TakConnectionState.Connecting && !ProfileEndpointChanged(client.Profile, profile))
                 continue;
+
+            if (client.State == TakConnectionState.Reconnecting && !ProfileEndpointChanged(client.Profile, profile))
+            {
+                if (client.AutoReconnectSuspended)
+                    continue; // sticky TLS/cert circuit — do not poke fail2ban
+                CancelReconnect(profile.Id);
             }
 
             // Fire-and-forget so IPC ReloadConnections stays responsive; connect lock serializes attempts.
@@ -329,8 +334,9 @@ public sealed class TakConnectionManager : ITakConnectionManager, IDisposable
             var endpointChanged = ProfileEndpointChanged(client.Profile, profile);
             if (client.AutoReconnectSuspended && !endpointChanged)
             {
-                // Stay quiet — circuit open to protect against infra-TAK fail2ban (TLS probe bans).
-                // User must toggle Connect off/on or change certs/host to retry.
+                // Sticky TLS/cert circuit only (fail2ban). Network outages no longer suspend —
+                // connectivity restore via DebouncedReload will reconnect those clients.
+                // User must toggle Connect or change certs/host to retry a TLS-suspended stream.
                 client.ApplyProfile(profile);
                 StatusChanged?.Invoke(this, EventArgs.Empty);
                 return;

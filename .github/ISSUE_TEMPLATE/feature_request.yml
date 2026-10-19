@@ -1,0 +1,40 @@
+name: Feature request
+description: Suggest a change or new capability
+title: "[Feature]: "
+labels: ["feature", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Feature requests are reviewed by the project owner before any code is drafted. Describe the outcome you want, not an implementation you want an agent to follow blindly.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem or job to be done
+      description: Who is affected and what they cannot do today?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed outcome
+    validations:
+      required: true
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Platform
+      options:
+        - Android / ATAK
+        - Windows
+        - Raspberry Pi / Linux
+        - MeshCore radio / Heltec
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives you considered
+    validations:
+      required: false

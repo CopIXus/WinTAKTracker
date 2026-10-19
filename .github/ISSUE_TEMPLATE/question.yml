@@ -1,0 +1,40 @@
+name: Question
+description: Ask how something works or how to set it up
+title: "[Question]: "
+labels: ["question", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Questions are answered in the issue. They do not start a code change unless a maintainer later marks the issue as approved work.
+  - type: input
+    id: version
+    attributes:
+      label: Version or build
+      placeholder: 1.4.2
+    validations:
+      required: false
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Platform
+      options:
+        - Android / ATAK
+        - Windows
+        - Raspberry Pi / Linux
+        - MeshCore radio / Heltec
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: question
+    attributes:
+      label: Question
+    validations:
+      required: true
+  - type: textarea
+    id: tried
+    attributes:
+      label: What you already tried
+    validations:
+      required: false

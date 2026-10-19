@@ -1,0 +1,66 @@
+name: Bug report
+description: Something in this project is broken or behaves unexpectedly
+title: "[Bug]: "
+labels: ["bug", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting this. An intake pass will acknowledge the issue and ask at most three follow-up questions if something important is missing. Do not paste passwords, tokens, private hostnames, or personal data.
+  - type: input
+    id: version
+    attributes:
+      label: Version or build
+      description: App version, firmware build, or commit if you have it.
+      placeholder: 1.4.2
+    validations:
+      required: true
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Platform
+      options:
+        - Android / ATAK
+        - Windows
+        - Raspberry Pi / Linux
+        - MeshCore radio / Heltec
+        - Other
+    validations:
+      required: true
+  - type: input
+    id: device
+    attributes:
+      label: Device or environment
+      description: Hardware, OS, and any radio or server you were connected to. No private hostnames or credentials.
+      placeholder: "Samsung Galaxy, ATAK 5.x, MeshCore companion"
+    validations:
+      required: false
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1.
+        2.
+        3.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs or screenshots
+      description: Redact secrets first. Public issues cannot be reliably unpublished.
+    validations:
+      required: false
